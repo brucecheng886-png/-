@@ -1,0 +1,540 @@
+/* Tailwind CSS 指令 */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ===== 全域樣式重置 ===== */
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+/* ===== 根元素樣式 (Anytype Space Architecture) ===== */
+:root {
+  /* Anytype 主題色彩 */
+  --primary-blue: #335eea;          /* Anytype Blue - 主要強調色 */
+  --accent-orange: #ff8e3c;         /* Anytype Orange - 數據/圖表 */
+  --success-green: #00c2a8;         /* 成功狀態 */
+  --warning-yellow: #ffc107;        /* 警告 */
+  --danger-red: #ff5c5c;            /* 錯誤 */
+  
+  /* 語意化顏色變數 (深色模式 Dark - 預設) */
+  --bg-main: #0f0f0f;               /* 主背景 (深空黑) - 更深，更純淨 */
+  --bg-surface: #1a1a1a;            /* 面板表面 (極夜黑) - 提高一級 */
+  --bg-elevated: #252525;           /* 懸浮元素 - 更明顯的層次 */
+  --border-color: #2a2a2a;          /* 邊框 (極細灰) - 提高可見度 */
+  --text-primary: #f5f5f5;          /* 主要文字 (灰白) - 對比度 15.8:1 */
+  --text-secondary: #a0a0a0;        /* 次要文字 (暗灰) - 對比度 7.5:1 */
+  --text-tertiary: #707070;         /* 輔助文字 (深灰) - 對比度 4.5:1 */
+  
+  /* Void Black 背景系統 (保留向後兼容) */
+  --bg-void: #0a0a0a;               /* 純黑底 (最深層) */
+  --bg-primary: var(--bg-main);     /* 映射到語意化變數 */
+  --bg-hover: #303030;              /* Hover 狀態 - 提高可見度 */
+  
+  /* Swiss Typography 文字色 (保留向後相容) */
+  --text-disabled: #505050;         /* 禁用文字 - 提高可識別度 */
+  
+  /* Minimal Borders (保留向後兼容) */
+  --border-primary: var(--border-color);
+  --border-subtle: #252525;         /* 更細微的分隔線 - 增強可見度 */
+  --border-focus: #4a7bff;          /* 焦點邊框 - 更鮮明 */
+  
+  /* Matte Shadow (啞光陰影) - 業界標準優化 */
+  --shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.45);
+  --shadow-md: 0 4px 20px rgba(0, 0, 0, 0.55);
+  --shadow-lg: 0 8px 40px rgba(0, 0, 0, 0.65);     /* 懸浮感 */
+  --shadow-xl: 0 12px 60px rgba(0, 0, 0, 0.75);
+  
+  /* 圓角 (保持現代感) */
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --radius-xl: 24px;
+  --radius-2xl: 32px;
+  
+  /* 間距 (瑞士網格) */
+  --spacing-xs: 4px;
+  --spacing-sm: 8px;
+  --spacing-md: 16px;
+  --spacing-lg: 24px;
+  --spacing-xl: 32px;
+  --spacing-2xl: 48px;
+}
+
+/* ===== 淺色模式 (Light Mode - Anytype Paper White) ===== */
+html.light {
+  /* 語意化顏色變數 (淺色模式覆蓋) */
+  --bg-main: #ffffff;               /* 純白 (主背景) */
+  --bg-surface: #f8f9fa;            /* 淺灰 (面板表面) - 更柔和 */
+  --bg-elevated: #ffffff;           /* 懸浮元素 - 純白層次 */
+  --border-color: #e0e0e0;          /* 極淺灰 (邊框) - 提高可見度 */
+  --text-primary: #1a1a1a;          /* 深灰黑 (主要文字) - 對比度 16.1:1 */
+  --text-secondary: #666666;        /* 中灰 (次要文字) - 對比度 7.0:1 */
+  --text-tertiary: #999999;         /* 輔助文字 - 對比度 4.5:1 */
+  
+  /* 向後兼容變數覆蓋 */
+  --bg-void: #fafafa;               /* 極淺灰底 */
+  --bg-primary: var(--bg-main);     /* 映射 */
+  --bg-hover: #f0f0f0;              /* Hover 狀態 - 明顯回饋 */
+  
+  --text-disabled: #c0c0c0;         /* 禁用文字 */
+  
+  --border-primary: var(--border-color);
+  --border-subtle: #ebebeb;         /* 更細微的分隔線 - 增強可見度 */
+  
+  /* 淺色模式陰影 - 業界標準優化 (Material Design 參考) */
+  --shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.08);
+  --shadow-md: 0 4px 20px rgba(0, 0, 0, 0.12);
+  --shadow-lg: 0 8px 40px rgba(0, 0, 0, 0.15);
+  --shadow-xl: 0 12px 60px rgba(0, 0, 0, 0.18);
+}
+
+/* ===== HTML & Body ===== */
+html {
+  font-size: 16px;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+body {
+  margin: 0;
+  padding: 0;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 
+               'Oxygen', 'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 
+               'Helvetica Neue', sans-serif;
+  background: var(--bg-primary);           /* 純色深空黑，無漸層 */
+  color: var(--text-primary);
+  overflow-x: hidden;
+  font-weight: 400;                        /* Swiss Typography 標準字重 */
+  letter-spacing: -0.01em;                 /* 緊湊字距 */
+}
+
+/* ===== App 容器 ===== */
+#app {
+  width: 100%;
+  min-height: 100vh;
+  position: relative;
+}
+
+/* ===== 全域背景 (Matte Finish - 無特效) ===== */
+/* Anytype Space: 純淨背景，無漸層、無發光 */
+body::before {
+  display: none;  /* 移除 Cyberpunk 風格的背景特效 */
+}
+
+/* ===== 滾動條樣式 ===== */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--bg-surface);        /* 極夜黑軌道 */
+  border-radius: 0;                     /* 極簡風格，無圓角 */
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--border-primary);    /* 暗灰色滑塊 */
+  border-radius: 0;
+  transition: background 0.2s ease;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #444444;                  /* Hover 稍亮 */
+}
+
+/* ===== 選取文字樣式 (Anytype Blue) ===== */
+::selection {
+  background: rgba(51, 94, 234, 0.25);  /* Anytype Blue 半透明 */
+  color: var(--text-primary);
+}
+
+::-moz-selection {
+  background: rgba(51, 94, 234, 0.25);
+  color: var(--text-primary);
+}
+
+/* ===== Matte Surface (啞光面板，無模糊) ===== */
+.glass {
+  background: var(--bg-surface);        /* 純色，無透明度 */
+  border: 1px solid var(--border-primary);
+  /* 移除 backdrop-filter，Anytype 使用純色 */
+}
+
+.glass-dark {
+  background: var(--bg-void);           /* 更深的純黑 */
+  border: 1px solid var(--border-subtle);
+}
+
+/* ===== 按鈕基礎樣式 ===== */
+button {
+  font-family: inherit;
+  cursor: pointer;
+  transition: all 0.3s ease;
+}
+
+button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* ===== 輸入框基礎樣式 ===== */
+input,
+textarea,
+select {
+  font-family: inherit;
+  color: inherit;
+}
+
+input:focus,
+textarea:focus,
+select:focus {
+  outline: none;
+}
+
+/* ===== Select 下拉選單樣式修復 ===== */
+select option {
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  padding: 8px;
+  animation: optionFadeIn 0.15s ease-out forwards;
+}
+
+/* 選項淡入動畫 */
+@keyframes optionFadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* 針對深色模式的 option 樣式 */
+html:not(.light) select option {
+  background: #1a1a1a;
+  color: #f5f5f5;
+}
+
+html:not(.light) select option:hover,
+html:not(.light) select option:focus,
+html:not(.light) select option:checked {
+  background: #2a2a2a;
+  color: #ffffff;
+}
+
+/* 針對淺色模式的 option 樣式 */
+html.light select option {
+  background: #ffffff;
+  color: #1a1a1a;
+}
+
+html.light select option:hover,
+html.light select option:focus,
+html.light select option:checked {
+  background: #e3f2fd;
+  color: #1565c0;
+}
+
+/* ===== 鏈接樣式 (Anytype Blue) ===== */
+a {
+  color: var(--primary-blue);           /* Anytype Blue */
+  text-decoration: none;
+  transition: color 0.2s ease;
+  font-weight: 500;                     /* 鏈接加粗 */
+}
+
+a:hover {
+  color: #5983f0;                       /* 亮藍色 */
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+/* ===== 卡片樣式 (Matte Finish) ===== */
+.card {
+  background: var(--bg-surface);        /* 純色面板 */
+  border: 1px solid var(--border-primary);
+  border-radius: var(--radius-xl);      /* 更大圓角 */
+  padding: var(--spacing-lg);
+  box-shadow: var(--shadow-lg);         /* 懸浮陰影 */
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.card:hover {
+  transform: translateY(-2px);          /* 輕微懸浮 */
+  box-shadow: var(--shadow-xl);
+}
+
+/* ===== 標題樣式 (Swiss Typography) ===== */
+h1, h2, h3, h4, h5, h6 {
+  font-weight: 600;                     /* Anytype 使用 SemiBold */
+  line-height: 1.2;                     /* 更緊湊的行高 */
+  margin: 0;
+  letter-spacing: -0.02em;              /* 負字距，瑞士風格 */
+  color: var(--text-primary);           /* 明確的灰白色 */
+}
+
+h1 {
+  font-size: 2.5rem;
+  font-weight: 700;                     /* H1 使用 Bold */
+}
+
+h2 {
+  font-size: 2rem;
+  font-weight: 600;
+}
+
+h3 {
+  font-size: 1.5rem;
+  font-weight: 600;
+}
+
+h4 {
+  font-size: 1.25rem;
+  font-weight: 500;                     /* 較小標題用 Medium */
+}
+
+h5 {
+  font-size: 1rem;
+  font-weight: 500;
+}
+
+h6 {
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: var(--text-secondary);         /* 暗灰色 */
+}
+
+/* ===== 段落樣式 ===== */
+p {
+  line-height: 1.6;
+  margin: 0;
+}
+
+/* ===== 列表樣式 ===== */
+ul, ol {
+  list-style: none;
+}
+
+/* ===== 圖片樣式 ===== */
+img {
+  max-width: 100%;
+  height: auto;
+  display: block;
+}
+
+/* ===== 載入動畫 ===== */
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.loading {
+  animation: spin 1s linear infinite;
+}
+
+/* ===== 淡入動畫 ===== */
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.fade-in {
+  animation: fadeIn 0.5s ease-out;
+}
+
+/* ===== Element Plus 深色主題覆蓋 ===== */
+.el-table {
+  --el-table-bg-color: transparent;
+  --el-table-tr-bg-color: transparent;
+  --el-table-header-bg-color: rgba(59, 130, 246, 0.2);
+  --el-table-row-hover-bg-color: rgba(59, 130, 246, 0.15);
+  --el-table-border-color: rgba(255, 255, 255, 0.1);
+  --el-table-text-color: var(--text-primary);
+  --el-table-header-text-color: var(--text-primary);
+}
+
+.el-message-box {
+  --el-messagebox-title-color: var(--text-primary);
+  --el-messagebox-content-color: var(--text-secondary);
+}
+
+/* ===== 響應式斷點 ===== */
+@media (max-width: 1536px) {
+  /* 2xl */
+}
+
+@media (max-width: 1280px) {
+  /* xl */
+}
+
+@media (max-width: 1024px) {
+  /* lg */
+  html {
+    font-size: 15px;
+  }
+}
+
+@media (max-width: 768px) {
+  /* md */
+  html {
+    font-size: 14px;
+  }
+  
+  h1 {
+    font-size: 2rem;
+  }
+  
+  h2 {
+    font-size: 1.75rem;
+  }
+}
+
+@media (max-width: 640px) {
+  /* sm */
+  html {
+    font-size: 13px;
+  }
+  
+  .card {
+    padding: var(--spacing-md);
+  }
+}
+
+/* ===== 列印樣式 ===== */
+@media print {
+  body {
+    background: white;
+    color: black;
+  }
+  
+  .sidebar,
+  .top-bar {
+    display: none;
+  }
+}
+
+/* ===== Anytype Space Utility Classes ===== */
+
+/* Matte Panel (啞光面板) */
+.panel-matte {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-primary);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-lg);
+}
+
+/* Elevated Panel (懸浮面板) */
+.panel-elevated {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-primary);
+  border-radius: var(--radius-2xl);
+  box-shadow: var(--shadow-xl);
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.panel-elevated:hover {
+  transform: translateY(-4px);
+  box-shadow: 0 16px 80px rgba(0, 0, 0, 0.95);
+}
+
+/* Swiss Grid (瑞士網格) */
+.grid-swiss {
+  display: grid;
+  gap: var(--spacing-lg);
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+}
+
+/* Minimal Button (極簡按鈕) */
+.btn-minimal {
+  background: transparent;
+  border: 1px solid var(--border-primary);
+  color: var(--text-primary);
+  padding: 10px 20px;
+  border-radius: var(--radius-md);
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  transition: all 0.2s ease;
+  cursor: pointer;
+}
+
+.btn-minimal:hover {
+  background: var(--bg-hover);
+  border-color: var(--text-secondary);
+}
+
+/* Primary Button (Anytype Blue) */
+.btn-primary {
+  background: var(--primary-blue);
+  border: none;
+  color: #ffffff;
+  padding: 10px 24px;
+  border-radius: var(--radius-md);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  transition: all 0.2s ease;
+  cursor: pointer;
+  box-shadow: 0 4px 12px rgba(51, 94, 234, 0.3);
+}
+
+.btn-primary:hover {
+  background: #2549d8;
+  box-shadow: 0 6px 20px rgba(51, 94, 234, 0.4);
+  transform: translateY(-1px);
+}
+
+/* Accent Text (Anytype Orange for numbers) */
+.text-accent {
+  color: var(--accent-orange);
+  font-family: var(--font-mono);
+  font-weight: 600;
+}
+
+/* Divider (極細分隔線) */
+.divider-minimal {
+  height: 1px;
+  background: var(--border-subtle);
+  border: none;
+  margin: var(--spacing-lg) 0;
+}
+
+/* Status Dot (狀態指示器) */
+.status-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-right: 8px;
+}
+
+.status-dot.online {
+  background: var(--success-green);
+  box-shadow: 0 0 8px var(--success-green);
+}
+
+.status-dot.offline {
+  background: var(--text-disabled);
+}
+
+/* Monospace Number Display */
+.number-display {
+  font-family: 'Consolas', 'Monaco', monospace;
+  font-size: 2rem;
+  font-weight: 600;
+  color: var(--accent-orange);
+  letter-spacing: -0.02em;
+}

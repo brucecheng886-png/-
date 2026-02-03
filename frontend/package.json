@@ -1,0 +1,42 @@
+{
+  "name": "bruv-frontend",
+  "version": "1.0.0",
+  "description": "BruV Project Frontend - Enterprise AI Platform with Dify & RAGflow",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@antv/g6": "^5.0.0",
+    "@element-plus/icons-vue": "^2.3.1",
+    "3d-force-graph": "^1.79.0",
+    "element-plus": "^2.5.4",
+    "force-graph": "^1.51.0",
+    "markdown-it": "^14.0.0",
+    "pinia": "^3.0.4",
+    "splitpanes": "^4.0.4",
+    "three": "^0.182.0",
+    "vue": "^3.4.15",
+    "vue-router": "^4.2.5",
+    "xlsx": "^0.18.5"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "^5.0.3",
+    "autoprefixer": "^10.4.17",
+    "postcss": "^8.4.33",
+    "tailwindcss": "^3.4.1",
+    "vite": "^5.0.11"
+  },
+  "keywords": [
+    "vue",
+    "vite",
+    "dify",
+    "ragflow",
+    "knowledge-graph",
+    "ai-chat"
+  ],
+  "author": "bruce",
+  "license": "MIT"
+}
