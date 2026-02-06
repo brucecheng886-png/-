@@ -24,25 +24,61 @@ copy .env.example .env
 
 # 編輯 .env 並填入 API Keys
 notepad .env
+
+# 安裝 Python 依賴
+pip install -r requirements.txt
+
+# 安裝前端依賴
+cd frontend
+npm install
+cd ..
 ```
 
-### 2. 啟動服務
+### 2. 一鍵啟動 ⭐
+
+#### 方式一：使用一鍵啟動腳本（推薦）
+
+雙擊執行：
+```
+START.bat         # Windows 批次檔
+START.ps1         # PowerShell 腳本
+```
+
+#### 方式二：使用 GUI 啟動器
+
+雙擊執行：
+```
+start_gui_launcher.bat
+```
+
+功能：
+- ✅ 圖形化界面控制
+- ✅ 一鍵啟動/停止所有服務
+- ✅ 實時查看服務日誌
+- ✅ 中英文雙語支持
+
+#### 方式三：手動啟動
 
 ```bash
-# 使用統一啟動器
-python launcher.py
+# 啟動後端
+python -m uvicorn app_anytype:app --host 127.0.0.1 --port 8000 --reload
+
+# 啟動前端（新終端）
+cd frontend
+npm run dev
+
+# 啟動 Docker 服務（可選，新終端）
+docker-compose up -d
 ```
 
-啟動器會自動：
-- 檢查 Python 環境與依賴
-- 啟動 Docker Compose (Dify + RAGFlow)
-- 啟動 FastAPI 後端服務
+📖 詳細說明請查看 [快速啟動指南.md](./快速啟動指南.md)
 
 ### 3. 訪問服務
 
-- 🌐 **前端介面**: http://localhost:8000
+- 🌐 **前端界面**: http://localhost:5173
 - 📚 **API 文檔**: http://localhost:8000/docs
-- 🤖 **Dify**: http://localhost:80
+- 🔗 **後端 API**: http://localhost:8000
+- 🤖 **Dify**: http://localhost:3000
 - 📄 **RAGFlow**: http://localhost:9380
 
 ## 📁 專案結構
