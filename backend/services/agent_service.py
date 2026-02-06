@@ -2,12 +2,13 @@
 Agent Service - 智能代理核心服務
 整合 RAG 檢索、自動化工具、意圖路由
 """
-import os
 import re
 import httpx
 import logging
 from typing import Dict, Any, Optional, List, Tuple
 from enum import Enum
+
+from backend.core.config import settings, get_current_api_keys
 
 logger = logging.getLogger(__name__)
 
@@ -23,10 +24,11 @@ class AgentService:
     """智能代理服務"""
     
     def __init__(self):
-        self.ragflow_api_url = os.getenv("RAGFLOW_API_URL", "http://localhost:81/api/v1")
-        self.ragflow_api_key = os.getenv("RAGFLOW_API_KEY", "")
-        self.dify_api_url = os.getenv("DIFY_API_URL", "http://localhost:80/v1")
-        self.dify_api_key = os.getenv("DIFY_API_KEY", "")
+        # 配置來自統一 Settings，不再直接 os.getenv
+        self.ragflow_api_url = settings.RAGFLOW_API_URL
+        self.ragflow_api_key = settings.RAGFLOW_API_KEY
+        self.dify_api_url = settings.DIFY_API_URL
+        self.dify_api_key = settings.DIFY_API_KEY
         
         # 意圖識別關鍵字
         self.rag_keywords = [
@@ -87,7 +89,7 @@ class AgentService:
             
             # TODO: 根據 RAGFlow 官方 API 文檔調整請求格式
             # 目前使用 /v1/api/completion 端點
-            async with httpx.AsyncClient(timeout=30.0) as client:
+            async with httpx.AsyncClient(timeout=settings.REQUEST_TIMEOUT) as client:
                 headers = {
                     "Authorization": f"Bearer {self.ragflow_api_key}",
                     "Content-Type": "application/json"
@@ -247,7 +249,7 @@ class AgentService:
         try:
             logger.info(f"💬 閒聊模式: {user_message[:50]}...")
             
-            async with httpx.AsyncClient(timeout=30.0) as client:
+            async with httpx.AsyncClient(timeout=settings.REQUEST_TIMEOUT) as client:
                 headers = {
                     "Authorization": f"Bearer {self.dify_api_key}",
                     "Content-Type": "application/json"

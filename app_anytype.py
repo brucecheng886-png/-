@@ -2,18 +2,30 @@
 BruV_Project FastAPI 主程式
 整合 Dify、RAGFlow 與 KuzuDB 知識圖譜
 """
-from fastapi import FastAPI, HTTPException, Request
+from contextlib import asynccontextmanager
+from fastapi import FastAPI, HTTPException, Request, UploadFile, File, Form
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from pathlib import Path
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 import logging
+import shutil
+import os
+from datetime import datetime
+
+import httpx
 
 from backend.api import dify_router, ragflow_router, graph_router, graph_import_router, system_router
+from backend.api.tasks import router as tasks_router
+from backend.api.media_library import router as media_library_router
 from backend.core.kuzu_manager import KuzuDBManager, MockKuzuManager
-from backend.core.config import settings
+from backend.core.config import settings, get_current_api_keys
+from backend.core.auth import APIAuthMiddleware, initialize_auth_token, verify_token
+from backend.services.watcher import WatcherService
+from backend.services.task_queue import task_queue
+from backend.rag_client import RAGFlowClient
 
 # ==================== Pydantic 模型 ====================
 
@@ -24,6 +36,7 @@ class EntityCreate(BaseModel):
     type: str
     description: Optional[str] = ""
     properties: Optional[Dict[str, Any]] = {}
+    graph_id: Optional[str] = "1"  # 所屬圖譜 ID，預設為主腦圖譜
 
 class EntityResponse(BaseModel):
     """實體響應模型"""
@@ -43,81 +56,160 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# 初始化 FastAPI
+
+# ==================== Lifespan（取代已棄用的 @app.on_event） ====================
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """應用生命週期管理：啟動時初始化資源，關閉時釋放"""
+    logger.info("BruV_Project 啟動中...")
+
+    # -- 啟動後台任務隊列 --
+    await task_queue.start_worker()
+    logger.info("任務隊列已就緒")
+
+    # -- 共享 httpx 連線池（H-04） --
+    app.state.http_client = httpx.AsyncClient(
+        timeout=settings.REQUEST_TIMEOUT,
+        limits=httpx.Limits(max_connections=50, max_keepalive_connections=10),
+    )
+
+    # -- 初始化 KuzuDB --
+    kuzu_manager = None
+    try:
+        kuzu_manager = KuzuDBManager(settings.KUZU_DB_PATH)
+        logger.info("KuzuDB 初始化成功（生產模式）")
+    except Exception as e:
+        logger.warning(f"KuzuDB 初始化失敗: {e}")
+        try:
+            kuzu_manager = MockKuzuManager(settings.KUZU_DB_PATH)
+            logger.info("MockKuzuManager 初始化成功（開發模式）")
+        except Exception as mock_error:
+            logger.error(f"MockKuzuManager 初始化也失敗: {mock_error}")
+    app.state.kuzu_manager = kuzu_manager
+
+    # -- 初始化資料夾監控服務 --
+    watcher_service = None
+    try:
+        api_keys = get_current_api_keys()
+        rag_api_key = api_keys['RAGFLOW_API_KEY']
+        DEFAULT_DATASET_ID = "9de22384ff0e11f09a1f8f43565b28f4"
+
+        monitor_path = settings.AUTO_IMPORT_DIR
+
+        if not rag_api_key:
+            logger.warning("RAGFlow API Key 未配置，監控服務將無法上傳檔案")
+        else:
+            os.makedirs(monitor_path, exist_ok=True)
+
+            ragflow_base = api_keys['RAGFLOW_API_URL']
+            if '/api/v1' in ragflow_base:
+                ragflow_base = ragflow_base.replace('/api/v1', '/v1')
+            elif not ragflow_base.endswith('/v1'):
+                ragflow_base = ragflow_base.rstrip('/') + '/v1'
+
+            rag_client = RAGFlowClient(api_key=rag_api_key, base_url=ragflow_base)
+            watcher_service = WatcherService(
+                rag_client=rag_client,
+                kuzu_manager=kuzu_manager,
+                dataset_id=DEFAULT_DATASET_ID,
+            )
+            watcher_service.start(monitor_path)
+            logger.info(f"資料夾監控已啟動: {monitor_path}")
+    except Exception as e:
+        logger.error(f"資料夾監控服務啟動失敗: {e}")
+    app.state.watcher_service = watcher_service
+
+    logger.info(f"Dify API: {settings.DIFY_API_URL}")
+    logger.info(f"RAGFlow API: {settings.RAGFLOW_API_URL}")
+    logger.info("服務已就緒")
+
+    yield  # ← 應用運行中
+
+    # ---------- 關閉流程 ----------
+    logger.info("BruV_Project 關閉中...")
+    await task_queue.stop_worker()
+
+    if app.state.watcher_service:
+        try:
+            app.state.watcher_service.stop()
+        except Exception as e:
+            logger.error(f"停止監控服務時發生錯誤: {e}")
+
+    if app.state.kuzu_manager:
+        app.state.kuzu_manager.close()
+        logger.info("KuzuDB 連接已關閉")
+
+    await app.state.http_client.aclose()
+    logger.info("httpx 連線池已關閉")
+
+
+# 初始化 FastAPI（使用 lifespan 取代已棄用的 on_event）
 app = FastAPI(
     title="BruV Project API",
     description="企業級 AI 服務整合平台 (Dify + RAGFlow + KuzuDB)",
     version="1.0.0",
     docs_url="/docs",
-    redoc_url="/redoc"
+    redoc_url="/redoc",
+    lifespan=lifespan,
 )
 
-# CORS 配置 - 允許前端跨域請求
+# CORS 配置 - 僅允許已知的前端來源
+_cors_origins = [
+    "http://localhost:8000",
+    "http://127.0.0.1:8000",
+    "http://localhost:8001",
+    "http://127.0.0.1:8001",
+]
+# 可透過環境變數新增額外來源（逗號分隔）
+_extra_origins = os.environ.get("CORS_ORIGINS", "")
+if _extra_origins:
+    _cors_origins.extend([o.strip() for o in _extra_origins.split(",") if o.strip()])
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:8000",
-        "http://127.0.0.1:8000",
-        "http://localhost:8001",
-        "http://127.0.0.1:8001",
-        "*"  # 開發環境允許所有來源
-    ],
+    allow_origins=_cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# 全域變數
-kuzu_manager = None
+# API 認證中間件（地端化伺服器安全防護）
+# 設定 BRUV_AUTH_ENABLED=false 環境變數可停用認證（僅供開發）
+auth_enabled = os.environ.get("BRUV_AUTH_ENABLED", "true").lower() != "false"
+app.add_middleware(APIAuthMiddleware, enabled=auth_enabled)
+
+if auth_enabled:
+    api_token = initialize_auth_token()
+else:
+    logger.warning("API 認證已停用（BRUV_AUTH_ENABLED=false），請勿在生產環境使用！")
+    api_token = None
 
 
-# 生命週期事件
-@app.on_event("startup")
-async def startup_event():
-    """應用啟動時初始化"""
-    global kuzu_manager
-    
-    logger.info("🚀 BruV_Project 啟動中...")
-    
-    # 初始化 KuzuDB（失敗時自動切換到 Mock 模式）
-    try:
-        logger.info("嘗試初始化真實 KuzuDB...")
-        kuzu_manager = KuzuDBManager(settings.KUZU_DB_PATH)
-        logger.info("✅ KuzuDB 初始化成功（生產模式）")
-    except Exception as e:
-        logger.warning(f"⚠️ KuzuDB 初始化失敗: {e}")
-        logger.info("🔄 自動切換到 MockKuzuManager（開發模式）")
-        try:
-            kuzu_manager = MockKuzuManager(settings.KUZU_DB_PATH)
-            logger.info("✅ MockKuzuManager 初始化成功（圖譜功能使用記憶體模式）")
-        except Exception as mock_error:
-            logger.error(f"❌ MockKuzuManager 初始化也失敗: {mock_error}")
-            kuzu_manager = None
-    
-    # 檢查外部服務連接
-    logger.info(f"🔗 Dify API: {settings.DIFY_API_URL}")
-    logger.info(f"🔗 RAGFlow API: {settings.RAGFLOW_API_URL}")
-    
-    logger.info("✨ 服務已就緒")
+# ==================== 認證 API ====================
 
+class LoginRequest(BaseModel):
+    """登入請求"""
+    token: str
 
-@app.on_event("shutdown")
-async def shutdown_event():
-    """應用關閉時清理"""
-    global kuzu_manager
-    
-    logger.info("👋 BruV_Project 關閉中...")
-    
-    if kuzu_manager:
-        kuzu_manager.close()
-        logger.info("✅ KuzuDB 連接已關閉")
+@app.post("/api/auth/login")
+async def login(request: LoginRequest):
+    """驗證 API Token 並返回認證狀態"""
+    if verify_token(request.token):
+        return {"success": True, "message": "認證成功"}
+    raise HTTPException(status_code=401, detail="Token 無效")
 
+@app.get("/api/auth/status")
+async def auth_status():
+    """檢查認證是否啟用"""
+    return {"auth_enabled": auth_enabled}
 
 # 健康檢查
 @app.get("/api/health")
-async def health_check():
+async def health_check(request: Request):
     """服務健康檢查"""
-    kuzu_status = "connected" if kuzu_manager else "unavailable"
+    km = getattr(request.app.state, 'kuzu_manager', None)
+    kuzu_status = "connected" if km else "unavailable"
     return {
         "status": "healthy",
         "services": {
@@ -126,7 +218,7 @@ async def health_check():
             "dify": settings.DIFY_API_URL,
             "ragflow": settings.RAGFLOW_API_URL
         },
-        "message": "KuzuDB 圖譜功能可能因 Windows 編碼問題而不可用" if not kuzu_manager else None
+        "message": "KuzuDB 圖譜功能可能因 Windows 編碼問題而不可用" if not km else None
     }
 
 
@@ -142,10 +234,14 @@ async def root():
 
 # ==================== 知識圖譜 API 端點 ====================
 
+# 注册任务管理 API
+app.include_router(tasks_router)
+
 @app.post("/api/graph/create", response_model=EntityResponse)
-async def create_entity_endpoint(entity: EntityCreate):
+async def create_entity_endpoint(request: Request, entity: EntityCreate):
     """創建單個實體節點"""
     try:
+        kuzu_manager = getattr(request.app.state, 'kuzu_manager', None)
         # 檢查 KuzuDB 是否可用
         if not kuzu_manager:
             return EntityResponse(
@@ -163,7 +259,8 @@ async def create_entity_endpoint(entity: EntityCreate):
             entity_id=entity.id,
             name=entity.name,
             entity_type=entity.type,
-            properties=entity.properties or {}
+            properties=entity.properties or {},
+            graph_id=entity.graph_id or "1"
         )
         
         if success:
@@ -193,9 +290,10 @@ async def create_entity_endpoint(entity: EntityCreate):
 
 
 @app.post("/api/graph/batch-create", response_model=EntityResponse)
-async def batch_create_entities(batch: BatchEntityCreate):
+async def batch_create_entities(request: Request, batch: BatchEntityCreate):
     """批量創建實體節點"""
     try:
+        kuzu_manager = getattr(request.app.state, 'kuzu_manager', None)
         if not kuzu_manager:
             return EntityResponse(
                 success=False,
@@ -213,7 +311,8 @@ async def batch_create_entities(batch: BatchEntityCreate):
                     entity_id=entity.id,
                     name=entity.name,
                     entity_type=entity.type,
-                    properties=entity.properties or {}
+                    properties=entity.properties or {},
+                    graph_id=entity.graph_id or "1"
                 )
                 if success:
                     success_count += 1
@@ -243,132 +342,258 @@ async def batch_create_entities(batch: BatchEntityCreate):
 
 
 @app.get("/api/graph/data")
-async def get_graph_data():
+async def get_graph_data(request: Request, graph_id: str = "1"):
     """
     獲取知識圖譜數據（節點與連結）
     用於 3D/2D 視覺化渲染
     
+    Args:
+        graph_id: 圖譜 ID (1: 主腦圖譜, graph_xxx: 用戶創建的圖譜)
+    
     Returns:
         包含 nodes 和 links 的 JSON 數據
     """
+    import json
+    
+    kuzu_manager = getattr(request.app.state, 'kuzu_manager', None)
+    logger.info(f"請求圖譜數據: graph_id={graph_id}")
+    
+    # 檢查 KuzuDB 是否可用
+    if not kuzu_manager:
+        logger.warning("⚠️ KuzuDB 不可用，返回空數據")
+        return {
+            "success": False,
+            "data": {
+                "nodes": [],
+                "links": [],
+                "metadata": {
+                    "total_nodes": 0,
+                    "total_links": 0,
+                    "source": "unavailable",
+                    "graph_id": graph_id,
+                    "note": "KuzuDB 未初始化，無法獲取圖譜數據"
+                }
+            }
+        }
+    
     try:
-        # TODO: 階段二 - 集成真實數據源
-        # 1. 優先從 RAGFlow GraphRAG API 獲取: GET /v1/api/graph
-        # 2. 或直接查詢 KuzuDB: SELECT * FROM Entity, Relationship
-        # 3. 轉換成標準格式: {nodes: [...], links: [...]}
+        logger.info(f"📊 正在從 KuzuDB 查詢圖譜數據 (graph_id={graph_id})...")
         
-        # 階段一：返回豐富的 Mock Data
-        logger.info("📊 返回 Mock 圖譜數據（待集成 RAGFlow/KuzuDB）")
+        # 根據 graph_id 過濾數據
+        # 主腦圖譜 (ID=1): 查詢所有 graph_id 為空或等於 '1' 的節點
+        # 用戶圖譜: 只查詢對應 graph_id 的節點
+        if str(graph_id) == "1":
+            # 主腦圖譜：查詢所有未標記圖譜ID或標記為1的節點
+            nodes_query = "MATCH (n:Entity) WHERE n.graph_id IS NULL OR n.graph_id = '1' RETURN n"
+            links_query = "MATCH (a:Entity)-[r:Relation]->(b:Entity) WHERE (a.graph_id IS NULL OR a.graph_id = '1') AND (b.graph_id IS NULL OR b.graph_id = '1') RETURN a, r, b"
+            nodes_result = kuzu_manager.query(nodes_query)
+            links_result = kuzu_manager.query(links_query)
+        else:
+            # 用戶創建的圖譜：使用參數化查詢防止 Cypher 注入
+            nodes_query = "MATCH (n:Entity) WHERE n.graph_id = $gid RETURN n"
+            links_query = "MATCH (a:Entity)-[r:Relation]->(b:Entity) WHERE a.graph_id = $gid AND b.graph_id = $gid RETURN a, r, b"
+            nodes_result = kuzu_manager.query(nodes_query, parameters={"gid": graph_id})
+            links_result = kuzu_manager.query(links_query, parameters={"gid": graph_id})
         
-        # 生成模擬數據 - 3 種類型的節點
-        mock_nodes = []
-        mock_links = []
+        # 轉換節點數據
+        nodes = []
+        node_type_count = {}
         
-        # Person 節點 (藍色)
-        persons = [
-            {"id": "p1", "name": "張三", "type": "Person", "group": 1, "val": 15},
-            {"id": "p2", "name": "李四", "type": "Person", "group": 1, "val": 12},
-            {"id": "p3", "name": "王五", "type": "Person", "group": 1, "val": 10},
-            {"id": "p4", "name": "趙六", "type": "Person", "group": 1, "val": 8},
-            {"id": "p5", "name": "陳七", "type": "Person", "group": 1, "val": 14},
-        ]
+        for row in nodes_result:
+            try:
+                node_data = row.get('n', {})
+                
+                # 提取節點基本資訊
+                node_id = node_data.get('id', '')
+                node_name = node_data.get('name', 'Unknown')
+                node_type = node_data.get('type', 'Unknown')
+                
+                # 解析 properties 字串為 JSON（如果是字串的話）
+                properties_str = node_data.get('properties', '{}')
+                try:
+                    if isinstance(properties_str, str):
+                        properties = json.loads(properties_str.replace("'", '"'))
+                    else:
+                        properties = properties_str
+                except (json.JSONDecodeError, AttributeError):
+                    properties = {}
+                
+                # 根據類型分配 group（用於顏色分類）
+                type_to_group = {
+                    'Person': 1,
+                    'Company': 2,
+                    'Concept': 3,
+                    'document': 4,
+                    'Document': 4,
+                }
+                group = type_to_group.get(node_type, 5)
+                
+                # 統計節點類型
+                node_type_count[node_type] = node_type_count.get(node_type, 0) + 1
+                
+                # 構建節點對象
+                node = {
+                    "id": node_id,
+                    "name": node_name,
+                    "type": node_type,
+                    "group": group,
+                    "val": 10,  # 預設大小
+                    "properties": properties
+                }
+                
+                nodes.append(node)
+                
+            except Exception as e:
+                logger.error(f"❌ 解析節點數據失敗: {e}")
+                continue
         
-        # Company 節點 (紫色)
-        companies = [
-            {"id": "c1", "name": "科技公司A", "type": "Company", "group": 2, "val": 20},
-            {"id": "c2", "name": "軟體公司B", "type": "Company", "group": 2, "val": 18},
-            {"id": "c3", "name": "AI 研究院", "type": "Company", "group": 2, "val": 22},
-            {"id": "c4", "name": "創投基金", "type": "Company", "group": 2, "val": 16},
-        ]
+        # 轉換關係數據
+        links = []
         
-        # Concept 節點 (綠色)
-        concepts = [
-            {"id": "k1", "name": "機器學習", "type": "Concept", "group": 3, "val": 25},
-            {"id": "k2", "name": "知識圖譜", "type": "Concept", "group": 3, "val": 20},
-            {"id": "k3", "name": "自然語言處理", "type": "Concept", "group": 3, "val": 18},
-            {"id": "k4", "name": "GraphRAG", "type": "Concept", "group": 3, "val": 22},
-            {"id": "k5", "name": "向量資料庫", "type": "Concept", "group": 3, "val": 15},
-            {"id": "k6", "name": "Prompt Engineering", "type": "Concept", "group": 3, "val": 12},
-        ]
+        for row in links_result:
+            try:
+                source_node = row.get('a', {})
+                target_node = row.get('b', {})
+                relation = row.get('r', {})
+                
+                # 提取關係資訊
+                source_id = source_node.get('id', '')
+                target_id = target_node.get('id', '')
+                relation_type = relation.get('relation_type', 'relates_to')
+                
+                # 構建連結對象
+                link = {
+                    "source": source_id,
+                    "target": target_id,
+                    "label": relation_type,
+                    "value": 1
+                }
+                
+                links.append(link)
+                
+            except Exception as e:
+                logger.error(f"❌ 解析關係數據失敗: {e}")
+                continue
         
-        # 合併所有節點
-        mock_nodes = persons + companies + concepts
-        
-        # 生成連結關係
-        mock_links = [
-            # 人與公司的關係
-            {"source": "p1", "target": "c1", "label": "就職於", "value": 1},
-            {"source": "p2", "target": "c1", "label": "就職於", "value": 1},
-            {"source": "p3", "target": "c2", "label": "就職於", "value": 1},
-            {"source": "p4", "target": "c3", "label": "就職於", "value": 1},
-            {"source": "p5", "target": "c4", "label": "投資顧問", "value": 1},
-            
-            # 人與概念的關係
-            {"source": "p1", "target": "k1", "label": "研究領域", "value": 1},
-            {"source": "p1", "target": "k2", "label": "專長", "value": 1},
-            {"source": "p2", "target": "k3", "label": "研究領域", "value": 1},
-            {"source": "p3", "target": "k4", "label": "專長", "value": 1},
-            {"source": "p4", "target": "k1", "label": "研究領域", "value": 1},
-            {"source": "p4", "target": "k5", "label": "專長", "value": 1},
-            {"source": "p5", "target": "k6", "label": "關注", "value": 1},
-            
-            # 公司與概念的關係
-            {"source": "c1", "target": "k1", "label": "技術棧", "value": 2},
-            {"source": "c1", "target": "k2", "label": "技術棧", "value": 2},
-            {"source": "c2", "target": "k3", "label": "核心技術", "value": 2},
-            {"source": "c2", "target": "k6", "label": "服務項目", "value": 2},
-            {"source": "c3", "target": "k1", "label": "研究方向", "value": 2},
-            {"source": "c3", "target": "k4", "label": "研究方向", "value": 2},
-            {"source": "c4", "target": "k5", "label": "投資領域", "value": 2},
-            
-            # 概念之間的關係
-            {"source": "k1", "target": "k2", "label": "相關技術", "value": 1},
-            {"source": "k1", "target": "k3", "label": "相關技術", "value": 1},
-            {"source": "k2", "target": "k4", "label": "演進技術", "value": 1},
-            {"source": "k3", "target": "k6", "label": "應用場景", "value": 1},
-            {"source": "k4", "target": "k5", "label": "技術依賴", "value": 1},
-            
-            # 人與人的關係
-            {"source": "p1", "target": "p2", "label": "同事", "value": 1},
-            {"source": "p3", "target": "p1", "label": "合作", "value": 1},
-            {"source": "p4", "target": "p1", "label": "學術交流", "value": 1},
-            
-            # 公司之間的關係
-            {"source": "c1", "target": "c3", "label": "合作夥伴", "value": 2},
-            {"source": "c2", "target": "c3", "label": "技術合作", "value": 2},
-            {"source": "c4", "target": "c1", "label": "投資", "value": 2},
-        ]
+        logger.info(f"✅ 成功查詢圖譜數據: {len(nodes)} 個節點, {len(links)} 條連結")
         
         return {
             "success": True,
             "data": {
-                "nodes": mock_nodes,
-                "links": mock_links,
+                "nodes": nodes,
+                "links": links,
                 "metadata": {
-                    "total_nodes": len(mock_nodes),
-                    "total_links": len(mock_links),
-                    "node_types": {
-                        "Person": len(persons),
-                        "Company": len(companies),
-                        "Concept": len(concepts)
-                    },
-                    "source": "mock_data",
-                    "note": "這是模擬數據，未來將集成 RAGFlow GraphRAG API 或 KuzuDB"
+                    "total_nodes": len(nodes),
+                    "total_links": len(links),
+                    "node_types": node_type_count,
+                    "source": "kuzu_db",
+                    "graph_id": graph_id,
+                    "note": f"從 KuzuDB 載入圖譜 {graph_id}"
                 }
             }
         }
         
     except Exception as e:
         logger.error(f"❌ 獲取圖譜數據失敗: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"獲取圖譜數據失敗: {str(e)}")
+        
+        # 返回空數據而不是拋出異常
+        return {
+            "success": False,
+            "data": {
+                "nodes": [],
+                "links": [],
+                "metadata": {
+                    "total_nodes": 0,
+                    "total_links": 0,
+                    "source": "error",
+                    "note": f"查詢失敗: {str(e)}"
+                }
+            }
+        }
 
 
 # 註冊 API 路由
+# ==================== 檔案上傳 API ====================
+
+@app.post("/api/system/upload")
+async def upload_file(
+    request: Request,
+    file: UploadFile = File(...),
+    graph_id: str = Form("1"),
+    graph_mode: str = Form("existing"),
+    graph_name: str = Form(None)
+):
+    """
+    上傳檔案到監控資料夾，創建後台任務自動處理
+    
+    Args:
+        file: 上傳的檔案
+        graph_id: 目標圖譜 ID (預設為 "1" 主腦圖譜)
+        graph_mode: 圖譜模式 ("new" 或 "existing")
+        graph_name: 新圖譜名稱 (當 graph_mode="new" 時使用)
+    
+    Returns:
+        上傳結果資訊及任務 ID
+    """
+    try:
+        logger.info(f"📤 收到文件上傳請求: {file.filename}, graph_mode={graph_mode}, graph_id={graph_id}, graph_name={graph_name}")
+        
+        # 使用監控資料夾作為上傳目錄
+        upload_dir = Path(settings.AUTO_IMPORT_DIR)
+        
+        # 確保上傳目錄存在
+        upload_dir.mkdir(parents=True, exist_ok=True)
+        
+        # 檢查檔案名稱
+        if not file.filename:
+            raise HTTPException(status_code=400, detail="檔案名稱不能為空")
+        
+        # 生成檔案路徑
+        file_path = upload_dir / file.filename
+        
+        # 如果檔案已存在，添加時間戳
+        if file_path.exists():
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            file_stem = file_path.stem
+            file_suffix = file_path.suffix
+            file_path = upload_dir / f"{file_stem}_{timestamp}{file_suffix}"
+        
+        # 儲存檔案
+        with open(file_path, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+        
+        # 創建後台任務
+        task_id = task_queue.create_task(
+            task_type="file_upload",
+            file_path=file_path,
+            file_name=file_path.name,
+            graph_id=graph_id
+        )
+        
+        logger.info(f"✅ 檔案上傳成功，任務 ID: {task_id}")
+        logger.info(f"📋 檔案將由後台任務處理: {file_path}")
+        
+        return {
+            "success": True,
+            "message": "檔案已送入神經網路，正在解析中...",
+            "task_id": task_id,
+            "filename": file.filename,
+            "saved_path": str(file_path),
+            "size": os.path.getsize(file_path),
+            "upload_time": datetime.now().isoformat()
+        }
+        
+    except Exception as e:
+        logger.error(f"❌ 檔案上傳失敗: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"檔案上傳失敗: {str(e)}")
+
+
 app.include_router(dify_router, prefix="/api/dify", tags=["Dify"])
 app.include_router(ragflow_router, prefix="/api/ragflow", tags=["RAGFlow"])
 app.include_router(graph_router, prefix="/api/graph", tags=["Knowledge Graph"])
 app.include_router(graph_import_router, prefix="/api/graph", tags=["Graph Import"])
 app.include_router(system_router, prefix="/api/system", tags=["System"])
+app.include_router(media_library_router, prefix="/api/media", tags=["Media Library"])
 
 
 # 靜態文件服務
@@ -395,11 +620,13 @@ async def http_exception_handler(request: Request, exc: HTTPException):
 async def general_exception_handler(request: Request, exc: Exception):
     """統一一般異常處理"""
     logger.error(f"未處理的異常: {exc}", exc_info=True)
+    # 不洩漏內部錯誤詳情給客戶端
+    debug = os.environ.get("DEBUG", "false").lower() == "true"
     return JSONResponse(
         status_code=500,
         content={
             "error": "內部伺服器錯誤",
-            "detail": str(exc),
+            "detail": str(exc) if debug else "請聯繫管理員或查看伺服器日誌",
             "path": str(request.url)
         }
     )
@@ -407,9 +634,12 @@ async def general_exception_handler(request: Request, exc: Exception):
 
 if __name__ == "__main__":
     import uvicorn
+    host = os.environ.get("BRUV_HOST", "127.0.0.1")
+    port = int(os.environ.get("BRUV_PORT", "8000"))
+    debug = os.environ.get("DEBUG", "false").lower() == "true"
     uvicorn.run(
         "app_anytype:app",
-        host="0.0.0.0",
-        port=8000,
-        reload=True
+        host=host,
+        port=port,
+        reload=debug  # 僅開發模式啟用 auto-reload
     )

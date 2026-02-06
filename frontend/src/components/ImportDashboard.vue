@@ -8,6 +8,12 @@ const graphStore = useGraphStore();
 const layoutStore = useLayoutStore();
 
 const fileInputRef = ref(null);
+const importMode = ref('single'); // 'single' 或 'multi'
+
+// 切換導入模式
+function toggleImportMode(mode) {
+  importMode.value = mode;
+}
 
 // 觸發檔案選擇
 function triggerFile() {
@@ -22,7 +28,7 @@ async function onFileChange(event) {
   event.target.value = ''; // 重置 input
   
   for (const file of files) {
-    await graphStore.importFile(file);
+    await graphStore.importFile(file, importMode.value);
   }
   
   ElMessage.success(`成功匯入 ${files.length} 個檔案`);
@@ -40,7 +46,7 @@ async function handleDrop(event) {
   if (files.length === 0) return;
   
   for (const file of files) {
-    await graphStore.importFile(file);
+    await graphStore.importFile(file, importMode.value);
   }
   
   ElMessage.success(`成功匯入 ${files.length} 個檔案`);
@@ -78,18 +84,18 @@ function getFileExt(filename) {
 // 獲取檔案類型顏色
 function getFileColor(ext) {
   const colorMap = {
-    'PDF': 'bg-red-100 dark:bg-red-900/50 text-red-600 dark:text-red-400',
-    'DOC': 'bg-blue-100 dark:bg-blue-900/50 text-blue-600 dark:text-blue-400',
-    'DOCX': 'bg-blue-100 dark:bg-blue-900/50 text-blue-600 dark:text-blue-400',
-    'XLS': 'bg-green-100 dark:bg-green-900/50 text-green-600 dark:text-green-400',
-    'XLSX': 'bg-green-100 dark:bg-green-900/50 text-green-600 dark:text-green-400',
-    'CSV': 'bg-green-100 dark:bg-green-900/50 text-green-600 dark:text-green-400',
-    'PPT': 'bg-orange-100 dark:bg-orange-900/50 text-orange-600 dark:text-orange-400',
-    'PPTX': 'bg-orange-100 dark:bg-orange-900/50 text-orange-600 dark:text-orange-400',
-    'TXT': 'bg-gray-100 dark:bg-gray-800/50 text-gray-600 dark:text-gray-400',
-    'MD': 'bg-purple-100 dark:bg-purple-900/50 text-purple-600 dark:text-purple-400'
+    'PDF': 'bg-red-900/50 text-red-400',
+    'DOC': 'bg-blue-900/50 text-blue-400',
+    'DOCX': 'bg-blue-900/50 text-blue-400',
+    'XLS': 'bg-green-900/50 text-green-400',
+    'XLSX': 'bg-green-900/50 text-green-400',
+    'CSV': 'bg-green-900/50 text-green-400',
+    'PPT': 'bg-orange-900/50 text-orange-400',
+    'PPTX': 'bg-orange-900/50 text-orange-400',
+    'TXT': 'bg-gray-800/50 text-gray-400',
+    'MD': 'bg-purple-900/50 text-purple-400'
   };
-  return colorMap[ext] || 'bg-blue-100 dark:bg-blue-900/50 text-blue-600 dark:text-blue-400';
+  return colorMap[ext] || 'bg-blue-900/50 text-blue-400';
 }
 
 // 檢查節點是否被選中
@@ -101,16 +107,55 @@ function isNodeSelected(file) {
 <template>
   <div class="import-dashboard flex flex-col h-full">
     <div class="flex items-center justify-between mb-3">
-      <h3 class="text-sm font-bold text-slate-700 dark:text-white">
+      <h3 class="text-sm font-bold text-white">
         知識來源匯入 
-        <span class="text-xs font-normal text-slate-500 dark:text-gray-400 ml-2">(AI 智慧解析)</span>
+        <span class="text-xs font-normal text-gray-400 ml-2">(AI 智慧解析)</span>
       </h3>
       <span 
         v-if="graphStore.importedFiles.length > 0"
-        class="px-2 py-1 bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 text-[10px] font-bold rounded-full"
+        class="px-2 py-1 bg-blue-900/30 text-blue-400 text-[10px] font-bold rounded-full"
       >
         {{ graphStore.importedFiles.length }}
       </span>
+    </div>
+    
+    <!-- 導入模式選擇 -->
+    <div class="mb-3 flex items-center gap-2">
+      <span class="text-xs text-gray-400">導入模式：</span>
+      <button
+        @click="toggleImportMode('single')"
+        class="px-3 py-1.5 text-xs rounded-md transition-all"
+        :class="[
+          importMode === 'single'
+            ? 'bg-blue-500 text-white shadow-sm'
+            : 'bg-white/5 text-gray-400 hover:bg-white/10'
+        ]"
+      >
+        📝 單一節點
+      </button>
+      <button
+        @click="toggleImportMode('multi')"
+        class="px-3 py-1.5 text-xs rounded-md transition-all"
+        :class="[
+          importMode === 'multi'
+            ? 'bg-blue-500 text-white shadow-sm'
+            : 'bg-white/5 text-gray-400 hover:bg-white/10'
+        ]"
+      >
+        📋 多個節點 (Excel)
+      </button>
+    </div>
+    
+    <!-- 模式說明 -->
+    <div class="mb-4 px-3 py-2 bg-blue-900/20 rounded-lg border border-blue-800">
+      <p class="text-xs text-blue-300">
+        <span v-if="importMode === 'single'">
+          📝 <strong>單一節點模式：</strong>將檔案作為一個節點導入圖譜
+        </span>
+        <span v-else>
+          📋 <strong>多個節點模式：</strong>讀取 Excel 檔案，每一列資料創建獨立節點
+        </span>
+      </p>
     </div>
     
     <!-- 上傳區域 -->
@@ -118,10 +163,10 @@ function isNodeSelected(file) {
       @click="triggerFile"
       @dragover="handleDragOver"
       @drop="handleDrop"
-      class="border-2 border-dashed border-slate-300 dark:border-white/20 rounded-lg p-4 flex flex-col items-center justify-center cursor-pointer hover:bg-blue-50 dark:hover:bg-blue-900/20 hover:border-blue-400 transition-colors mb-4"
+      class="border-2 border-dashed border-white/20 rounded-lg p-4 flex flex-col items-center justify-center cursor-pointer hover:bg-blue-900/20 hover:border-blue-400 transition-colors mb-4"
     >
       <span class="text-2xl mb-1">＋</span>
-      <span class="text-xs text-slate-500 dark:text-gray-400">點擊或拖放 PDF, Excel, PPT</span>
+      <span class="text-xs text-gray-400">點擊或拖放 PDF, Excel, PPT</span>
       <input 
         ref="fileInputRef" 
         type="file" 
@@ -138,11 +183,11 @@ function isNodeSelected(file) {
         v-for="file in graphStore.importedFiles" 
         :key="file.id" 
         @click="handleFileClick(file)"
-        class="relative flex items-center p-2 bg-white dark:bg-white/5 rounded-lg border cursor-pointer shadow-sm hover:shadow-md transition-all group"
+        class="relative flex items-center p-2 bg-white/5 rounded-lg border cursor-pointer shadow-sm hover:shadow-md transition-all group"
         :class="[
           isNodeSelected(file)
-            ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20 ring-2 ring-blue-500/50'
-            : 'border-slate-200 dark:border-white/10 hover:border-blue-400 dark:hover:border-blue-500'
+            ? 'border-blue-500 bg-blue-900/20 ring-2 ring-blue-500/50'
+            : 'border-white/10 hover:border-blue-500'
         ]"
       >
         <div 
@@ -152,16 +197,16 @@ function isNodeSelected(file) {
           <span class="text-[10px] font-bold">{{ getFileExt(file.name) }}</span>
         </div>
         <div class="flex-1 min-w-0">
-          <p class="text-xs font-medium text-slate-700 dark:text-white truncate group-hover:text-blue-600 dark:group-hover:text-blue-400">
+          <p class="text-xs font-medium text-white truncate group-hover:text-blue-400">
             {{ file.name }}
           </p>
-          <p class="text-[10px] text-slate-400 dark:text-gray-500">{{ file.status }}</p>
+          <p class="text-[10px] text-gray-500">{{ file.status }}</p>
         </div>
         
         <!-- 刪除按鈕 -->
         <button
           @click="handleDeleteFile(file, $event)"
-          class="w-6 h-6 flex items-center justify-center rounded bg-red-100 dark:bg-red-900/30 text-red-600 dark:text-red-400 opacity-0 group-hover:opacity-100 hover:bg-red-200 dark:hover:bg-red-900/50 transition-all"
+          class="w-6 h-6 flex items-center justify-center rounded bg-red-900/30 text-red-400 opacity-0 group-hover:opacity-100 hover:bg-red-900/50 transition-all"
           title="刪除檔案"
         >
           <span class="text-xs">✕</span>
@@ -171,7 +216,7 @@ function isNodeSelected(file) {
       <!-- 空狀態 -->
       <div v-if="graphStore.importedFiles.length === 0" class="flex flex-col items-center justify-center h-full gap-3 py-8">
         <span class="text-4xl opacity-30">📂</span>
-        <p class="text-xs text-slate-500 dark:text-gray-400 text-center">尚未匯入任何檔案<br/>點擊上方區域開始上傳</p>
+        <p class="text-xs text-gray-400 text-center">尚未匯入任何檔案<br/>點擊上方區域開始上傳</p>
       </div>
     </div>
   </div>

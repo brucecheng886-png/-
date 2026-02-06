@@ -24,22 +24,31 @@
             <span class="section-icon">🤖</span>
             Dify 配置
           </h2>
-          <span class="section-badge">AI 對話服務</span>
+          <div class="section-actions">
+            <span class="section-badge">AI 對話服務</span>
+            <a href="http://localhost:82" target="_blank" class="manage-link">
+              <span class="link-icon">🔗</span>
+              管理介面
+            </a>
+          </div>
         </div>
 
         <!-- Dify API URL -->
         <div class="form-group">
           <label class="form-label">
             API URL
-            <span class="label-badge">唯讀</span>
+            <span class="label-badge">可編輯</span>
           </label>
           <input
             v-model="config.dify_api_url"
             type="text"
-            class="form-input readonly"
-            readonly
+            class="form-input"
             placeholder="http://localhost:80/v1"
+            @input="hasChanges = true"
           />
+          <p class="form-hint">
+            Dify 服務的 API 端點（例如：http://localhost:80/v1 或 http://172.19.0.2:3000/v1）
+          </p>
         </div>
 
         <!-- Dify API Key -->
@@ -57,12 +66,12 @@
               @input="hasChanges = true"
             />
             <button 
-              class="toggle-visibility-btn"
+              type="button" 
+              class="toggle-password-btn"
               @click="showDifyKey = !showDifyKey"
-              type="button"
               :title="showDifyKey ? '隱藏' : '顯示'"
             >
-              {{ showDifyKey ? '👁️' : '🙈' }}
+              {{ showDifyKey ? '👁️' : '👁️‍🗨️' }}
             </button>
           </div>
           <p class="form-hint">
@@ -81,22 +90,31 @@
             <span class="section-icon">📚</span>
             RAGFlow 配置
           </h2>
-          <span class="section-badge">知識檢索服務</span>
+          <div class="section-actions">
+            <span class="section-badge">知識檢索服務</span>
+            <a href="http://localhost:81" target="_blank" class="manage-link">
+              <span class="link-icon">🔗</span>
+              管理介面
+            </a>
+          </div>
         </div>
 
         <!-- RAGFlow API URL -->
         <div class="form-group">
           <label class="form-label">
             API URL
-            <span class="label-badge">唯讀</span>
+            <span class="label-badge">可編輯</span>
           </label>
           <input
             v-model="config.ragflow_api_url"
             type="text"
-            class="form-input readonly"
-            readonly
+            class="form-input"
             placeholder="http://localhost:81/api/v1"
+            @input="hasChanges = true"
           />
+          <p class="form-hint">
+            RAGFlow 服務的 API 端點（例如：http://localhost:81/api/v1 或自訂 URL）
+          </p>
         </div>
 
         <!-- RAGFlow API Key -->
@@ -114,12 +132,12 @@
               @input="hasChanges = true"
             />
             <button 
-              class="toggle-visibility-btn"
+              type="button" 
+              class="toggle-password-btn"
               @click="showRagflowKey = !showRagflowKey"
-              type="button"
               :title="showRagflowKey ? '隱藏' : '顯示'"
             >
-              {{ showRagflowKey ? '👁️' : '🙈' }}
+              {{ showRagflowKey ? '👁️' : '👁️‍🗨️' }}
             </button>
           </div>
           <p class="form-hint">
@@ -130,6 +148,15 @@
 
       <!-- 操作按鈕 -->
       <div class="form-actions">
+        <button 
+          class="btn btn-test"
+          @click="testConnection"
+          :disabled="testing"
+        >
+          <span v-if="testing" class="btn-spinner">⏳</span>
+          <span v-else class="btn-icon">🔍</span>
+          {{ testing ? '測試中...' : '測試連接' }}
+        </button>
         <button 
           class="btn btn-secondary"
           @click="loadConfig"
@@ -149,14 +176,58 @@
         </button>
       </div>
 
+      <!-- 連接測試結果 -->
+      <div v-if="testResult" class="test-result-box">
+        <h4>連接測試結果</h4>
+        
+        <!-- Dify 測試結果 -->
+        <div class="service-test-result">
+          <div class="service-header">
+            <span class="service-icon">🤖</span>
+            <span class="service-name">Dify</span>
+            <span 
+              class="status-badge" 
+              :class="testResult.dify.status"
+            >
+              {{ testResult.dify.status === 'ok' ? '✅ 正常' : testResult.dify.status === 'warning' ? '⚠️ 警告' : '❌ 錯誤' }}
+            </span>
+          </div>
+          <div class="service-details">
+            <p><strong>URL:</strong> {{ testResult.dify.url }}</p>
+            <p><strong>狀態:</strong> {{ testResult.dify.message }}</p>
+            <p><strong>API Key:</strong> {{ testResult.dify.api_key_configured ? '已配置' : '未配置' }}</p>
+          </div>
+        </div>
+
+        <!-- RAGFlow 測試結果 -->
+        <div class="service-test-result">
+          <div class="service-header">
+            <span class="service-icon">📚</span>
+            <span class="service-name">RAGFlow</span>
+            <span 
+              class="status-badge" 
+              :class="testResult.ragflow.status"
+            >
+              {{ testResult.ragflow.status === 'ok' ? '✅ 正常' : testResult.ragflow.status === 'warning' ? '⚠️ 警告' : '❌ 錯誤' }}
+            </span>
+          </div>
+          <div class="service-details">
+            <p><strong>URL:</strong> {{ testResult.ragflow.url }}</p>
+            <p><strong>狀態:</strong> {{ testResult.ragflow.message }}</p>
+            <p><strong>API Key:</strong> {{ testResult.ragflow.api_key_configured ? '已配置' : '未配置' }}</p>
+          </div>
+        </div>
+      </div>
+
       <!-- 提示訊息 -->
       <div class="info-box">
         <div class="info-icon">💡</div>
         <div class="info-content">
           <h4>重要提示</h4>
           <ul>
-            <li>修改 API Key 後，建議重啟後端服務以確保完全生效</li>
-            <li>API Keys 將儲存在 <code>.env</code> 文件中</li>
+            <li>所有配置將保存在 <code>C:/BruV_Data/config.json</code> 文件中</li>
+            <li>修改配置後將立即生效，無需重啟後端服務</li>
+            <li>配置優先級：config.json > 環境變數 > 默認值</li>
             <li>請妥善保管 API Keys，不要分享給他人</li>
           </ul>
         </div>
@@ -182,7 +253,12 @@ const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000
 // 狀態管理
 const loading = ref(true);
 const saving = ref(false);
+const testing = ref(false);
 const hasChanges = ref(false);
+
+// 顯示/隱藏密碼狀態
+const showDifyKey = ref(false);
+const showRagflowKey = ref(false);
 
 // 表單數據
 const config = ref({
@@ -192,9 +268,8 @@ const config = ref({
   ragflow_api_url: ''
 });
 
-// 密碼顯示/隱藏
-const showDifyKey = ref(false);
-const showRagflowKey = ref(false);
+// 測試結果
+const testResult = ref(null);
 
 // Toast 通知
 const toast = ref({
@@ -224,15 +299,15 @@ const loadConfig = async () => {
     const data = await response.json();
     
     if (data.success && data.config) {
-      // 注意：後端返回的 key 是遮蔽過的（app-x*****），這裡只用於顯示
+      // 載入配置
       config.value = {
-        dify_key: '', // 不顯示遮蔽的 key，讓用戶重新輸入
-        ragflow_key: '',
+        dify_key: data.config.dify_key || '',
+        ragflow_key: data.config.ragflow_key || '',
         dify_api_url: data.config.dify_api_url || '',
         ragflow_api_url: data.config.ragflow_api_url || ''
       };
       
-      console.log('配置載入成功:', data);
+      console.log('配置載入成功:', data.config);
     }
     
   } catch (error) {
@@ -245,24 +320,33 @@ const loadConfig = async () => {
 
 // 儲存配置
 const saveConfig = async () => {
-  // 驗證至少有一個 key
-  if (!config.value.dify_key && !config.value.ragflow_key) {
-    showToast('error', '請至少填寫一個 API Key');
-    return;
-  }
-  
   saving.value = true;
   
   try {
     const payload = {};
     
-    // 只發送有值的 key
+    // 發送所有有值的設定
     if (config.value.dify_key) {
       payload.dify_key = config.value.dify_key;
     }
     if (config.value.ragflow_key) {
       payload.ragflow_key = config.value.ragflow_key;
     }
+    if (config.value.dify_api_url) {
+      payload.dify_api_url = config.value.dify_api_url;
+    }
+    if (config.value.ragflow_api_url) {
+      payload.ragflow_api_url = config.value.ragflow_api_url;
+    }
+    
+    // 驗證至少有一個設定項目
+    if (Object.keys(payload).length === 0) {
+      showToast('error', '請至少填寫一個設定項目');
+      saving.value = false;
+      return;
+    }
+    
+    console.log('準備發送的配置:', payload);
     
     const response = await fetch(`${API_BASE_URL}/api/system/config`, {
       method: 'POST',
@@ -280,12 +364,11 @@ const saveConfig = async () => {
     const data = await response.json();
     
     if (data.success) {
-      showToast('success', '✅ 設定已更新！建議重啟後端服務以確保生效');
+      showToast('success', '✅ 設定已保存到 config.json！修改將立即生效');
       hasChanges.value = false;
       
-      // 清空輸入框（因為已儲存）
-      config.value.dify_key = '';
-      config.value.ragflow_key = '';
+      // 重新載入配置以顯示最新值
+      await loadConfig();
     } else {
       throw new Error(data.message || '更新失敗');
     }
@@ -295,6 +378,41 @@ const saveConfig = async () => {
     showToast('error', `儲存失敗: ${error.message}`);
   } finally {
     saving.value = false;
+  }
+};
+
+// 測試連接
+const testConnection = async () => {
+  testing.value = true;
+  testResult.value = null;
+  
+  try {
+    const response = await fetch(`${API_BASE_URL}/api/system/test-connection`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      }
+    });
+    
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+    
+    const data = await response.json();
+    testResult.value = data;
+    
+    // 根據測試結果顯示通知
+    if (data.success) {
+      showToast('success', '✅ 所有服務連接正常！');
+    } else {
+      showToast('error', '⚠️ 部分服務連接失敗，請檢查測試結果');
+    }
+    
+  } catch (error) {
+    console.error('測試連接失敗:', error);
+    showToast('error', `測試失敗: ${error.message}`);
+  } finally {
+    testing.value = false;
   }
 };
 
@@ -309,9 +427,29 @@ onMounted(() => {
   max-width: 800px;
   margin: 0 auto;
   padding: 32px 24px;
-  height: 100%;
+  height: 100vh;
   overflow-y: auto;
   padding-bottom: 80px;
+  background: #0a0e27;
+}
+
+/* 自訂滾動條樣式 */
+.settings-container::-webkit-scrollbar {
+  width: 8px;
+}
+
+.settings-container::-webkit-scrollbar-track {
+  background: rgba(59, 130, 246, 0.05);
+  border-radius: 4px;
+}
+
+.settings-container::-webkit-scrollbar-thumb {
+  background: linear-gradient(180deg, #3b82f6, #8b5cf6);
+  border-radius: 4px;
+}
+
+.settings-container::-webkit-scrollbar-thumb:hover {
+  background: linear-gradient(180deg, #2563eb, #7c3aed);
 }
 
 /* 頁面標題 */
@@ -322,7 +460,7 @@ onMounted(() => {
 .page-title {
   font-size: 32px;
   font-weight: 700;
-  color: #ffffff;
+  color: #e5e5e5;
   display: flex;
   align-items: center;
   gap: 12px;
@@ -335,7 +473,7 @@ onMounted(() => {
 
 .page-subtitle {
   font-size: 16px;
-  color: #9ca3af;
+  color: #6b7280;
   margin: 0;
 }
 
@@ -365,12 +503,12 @@ onMounted(() => {
 
 /* 設定卡片 */
 .settings-card {
-  background: rgba(30, 41, 59, 0.7);
+  background: rgba(26, 29, 58, 0.8);
   backdrop-filter: blur(20px);
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  border: 1px solid #2d3154;
   border-radius: 24px;
   padding: 32px;
-  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.4);
 }
 
 /* 配置區塊 */
@@ -388,7 +526,7 @@ onMounted(() => {
 .section-title {
   font-size: 24px;
   font-weight: 600;
-  color: #ffffff;
+  color: #e5e5e5;
   display: flex;
   align-items: center;
   gap: 12px;
@@ -408,12 +546,44 @@ onMounted(() => {
   font-weight: 500;
 }
 
+.section-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.manage-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 16px;
+  background: rgba(59, 130, 246, 0.15);
+  border: 1px solid rgba(59, 130, 246, 0.3);
+  border-radius: 10px;
+  color: #60a5fa;
+  text-decoration: none;
+  font-size: 13px;
+  font-weight: 500;
+  transition: all 0.3s;
+}
+
+.manage-link:hover {
+  background: rgba(59, 130, 246, 0.25);
+  border-color: rgba(59, 130, 246, 0.5);
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(59, 130, 246, 0.2);
+}
+
+.link-icon {
+  font-size: 16px;
+}
+
 /* 分隔線 */
 .divider {
   height: 1px;
   background: linear-gradient(90deg, 
     transparent, 
-    rgba(255, 255, 255, 0.1) 50%, 
+    #2d3154 50%, 
     transparent
   );
   margin: 32px 0;
@@ -435,7 +605,7 @@ onMounted(() => {
 }
 
 .label-badge {
-  background: rgba(255, 255, 255, 0.1);
+  background: rgba(37, 40, 71, 0.8);
   color: #9ca3af;
   padding: 2px 8px;
   border-radius: 6px;
@@ -452,10 +622,10 @@ onMounted(() => {
 .form-input {
   width: 100%;
   padding: 14px 16px;
-  background: rgba(15, 23, 42, 0.6);
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(10, 14, 39, 0.6);
+  border: 1px solid #2d3154;
   border-radius: 12px;
-  color: #ffffff;
+  color: #e5e5e5;
   font-size: 15px;
   font-family: 'Monaco', 'Courier New', monospace;
   transition: all 0.3s;
@@ -464,8 +634,8 @@ onMounted(() => {
 .form-input:focus {
   outline: none;
   border-color: #3b82f6;
-  background: rgba(15, 23, 42, 0.8);
-  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+  background: rgba(10, 14, 39, 0.8);
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.15);
 }
 
 .form-input.readonly {
@@ -480,21 +650,22 @@ onMounted(() => {
 /* 帶切換按鈕的輸入框 */
 .input-with-toggle {
   position: relative;
+  display: flex;
+  align-items: center;
 }
 
 .input-with-toggle .form-input {
   padding-right: 50px;
+  flex: 1;
 }
 
-.toggle-visibility-btn {
+.toggle-password-btn {
   position: absolute;
   right: 8px;
-  top: 50%;
-  transform: translateY(-50%);
   width: 36px;
   height: 36px;
-  background: rgba(59, 130, 246, 0.2);
-  border: none;
+  background: rgba(59, 130, 246, 0.15);
+  border: 1px solid rgba(59, 130, 246, 0.3);
   border-radius: 8px;
   cursor: pointer;
   font-size: 18px;
@@ -502,11 +673,17 @@ onMounted(() => {
   align-items: center;
   justify-content: center;
   transition: all 0.3s;
+  color: #60a5fa;
 }
 
-.toggle-visibility-btn:hover {
-  background: rgba(59, 130, 246, 0.3);
-  transform: translateY(-50%) scale(1.05);
+.toggle-password-btn:hover {
+  background: rgba(59, 130, 246, 0.25);
+  border-color: rgba(59, 130, 246, 0.5);
+  transform: scale(1.05);
+}
+
+.toggle-password-btn:active {
+  transform: scale(0.95);
 }
 
 /* 表單提示 */
@@ -517,7 +694,7 @@ onMounted(() => {
 }
 
 .form-hint code {
-  background: rgba(255, 255, 255, 0.05);
+  background: rgba(37, 40, 71, 0.8);
   padding: 2px 6px;
   border-radius: 4px;
   font-family: 'Monaco', 'Courier New', monospace;
@@ -530,7 +707,7 @@ onMounted(() => {
   gap: 12px;
   margin-top: 32px;
   padding-top: 24px;
-  border-top: 1px solid rgba(255, 255, 255, 0.1);
+  border-top: 1px solid #2d3154;
 }
 
 .btn {
@@ -565,13 +742,116 @@ onMounted(() => {
 }
 
 .btn-secondary {
-  background: rgba(255, 255, 255, 0.1);
-  color: #e5e7eb;
-  border: 1px solid rgba(255, 255, 255, 0.2);
+  background: #252847;
+  color: #e5e5e5;
+  border: 1px solid #2d3154;
 }
 
 .btn-secondary:hover:not(:disabled) {
-  background: rgba(255, 255, 255, 0.15);
+  background: #2d3154;
+}
+
+.btn-test {
+  background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+  color: white;
+  border: none;
+  box-shadow: 0 4px 20px rgba(16, 185, 129, 0.3);
+}
+
+.btn-test:hover:not(:disabled) {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 30px rgba(16, 185, 129, 0.4);
+}
+
+.btn-icon, .btn-spinner {
+  font-size: 18px;
+}
+
+/* 測試結果框 */
+.test-result-box {
+  background: rgba(37, 40, 71, 0.5);
+  border: 1px solid #2d3154;
+  border-radius: 16px;
+  padding: 24px;
+  margin-top: 24px;
+}
+
+.test-result-box h4 {
+  margin: 0 0 16px 0;
+  font-size: 16px;
+  font-weight: 600;
+  color: #60a5fa;
+}
+
+.service-test-result {
+  background: rgba(26, 29, 58, 0.5);
+  border: 1px solid #2d3154;
+  border-radius: 12px;
+  padding: 16px;
+  margin-bottom: 12px;
+}
+
+.service-test-result:last-child {
+  margin-bottom: 0;
+}
+
+.service-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid #2d3154;
+}
+
+.service-icon {
+  font-size: 20px;
+}
+
+.service-name {
+  font-weight: 600;
+  color: #e5e7eb;
+  flex: 1;
+}
+
+.status-badge {
+  padding: 4px 12px;
+  border-radius: 12px;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.status-badge.ok {
+  background: rgba(16, 185, 129, 0.2);
+  color: #10b981;
+  border: 1px solid rgba(16, 185, 129, 0.3);
+}
+
+.status-badge.warning {
+  background: rgba(245, 158, 11, 0.2);
+  color: #f59e0b;
+  border: 1px solid rgba(245, 158, 11, 0.3);
+}
+
+.status-badge.error {
+  background: rgba(239, 68, 68, 0.2);
+  color: #ef4444;
+  border: 1px solid rgba(239, 68, 68, 0.3);
+}
+
+.service-details {
+  font-size: 14px;
+  color: #9ca3af;
+  line-height: 1.8;
+}
+
+.service-details p {
+  margin: 4px 0;
+}
+
+.service-details strong {
+  color: #d1d5db;
+  margin-right: 8px;
 }
 
 .btn-icon, .btn-spinner {
@@ -610,7 +890,7 @@ onMounted(() => {
 }
 
 .info-content code {
-  background: rgba(255, 255, 255, 0.05);
+  background: rgba(37, 40, 71, 0.8);
   padding: 2px 6px;
   border-radius: 4px;
   font-family: 'Monaco', 'Courier New', monospace;
@@ -622,7 +902,7 @@ onMounted(() => {
   position: fixed;
   bottom: 32px;
   right: 32px;
-  background: rgba(15, 23, 42, 0.95);
+  background: rgba(10, 14, 39, 0.95);
   backdrop-filter: blur(20px);
   border-radius: 16px;
   padding: 16px 24px;
@@ -630,7 +910,7 @@ onMounted(() => {
   align-items: center;
   gap: 12px;
   box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  border: 1px solid #2d3154;
   z-index: 1000;
   max-width: 400px;
 }

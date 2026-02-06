@@ -1,16 +1,21 @@
 import { createRouter, createWebHistory } from 'vue-router';
 
-// 導入視圖組件
-import BatchRepair from '@/views/BatchRepair.vue';
-import Settings from '@/views/Settings.vue';
-import GraphView from '@/components/GraphView.vue'; // 在 components 目錄
-import KnowledgeForm from '@/components/KnowledgeForm.vue'; // 在 components 目錄
-import Graph3D from '@/views/Graph3D.vue';
-import GraphPage from '@/views/GraphPage.vue'; // 新增：圖譜整合頁面
-import CrossGraphPage from '@/views/CrossGraphPage.vue'; // 新增：跨圖譜頁面
-import NexusPage from '@/views/NexusPage.vue'; // 新增：知識中樞
-import SystemMonitorPage from '@/views/SystemMonitorPage.vue'; // 新增：系統監控頁面
-import ImportPage from '@/views/ImportPage.vue'; // 新增：資料導入頁面
+// 導入視圖組件（Lazy Loading 優化首次載入效能）
+const BatchRepair = () => import('@/views/BatchRepair.vue');
+const Settings = () => import('@/views/Settings.vue');
+const GraphView = () => import('@/components/GraphView.vue');
+const KnowledgeForm = () => import('@/components/KnowledgeForm.vue');
+const Graph3D = () => import('@/views/Graph3D.vue');
+const GraphPage = () => import('@/views/GraphPage.vue');
+const CrossGraphPage = () => import('@/views/CrossGraphPage.vue');
+const NexusPage = () => import('@/views/NexusPage.vue');
+const SystemMonitorPage = () => import('@/views/SystemMonitorPage.vue');
+const ImportPage = () => import('@/views/ImportPage.vue');
+const FileImport = () => import('@/views/FileImport.vue');
+const TimelinePage = () => import('@/views/TimelinePage.vue');
+
+// 登入頁面不做 Lazy Loading（首次載入必需）
+import LoginPage from '@/views/LoginPage.vue';
 
 const routes = [
   {
@@ -108,8 +113,35 @@ const routes = [
     }
   },
   {
+    path: '/file-import',
+    name: 'FileImport',
+    component: FileImport,
+    meta: {
+      title: '檔案上傳',
+      icon: '📤'
+    }
+  },
+  {
+    path: '/timeline',
+    name: 'Timeline',
+    component: TimelinePage,
+    meta: {
+      title: '時間軸',
+      icon: '⏳'
+    }
+  },
+  {
+    path: '/login',
+    name: 'Login',
+    component: LoginPage,
+    meta: {
+      title: '登入',
+      public: true  // 標記為公開路由
+    }
+  },
+  {
     path: '/:pathMatch(.*)*',
-    redirect: '/graph-page'
+    redirect: '/nexus'
   }
 ];
 
@@ -118,13 +150,49 @@ const router = createRouter({
   routes
 });
 
-// 全域路由守衛（可選）
-router.beforeEach((to, from, next) => {
+// 認證狀態快取（避免每次路由切換都呼叫 API）
+let authChecked = false;
+let authEnabled = true;
+
+// 全域路由守衛 — 認證檢查
+router.beforeEach(async (to, from, next) => {
   // 設定頁面標題
   if (to.meta.title) {
     document.title = `${to.meta.title} - BruV Platform`;
   } else {
     document.title = 'BruV Platform - Enterprise AI';
+  }
+  
+  // 公開路由直接放行
+  if (to.meta.public) {
+    return next();
+  }
+  
+  // 首次載入時檢查後端是否啟用認證
+  if (!authChecked) {
+    try {
+      const apiBase = import.meta.env.VITE_API_BASE || '';
+      const res = await fetch(`${apiBase}/api/auth/status`);
+      if (res.ok) {
+        const data = await res.json();
+        authEnabled = data.auth_enabled;
+      }
+    } catch {
+      // 無法連接後端，假設認證啟用
+      authEnabled = true;
+    }
+    authChecked = true;
+  }
+  
+  // 認證未啟用時直接放行
+  if (!authEnabled) {
+    return next();
+  }
+  
+  // 檢查是否已有有效 Token
+  const token = localStorage.getItem('bruv_api_token');
+  if (!token) {
+    return next('/login');
   }
   
   next();

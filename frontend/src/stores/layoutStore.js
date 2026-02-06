@@ -143,35 +143,27 @@ export const useLayoutStore = defineStore('layout', () => {
   };
   
   /**
-   * 切換主題 (深色/淺色)
+   * 切換主題 - 已鎖定為 Nexus 深色模式
    */
   const toggleTheme = () => {
-    theme.value = theme.value === 'dark' ? 'light' : 'dark';
-    
-    // 存入 localStorage
-    localStorage.setItem('theme', theme.value);
-    
-    // 操作 DOM: 在 <html> 標籤添加/移除 class="light"
+    // 固定深色模式，不再切換
+    theme.value = 'dark';
+    localStorage.setItem('theme', 'dark');
     const htmlElement = document.documentElement;
-    if (theme.value === 'light') {
-      htmlElement.classList.add('light');
-    } else {
-      htmlElement.classList.remove('light');
-    }
-    
-    console.log(`🎨 主題切換至: ${theme.value}`);
+    htmlElement.classList.add('dark');
+    htmlElement.classList.remove('light');
+    console.log('🎨 主題已鎖定為 Nexus 深色模式');
   };
   
   /**
-   * 初始化主題
+   * 初始化主題 - 固定為 Nexus 深色模式
    */
   const initTheme = () => {
     const htmlElement = document.documentElement;
-    if (theme.value === 'light') {
-      htmlElement.classList.add('light');
-    } else {
-      htmlElement.classList.remove('light');
-    }
+    // 確保 dark class 始終存在（Tailwind dark: 前綴需要）
+    htmlElement.classList.add('dark');
+    htmlElement.classList.remove('light');
+    theme.value = 'dark';
   };
   
   /**

@@ -34,20 +34,9 @@ class KuzuDBManager:
             logger.error(f"創建父目錄失敗: {e}")
             raise
         
-        # Windows 路徑修復：如果目錄已存在，刪除後重新創建
+        # 直接開啟已存在的數據庫，KuzuDB 原生支持開啟已有目錄
         if self.db_path.exists() and self.db_path.is_dir():
-            import shutil
-            try:
-                logger.warning(f"檢測到已存在的目錄，嘗試清理: {self.db_path}")
-                shutil.rmtree(self.db_path)
-                logger.info(f"已清理舊目錄: {self.db_path}")
-            except Exception as e:
-                logger.warning(f"無法清理目錄: {e}，將使用新路徑")
-                # 使用時間戳避免衝突
-                import time
-                new_path = self.db_path.parent / f"kuzu_db_{int(time.time())}"
-                logger.info(f"使用新路徑: {new_path}")
-                self.db_path = new_path
+            logger.info(f"檢測到已存在的數據庫目錄，將直接開啟: {self.db_path}")
         
         try:
             # 使用字符串路徑並確保使用正斜杠
@@ -66,13 +55,30 @@ class KuzuDBManager:
     def _initialize_schema(self):
         """初始化圖譜結構"""
         try:
-            # 創建節點表 - 實體
+            # 創建圖譜元數據表
+            self.conn.execute("""
+                CREATE NODE TABLE IF NOT EXISTS GraphMetadata(
+                    id STRING,
+                    name STRING,
+                    description STRING,
+                    icon STRING,
+                    color STRING,
+                    created_at STRING,
+                    updated_at STRING,
+                    node_count INT64,
+                    link_count INT64,
+                    PRIMARY KEY(id)
+                )
+            """)
+            
+            # 創建節點表 - 實體（增加 graph_id 支持多圖譜）
             self.conn.execute("""
                 CREATE NODE TABLE IF NOT EXISTS Entity(
                     id STRING,
                     name STRING,
                     type STRING,
                     properties STRING,
+                    graph_id STRING,
                     PRIMARY KEY(id)
                 )
             """)
@@ -90,13 +96,23 @@ class KuzuDBManager:
         except Exception as e:
             logger.warning(f"圖譜結構可能已存在: {e}")
     
-    def add_entity(self, entity_id: str, name: str, entity_type: str, properties: Dict = None) -> bool:
-        """添加實體節點"""
+    def add_entity(self, entity_id: str, name: str, entity_type: str, properties: Dict = None, graph_id: str = "1") -> bool:
+        """添加實體節點
+        
+        Args:
+            entity_id: 節點 ID
+            name: 節點名稱
+            entity_type: 節點類型
+            properties: 節點屬性
+            graph_id: 所屬圖譜 ID (預設為 "1" 主腦圖譜)
+        """
         try:
             props = str(properties or {})
+            # 使用 MERGE 實現 upsert：主鍵已存在時更新，不存在時建立
             self.conn.execute(
-                "CREATE (e:Entity {id: $id, name: $name, type: $type, properties: $props})",
-                parameters={"id": entity_id, "name": name, "type": entity_type, "props": props}
+                "MERGE (e:Entity {id: $id}) "
+                "SET e.name = $name, e.type = $type, e.properties = $props, e.graph_id = $graph_id",
+                parameters={"id": entity_id, "name": name, "type": entity_type, "props": props, "graph_id": graph_id}
             )
             logger.info(f"✅ 添加實體: {name} ({entity_type})")
             return True
@@ -104,25 +120,38 @@ class KuzuDBManager:
             logger.error(f"❌ 添加實體失敗: {e}")
             return False
     
-    def add_relation(self, from_id: str, to_id: str, relation_type: str, properties: Dict = None) -> bool:
-        """添加關係"""
+    def add_relation(self, source_id: str, target_id: str, relation_type: str = "related_to", properties: Dict = None) -> bool:
+        """建立兩個節點之間的連線
+        
+        Args:
+            source_id: 源節點 ID
+            target_id: 目標節點 ID
+            relation_type: 關係類型 (預設 "related_to")
+            properties: 關係屬性 (預設 {})
+            
+        Returns:
+            bool: 成功返回 True，失敗返回 False
+        """
         try:
             props = str(properties or {})
             query = """
-                MATCH (a:Entity {id: $from_id}), (b:Entity {id: $to_id})
+                MATCH (a:Entity {id: $source_id}), (b:Entity {id: $target_id})
                 CREATE (a)-[:Relation {relation_type: $rel_type, properties: $props}]->(b)
             """
             self.conn.execute(
                 query,
                 parameters={
-                    "from_id": from_id,
-                    "to_id": to_id,
+                    "source_id": source_id,
+                    "target_id": target_id,
                     "rel_type": relation_type,
                     "props": props
                 }
             )
-            logger.info(f"✅ 添加關係: {from_id} -[{relation_type}]-> {to_id}")
+            logger.info(f"✅ 添加關係: {source_id} -[{relation_type}]-> {target_id}")
             return True
+        except RuntimeError as e:
+            logger.error(f"❌ 添加關係失敗（節點可能不存在）: {source_id} -> {target_id} - {e}")
+            return False
         except Exception as e:
             logger.error(f"❌ 添加關係失敗: {e}")
             return False
@@ -157,11 +186,215 @@ class KuzuDBManager:
     
     def get_neighbors(self, entity_id: str, depth: int = 1) -> List[Dict]:
         """獲取鄰居節點"""
+        # 限制深度範圍，防止資源耗盡
+        depth = max(1, min(depth, 5))
         query = f"""
             MATCH (e:Entity {{id: $id}})-[r*1..{depth}]-(neighbor:Entity)
             RETURN DISTINCT neighbor, r
         """
         return self.query(query, parameters={"id": entity_id})
+    
+    # ===== 圖譜元數據管理 =====
+    
+    def create_graph_metadata(self, graph_id: str, name: str, description: str = "", 
+                              icon: str = "🌐", color: str = "#3b82f6") -> bool:
+        """創建圖譜元數據
+        
+        Args:
+            graph_id: 圖譜唯一 ID
+            name: 圖譜名稱
+            description: 圖譜描述
+            icon: 圖標 emoji
+            color: 主題顏色
+        
+        Returns:
+            是否創建成功
+        """
+        try:
+            from datetime import datetime
+            now = datetime.now().isoformat()
+            
+            self.conn.execute("""
+                CREATE (g:GraphMetadata {
+                    id: $id,
+                    name: $name,
+                    description: $description,
+                    icon: $icon,
+                    color: $color,
+                    created_at: $created_at,
+                    updated_at: $updated_at,
+                    node_count: $node_count,
+                    link_count: $link_count
+                })
+            """, parameters={
+                "id": graph_id,
+                "name": name,
+                "description": description,
+                "icon": icon,
+                "color": color,
+                "created_at": now,
+                "updated_at": now,
+                "node_count": 0,
+                "link_count": 0
+            })
+            
+            logger.info(f"✅ 圖譜元數據創建成功: {name} (ID: {graph_id})")
+            return True
+            
+        except Exception as e:
+            logger.error(f"❌ 創建圖譜元數據失敗: {e}")
+            return False
+    
+    def get_graph_metadata(self, graph_id: str) -> Optional[Dict]:
+        """獲取圖譜元數據
+        
+        Args:
+            graph_id: 圖譜 ID
+        
+        Returns:
+            圖譜元數據字典，不存在則返回 None
+        """
+        try:
+            result = self.query("""
+                MATCH (g:GraphMetadata {id: $id})
+                RETURN g
+            """, parameters={"id": graph_id})
+            
+            if result and len(result) > 0:
+                return result[0].get('g', {})
+            return None
+            
+        except Exception as e:
+            logger.error(f"❌ 獲取圖譜元數據失敗: {e}")
+            return None
+    
+    def list_graph_metadata(self) -> List[Dict]:
+        """列出所有圖譜元數據
+        
+        Returns:
+            圖譜元數據列表
+        """
+        try:
+            result = self.query("""
+                MATCH (g:GraphMetadata)
+                RETURN g
+                ORDER BY g.created_at DESC
+            """)
+            
+            graphs = []
+            for row in result:
+                graph_data = row.get('g', {})
+                if graph_data:
+                    graphs.append(graph_data)
+            
+            logger.info(f"📋 查詢到 {len(graphs)} 個圖譜")
+            return graphs
+            
+        except Exception as e:
+            logger.error(f"❌ 列出圖譜元數據失敗: {e}")
+            return []
+    
+    def update_graph_metadata(self, graph_id: str, **updates) -> bool:
+        """更新圖譜元數據
+        
+        Args:
+            graph_id: 圖譜 ID
+            **updates: 要更新的字段（name, description, icon, color, node_count, link_count）
+        
+        Returns:
+            是否更新成功
+        """
+        try:
+            from datetime import datetime
+            updates['updated_at'] = datetime.now().isoformat()
+            
+            # 構建 SET 語句
+            set_clauses = [f"g.{key} = ${key}" for key in updates.keys()]
+            set_statement = ", ".join(set_clauses)
+            
+            query = f"""
+                MATCH (g:GraphMetadata {{id: $id}})
+                SET {set_statement}
+            """
+            
+            params = {"id": graph_id, **updates}
+            self.conn.execute(query, parameters=params)
+            
+            logger.info(f"✅ 圖譜元數據更新成功: {graph_id}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"❌ 更新圖譜元數據失敗: {e}")
+            return False
+    
+    def delete_graph_metadata(self, graph_id: str, cascade: bool = False) -> bool:
+        """刪除圖譜元數據
+        
+        Args:
+            graph_id: 圖譜 ID
+            cascade: 是否級聯刪除該圖譜下的所有節點和關係
+        
+        Returns:
+            是否刪除成功
+        """
+        try:
+            if cascade:
+                # 先刪除圖譜下的所有實體
+                self.conn.execute("""
+                    MATCH (e:Entity {graph_id: $graph_id})
+                    DETACH DELETE e
+                """, parameters={"graph_id": graph_id})
+                logger.info(f"🗑️  已級聯刪除圖譜 {graph_id} 的所有節點")
+            
+            # 刪除圖譜元數據
+            self.conn.execute("""
+                MATCH (g:GraphMetadata {id: $id})
+                DELETE g
+            """, parameters={"id": graph_id})
+            
+            logger.info(f"✅ 圖譜元數據刪除成功: {graph_id}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"❌ 刪除圖譜元數據失敗: {e}")
+            return False
+    
+    def update_graph_stats(self, graph_id: str) -> bool:
+        """更新圖譜統計信息（節點數、連線數）
+        
+        Args:
+            graph_id: 圖譜 ID
+        
+        Returns:
+            是否更新成功
+        """
+        try:
+            # 統計節點數
+            node_result = self.query("""
+                MATCH (e:Entity {graph_id: $graph_id})
+                RETURN count(e) as count
+            """, parameters={"graph_id": graph_id})
+            
+            node_count = node_result[0].get('count', 0) if node_result else 0
+            
+            # 統計連線數
+            link_result = self.query("""
+                MATCH (e1:Entity {graph_id: $graph_id})-[r:Relation]->(e2:Entity {graph_id: $graph_id})
+                RETURN count(r) as count
+            """, parameters={"graph_id": graph_id})
+            
+            link_count = link_result[0].get('count', 0) if link_result else 0
+            
+            # 更新元數據
+            return self.update_graph_metadata(
+                graph_id, 
+                node_count=node_count, 
+                link_count=link_count
+            )
+            
+        except Exception as e:
+            logger.error(f"❌ 更新圖譜統計失敗: {e}")
+            return False
     
     def close(self):
         """關閉連接"""
@@ -178,7 +411,8 @@ class MockKuzuManager:
     def __init__(self, db_path: str = None):
         """初始化 Mock 管理器"""
         self.entities = {}  # 記憶體中的實體存儲 {id: entity_data}
-        self.relations = []  # 記憶體中的關係存儲
+        self.relations = []  # 記憶體中的關係存儲（舊格式）
+        self.edges = []  # 記憶體中的連線存儲（前端 link 格式）
         logger.warning("⚠️ 使用 MockKuzuManager（記憶體模式）")
         logger.info("✅ MockKuzuManager 初始化成功")
         
@@ -212,14 +446,15 @@ class MockKuzuManager:
         """Mock 初始化結構（不需要實際操作）"""
         pass
     
-    def add_entity(self, entity_id: str, name: str, entity_type: str, properties: Dict = None) -> bool:
+    def add_entity(self, entity_id: str, name: str, entity_type: str, properties: Dict = None, graph_id: str = "1") -> bool:
         """添加實體節點（記憶體模式）"""
         try:
             self.entities[entity_id] = {
                 "id": entity_id,
                 "name": name,
                 "type": entity_type,
-                "properties": properties or {}
+                "properties": properties or {},
+                "graph_id": graph_id
             }
             logger.info(f"✅ [Mock] 添加實體: {name} ({entity_type})")
             return True
@@ -227,16 +462,36 @@ class MockKuzuManager:
             logger.error(f"❌ [Mock] 添加實體失敗: {e}")
             return False
     
-    def add_relation(self, from_id: str, to_id: str, relation_type: str, properties: Dict = None) -> bool:
-        """添加關係（記憶體模式）"""
+    def add_relation(self, source_id: str, target_id: str, relation_type: str = "related_to", properties: Dict = None) -> bool:
+        """建立兩個節點之間的連線（記憶體模式）
+        
+        Args:
+            source_id: 源節點 ID
+            target_id: 目標節點 ID
+            relation_type: 關係類型 (預設 "related_to")
+            properties: 關係屬性 (預設 {})
+            
+        Returns:
+            bool: 成功返回 True，失敗返回 False
+        """
         try:
+            # 存入舊格式（保持相容性）
             self.relations.append({
-                "from": from_id,
-                "to": to_id,
+                "from": source_id,
+                "to": target_id,
                 "type": relation_type,
                 "properties": properties or {}
             })
-            logger.info(f"✅ [Mock] 添加關係: {from_id} -[{relation_type}]-> {to_id}")
+            
+            # 存入前端 link 格式
+            self.edges.append({
+                "source": source_id,
+                "target": target_id,
+                "label": relation_type,
+                "properties": properties or {}
+            })
+            
+            logger.info(f"✅ [Mock] 添加關係: {source_id} -[{relation_type}]-> {target_id}")
             return True
         except Exception as e:
             logger.error(f"❌ [Mock] 添加關係失敗: {e}")

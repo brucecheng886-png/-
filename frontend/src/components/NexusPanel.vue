@@ -93,7 +93,15 @@ const nodeStats = computed(() => ({
 
 // Methods
 function handleGraphChange(event) {
-  const newId = parseInt(event.target.value);
+  // 🌟 支持字符串和数字 ID
+  let newId = event.target.value;
+  
+  // 如果是纯数字字符串，转换为数字
+  if (!isNaN(newId) && newId.trim() !== '') {
+    newId = parseInt(newId);
+  }
+  
+  console.log('📊 [NexusPanel] 切換圖譜:', newId);
   emit('update:selectedGraphId', newId);
   emit('graph-change', newId);
 }
@@ -162,14 +170,10 @@ function getNodeIcon(node) {
   <div class="nexus-panel flex flex-col h-full">
     <!-- Header -->
     <div 
-      class="flex items-center justify-between px-6 py-5 border-b"
-      :class="layoutStore.theme === 'dark' 
-        ? 'border-white/5' 
-        : 'border-gray-200'"
+      class="flex items-center justify-between px-6 py-5 border-b border-white/5"
     >
       <h2 
-        class="m-0 text-xl font-extrabold tracking-tight"
-        :class="layoutStore.theme === 'dark' ? 'text-white' : 'text-slate-800'"
+        class="m-0 text-xl font-extrabold tracking-tight text-white"
       >
         BruV AI <span class="bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">NEXUS</span>
       </h2>
@@ -179,19 +183,21 @@ function getNodeIcon(node) {
     <!-- 圖譜選擇器 -->
     <div class="px-6 py-4 select-wrapper">
       <select 
-        class="w-full px-4 py-2.5 border rounded-lg text-sm font-medium focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer select-smooth"
-        :class="layoutStore.theme === 'dark' 
-          ? 'bg-white/5 border-white/10 text-white hover:bg-white/8 focus:bg-white/10' 
-          : 'bg-gray-100 border-gray-200 text-slate-800 hover:bg-gray-200 focus:bg-white'"
+        class="w-full px-4 py-2.5 border rounded-lg text-sm font-medium focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer select-smooth bg-white/5 border-white/10 text-white hover:bg-white/8 focus:bg-white/10"
         :value="selectedGraphId"
         @change="handleGraphChange"
         @mousedown="onSelectMouseDown"
         @blur="onSelectBlur"
       >
+        <!-- 🌟 動態顯示所有圖譜（主腦圖譜 + 用戶創建的圖譜） -->
         <option value="1">🧠 主腦圖譜</option>
-        <option value="2">💻 BruV 開發筆記</option>
-        <option value="3">📖 私人日記</option>
-        <option value="4">🏢 團隊共享知識庫</option>
+        <option 
+          v-for="graph in graphStore.graphMetadataList.filter(g => g.id !== 1 && g.id !== '1')" 
+          :key="graph.id" 
+          :value="graph.id"
+        >
+          {{ graph.icon }} {{ graph.name }}
+        </option>
       </select>
       <div class="select-arrow" :class="{ 'rotate': isSelectOpen }">
         <svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor">
@@ -201,30 +207,21 @@ function getNodeIcon(node) {
       
       <div class="flex gap-2 mt-3">
         <button 
-          class="flex-1 px-3 py-2 border rounded-lg text-sm transition-all"
-          :class="layoutStore.theme === 'dark' 
-            ? 'bg-white/5 hover:bg-white/10 border-white/10' 
-            : 'bg-gray-100 hover:bg-gray-200 border-gray-200'"
+          class="flex-1 px-3 py-2 border rounded-lg text-sm transition-all bg-white/5 hover:bg-white/10 border-white/10"
           @click="emit('edit-graph')" 
           title="編輯圖譜"
         >
           ✏️
         </button>
         <button 
-          class="flex-1 px-3 py-2 border rounded-lg text-sm transition-all"
-          :class="layoutStore.theme === 'dark' 
-            ? 'bg-white/5 hover:bg-white/10 border-white/10' 
-            : 'bg-gray-100 hover:bg-gray-200 border-gray-200'"
+          class="flex-1 px-3 py-2 border rounded-lg text-sm transition-all bg-white/5 hover:bg-white/10 border-white/10"
           @click="emit('create-graph')" 
           title="新增圖譜"
         >
           ➕
         </button>
         <button 
-          class="flex-1 px-3 py-2 border rounded-lg text-sm transition-all"
-          :class="layoutStore.theme === 'dark' 
-            ? 'bg-white/5 hover:bg-white/10 border-white/10' 
-            : 'bg-gray-100 hover:bg-gray-200 border-gray-200'"
+          class="flex-1 px-3 py-2 border rounded-lg text-sm transition-all bg-white/5 hover:bg-white/10 border-white/10"
           @click="emit('delete-graph')" 
           title="刪除圖譜"
         >
@@ -238,19 +235,13 @@ function getNodeIcon(node) {
       <input 
         v-model="searchQueryLocal"
         type="text"
-        class="w-full px-4 py-2.5 pr-10 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all"
-        :class="layoutStore.theme === 'dark' 
-          ? 'bg-white/5 border-white/10 text-white placeholder-gray-400 focus:bg-white/10' 
-          : 'bg-gray-100 border-gray-200 text-slate-800 placeholder-gray-500 focus:bg-white'"
+        class="w-full px-4 py-2.5 pr-10 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all bg-white/5 border-white/10 text-white placeholder-gray-400 focus:bg-white/10"
         placeholder="Search nodes..."
         @keyup.enter="emit('search')"
       />
       <button 
         v-if="searchQueryLocal" 
-        class="absolute right-8 top-1/2 -translate-y-1/2 w-6 h-6 flex items-center justify-center rounded-full text-xs transition-all"
-        :class="layoutStore.theme === 'dark' 
-          ? 'bg-white/20 hover:bg-white/30 text-white' 
-          : 'bg-gray-300 hover:bg-gray-400 text-gray-700'"
+        class="absolute right-8 top-1/2 -translate-y-1/2 w-6 h-6 flex items-center justify-center rounded-full text-xs transition-all bg-white/20 hover:bg-white/30 text-white"
         @click="clearSearch"
       >✕</button>
     </div>
@@ -258,7 +249,7 @@ function getNodeIcon(node) {
     <!-- 節點展示模式切換 -->
     <div class="grid grid-cols-4 gap-2 px-6 py-2">
       <button 
-        class="px-3 py-2 bg-gray-100 dark:bg-white/5 hover:bg-blue-600 hover:text-white border border-gray-200 dark:border-white/10 rounded-lg text-base font-bold text-gray-700 dark:text-gray-300 transition-all"
+        class="px-3 py-2 bg-white/5 hover:bg-blue-600 hover:text-white border border-white/10 rounded-lg text-base font-bold text-gray-300 transition-all"
         :class="{ 'bg-blue-600 text-white border-blue-600': nodeViewMode === 'list' }"
         @click="setNodeViewMode('list')"
         title="文字列表"
@@ -266,7 +257,7 @@ function getNodeIcon(node) {
         ≣
       </button>
       <button 
-        class="px-3 py-2 bg-gray-100 dark:bg-white/5 hover:bg-blue-600 hover:text-white border border-gray-200 dark:border-white/10 rounded-lg text-base font-bold text-gray-700 dark:text-gray-300 transition-all"
+        class="px-3 py-2 bg-white/5 hover:bg-blue-600 hover:text-white border border-white/10 rounded-lg text-base font-bold text-gray-300 transition-all"
         :class="{ 'bg-blue-600 text-white border-blue-600': nodeViewMode === 'small' }"
         @click="setNodeViewMode('small')"
         title="小圖示"
@@ -274,7 +265,7 @@ function getNodeIcon(node) {
         ▦
       </button>
       <button 
-        class="px-3 py-2 bg-gray-100 dark:bg-white/5 hover:bg-blue-600 hover:text-white border border-gray-200 dark:border-white/10 rounded-lg text-base font-bold text-gray-700 dark:text-gray-300 transition-all"
+        class="px-3 py-2 bg-white/5 hover:bg-blue-600 hover:text-white border border-white/10 rounded-lg text-base font-bold text-gray-300 transition-all"
         :class="{ 'bg-blue-600 text-white border-blue-600': nodeViewMode === 'medium' }"
         @click="setNodeViewMode('medium')"
         title="中等卡片"
@@ -282,7 +273,7 @@ function getNodeIcon(node) {
         ⊞
       </button>
       <button 
-        class="px-3 py-2 bg-gray-100 dark:bg-white/5 hover:bg-blue-600 hover:text-white border border-gray-200 dark:border-white/10 rounded-lg text-base font-bold text-gray-700 dark:text-gray-300 transition-all"
+        class="px-3 py-2 bg-white/5 hover:bg-blue-600 hover:text-white border border-white/10 rounded-lg text-base font-bold text-gray-300 transition-all"
         :class="{ 'bg-blue-600 text-white border-blue-600': nodeViewMode === 'large' }"
         @click="setNodeViewMode('large')"
         title="大型卡片"
@@ -297,9 +288,7 @@ function getNodeIcon(node) {
         class="px-4 py-2.5 hover:bg-blue-600 hover:text-white border rounded-lg text-sm font-semibold transition-all"
         :class="activeFilter === 'all'
           ? 'bg-blue-600 text-white border-blue-600'
-          : layoutStore.theme === 'dark'
-            ? 'bg-white/5 border-white/10 text-gray-300'
-            : 'bg-gray-100 border-gray-200 text-gray-700'"
+          : 'bg-white/5 border-white/10 text-gray-300'"
         @click="setFilter('all')"
       >
         Show All
@@ -308,9 +297,7 @@ function getNodeIcon(node) {
         class="px-4 py-2.5 hover:bg-blue-600 hover:text-white border rounded-lg text-sm font-semibold transition-all"
         :class="activeFilter === 'focus'
           ? 'bg-blue-600 text-white border-blue-600'
-          : layoutStore.theme === 'dark'
-            ? 'bg-white/5 border-white/10 text-gray-300'
-            : 'bg-gray-100 border-gray-200 text-gray-700'"
+          : 'bg-white/5 border-white/10 text-gray-300'"
         @click="setFilter('focus')"
       >
         Focus
@@ -319,9 +306,7 @@ function getNodeIcon(node) {
         class="px-4 py-2.5 hover:bg-blue-600 hover:text-white border rounded-lg text-sm font-semibold transition-all"
         :class="activeFilter === 'part'
           ? 'bg-blue-600 text-white border-blue-600'
-          : layoutStore.theme === 'dark'
-            ? 'bg-white/5 border-white/10 text-gray-300'
-            : 'bg-gray-100 border-gray-200 text-gray-700'"
+          : 'bg-white/5 border-white/10 text-gray-300'"
         @click="setFilter('part')"
       >
         Show Part
@@ -340,9 +325,7 @@ function getNodeIcon(node) {
         class="w-full px-4 py-3 flex flex-col items-center gap-2 hover:bg-purple-600 hover:text-white border rounded-xl font-semibold transition-all"
         :class="isLinkingMode
           ? 'bg-purple-600 text-white border-purple-600'
-          : layoutStore.theme === 'dark'
-            ? 'bg-white/5 border-white/10 text-white'
-            : 'bg-gray-100 border-gray-200 text-slate-800'"
+          : 'bg-white/5 border-white/10 text-white'"
         @click="toggleLinkingMode"
       >
         <span class="text-2xl">🔗</span>
@@ -352,30 +335,24 @@ function getNodeIcon(node) {
     
     <!-- 節點統計 -->
     <div 
-      class="grid grid-cols-3 gap-3 px-6 py-4 border-y"
-      :class="layoutStore.theme === 'dark' 
-        ? 'bg-white/5 border-white/5' 
-        : 'bg-gray-100 border-gray-200'"
+      class="grid grid-cols-3 gap-3 px-6 py-4 border-y bg-white/5 border-white/5"
     >
       <div class="flex flex-col items-center gap-1">
-        <span class="text-2xl font-bold text-blue-600 dark:text-blue-400 font-mono">{{ nodeStats.total }}</span>
+        <span class="text-2xl font-bold text-blue-400 font-mono">{{ nodeStats.total }}</span>
         <span 
-          class="text-xs font-semibold uppercase tracking-wider"
-          :class="layoutStore.theme === 'dark' ? 'text-gray-400' : 'text-gray-500'"
+          class="text-xs font-semibold uppercase tracking-wider text-gray-400"
         >NODES</span>
       </div>
       <div class="flex flex-col items-center gap-1">
-        <span class="text-2xl font-bold text-blue-600 dark:text-blue-400 font-mono">{{ nodeStats.links }}</span>
+        <span class="text-2xl font-bold text-blue-400 font-mono">{{ nodeStats.links }}</span>
         <span 
-          class="text-xs font-semibold uppercase tracking-wider"
-          :class="layoutStore.theme === 'dark' ? 'text-gray-400' : 'text-gray-500'"
+          class="text-xs font-semibold uppercase tracking-wider text-gray-400"
         >LINKS</span>
       </div>
       <div class="flex flex-col items-center gap-1" v-if="searchQueryLocal">
-        <span class="text-2xl font-bold text-purple-600 dark:text-purple-400 font-mono">{{ nodeStats.filtered }}</span>
+        <span class="text-2xl font-bold text-purple-400 font-mono">{{ nodeStats.filtered }}</span>
         <span 
-          class="text-xs font-semibold uppercase tracking-wider"
-          :class="layoutStore.theme === 'dark' ? 'text-gray-400' : 'text-gray-500'"
+          class="text-xs font-semibold uppercase tracking-wider text-gray-400"
         >FILTERED</span>
       </div>
     </div>
@@ -389,8 +366,8 @@ function getNodeIcon(node) {
       <div v-if="filteredNodes.length === 0" class="flex flex-col items-center justify-center h-full gap-4 py-12">
         <span class="text-6xl opacity-30">📭</span>
         <div class="text-center">
-          <p class="text-sm font-semibold text-gray-600 dark:text-gray-400 mb-1">暫無資料</p>
-          <p class="text-xs text-gray-500 dark:text-gray-500">請從下方匯入檔案</p>
+          <p class="text-sm font-semibold text-gray-400 mb-1">暫無資料</p>
+          <p class="text-xs text-gray-500">請從下方匯入檔案</p>
         </div>
       </div>
 
@@ -400,15 +377,15 @@ function getNodeIcon(node) {
           <div 
             v-for="node in filteredNodes.slice(0, 30)" 
             :key="node.id"
-            class="flex items-center gap-3 px-3 py-2 bg-gray-50 dark:bg-white/5 hover:bg-gray-200 dark:hover:bg-white/10 border border-transparent rounded-lg cursor-pointer transition-all"
+            class="flex items-center gap-3 px-3 py-2 bg-white/5 hover:bg-white/10 border border-transparent rounded-lg cursor-pointer transition-all"
             :class="{ 
-              'bg-blue-100 dark:bg-blue-900/30 border-blue-500': graphStore.selectedNode?.id === node.id,
-              'bg-purple-100 dark:bg-purple-900/30 border-purple-500 animate-pulse': isLinkingMode && linkingSource?.id === node.id
+              'bg-blue-900/30 border-blue-500': graphStore.selectedNode?.id === node.id,
+              'bg-purple-900/30 border-purple-500 animate-pulse': isLinkingMode && linkingSource?.id === node.id
             }"
             @click="handleNodeClick(node)"
           >
             <span class="text-lg">{{ getNodeIcon(node) }}</span>
-            <span class="flex-1 text-sm font-medium text-gray-800 dark:text-white truncate">{{ node.name || node.label }}</span>
+            <span class="flex-1 text-sm font-medium text-white truncate">{{ node.name || node.label }}</span>
           </div>
         </div>
       </template>
@@ -419,10 +396,10 @@ function getNodeIcon(node) {
           <div 
             v-for="node in filteredNodes.slice(0, 40)" 
             :key="node.id"
-            class="aspect-square flex items-center justify-center bg-gray-50 dark:bg-white/5 hover:bg-gray-200 dark:hover:bg-white/10 border rounded-lg cursor-pointer transition-all"
+            class="aspect-square flex items-center justify-center bg-white/5 hover:bg-white/10 border rounded-lg cursor-pointer transition-all"
             :class="{ 
-              'border-blue-500 bg-blue-100 dark:bg-blue-900/30': graphStore.selectedNode?.id === node.id,
-              'border-purple-500 bg-purple-100 dark:bg-purple-900/30 animate-pulse': isLinkingMode && linkingSource?.id === node.id
+              'border-blue-500 bg-blue-900/30': graphStore.selectedNode?.id === node.id,
+              'border-purple-500 bg-purple-900/30 animate-pulse': isLinkingMode && linkingSource?.id === node.id
             }"
             @click="handleNodeClick(node)"
             :title="node.name || node.label"
@@ -438,10 +415,10 @@ function getNodeIcon(node) {
           <div 
             v-for="node in filteredNodes.slice(0, 20)" 
             :key="node.id"
-            class="p-3 bg-gray-50 dark:bg-white/5 hover:bg-gray-100 dark:hover:bg-white/10 border border-gray-200 dark:border-white/10 rounded-xl cursor-pointer transition-all"
+            class="p-3 bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl cursor-pointer transition-all"
             :class="{ 
-              'border-blue-500 bg-blue-50 dark:bg-blue-900/20': graphStore.selectedNode?.id === node.id,
-              'border-purple-500 bg-purple-50 dark:bg-purple-900/20 animate-pulse': isLinkingMode && linkingSource?.id === node.id
+              'border-blue-500 bg-blue-900/20': graphStore.selectedNode?.id === node.id,
+              'border-purple-500 bg-purple-900/20 animate-pulse': isLinkingMode && linkingSource?.id === node.id
             }"
             @click="handleNodeClick(node)"
           >
@@ -449,8 +426,8 @@ function getNodeIcon(node) {
               <span class="text-3xl">{{ getNodeIcon(node) }}</span>
             </div>
             <div class="flex flex-col gap-1">
-              <span class="text-sm font-semibold text-gray-800 dark:text-white truncate">{{ node.name || node.label }}</span>
-              <span class="text-xs text-gray-500 dark:text-gray-400 truncate">{{ node.type || node.group }}</span>
+              <span class="text-sm font-semibold text-white truncate">{{ node.name || node.label }}</span>
+              <span class="text-xs text-gray-400 truncate">{{ node.type || node.group }}</span>
             </div>
           </div>
         </div>
@@ -462,10 +439,10 @@ function getNodeIcon(node) {
           <div 
             v-for="node in filteredNodes.slice(0, 10)" 
             :key="node.id"
-            class="p-4 bg-gray-50 dark:bg-white/5 hover:bg-gray-100 dark:hover:bg-white/10 border border-gray-200 dark:border-white/10 rounded-xl cursor-pointer transition-all"
+            class="p-4 bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl cursor-pointer transition-all"
             :class="{ 
-              'border-blue-500 bg-blue-50 dark:bg-blue-900/20': graphStore.selectedNode?.id === node.id,
-              'border-purple-500 bg-purple-50 dark:bg-purple-900/20 animate-pulse': isLinkingMode && linkingSource?.id === node.id
+              'border-blue-500 bg-blue-900/20': graphStore.selectedNode?.id === node.id,
+              'border-purple-500 bg-purple-900/20 animate-pulse': isLinkingMode && linkingSource?.id === node.id
             }"
             @click="handleNodeClick(node)"
           >
@@ -474,11 +451,11 @@ function getNodeIcon(node) {
                 <span class="text-3xl">{{ getNodeIcon(node) }}</span>
               </div>
               <div class="flex-1 flex flex-col gap-1">
-                <span class="text-base font-bold text-gray-800 dark:text-white">{{ node.name || node.label }}</span>
-                <span class="text-sm text-gray-600 dark:text-gray-400">{{ node.type || node.group }}</span>
+                <span class="text-base font-bold text-white">{{ node.name || node.label }}</span>
+                <span class="text-sm text-gray-400">{{ node.type || node.group }}</span>
               </div>
             </div>
-            <p class="text-xs text-gray-600 dark:text-gray-300 leading-relaxed m-0" v-if="node.description">
+            <p class="text-xs text-gray-300 leading-relaxed m-0" v-if="node.description">
               {{ node.description }}
             </p>
           </div>

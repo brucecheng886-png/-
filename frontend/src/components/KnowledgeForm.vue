@@ -114,6 +114,7 @@
 <script setup>
 import { ref, reactive, onMounted } from 'vue';
 import { ElMessage } from 'element-plus';
+import { useGraphStore } from '../stores/graphStore';
 import { 
   Check, 
   Refresh, 
@@ -125,7 +126,8 @@ import {
 } from '@element-plus/icons-vue';
 
 // API 基礎 URL
-const API_BASE_URL = 'http://127.0.0.1:8000';
+const API_BASE_URL = '';
+const graphStore = useGraphStore();
 
 // 表單引用
 const formRef = ref(null);
@@ -193,45 +195,25 @@ const submitForm = async () => {
     loading.value = true;
     lastResult.value = null;
     
-    // 發送 POST 請求
-    const response = await fetch(`${API_BASE_URL}/api/graph/create`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        id: formData.id,
-        name: formData.name,
-        type: formData.type,
-        description: formData.description || '',
-        properties: {}
-      })
+    // 通過 graphStore 統一創建實體（同步 store + API）
+    const result = await graphStore.createEntity({
+      id: formData.id,
+      name: formData.name,
+      type: formData.type,
+      description: formData.description || '',
+      properties: {}
     });
     
-    const result = await response.json();
+    lastResult.value = result;
+    ElMessage.success({
+      message: result.message || '實體創建成功',
+      duration: 3000
+    });
     
-    if (response.ok && result.success) {
-      lastResult.value = result;
-      ElMessage.success({
-        message: result.message,
-        duration: 3000
-      });
-      
-      // 清空表單
-      setTimeout(() => {
-        resetForm();
-      }, 1500);
-    } else {
-      lastResult.value = {
-        success: false,
-        message: result.detail || result.message || '創建失敗',
-        data: null
-      };
-      ElMessage.error({
-        message: result.detail || result.message || '創建失敗',
-        duration: 5000
-      });
-    }
+    // 清空表單
+    setTimeout(() => {
+      resetForm();
+    }, 1500);
     
   } catch (error) {
     console.error('提交錯誤:', error);
@@ -243,7 +225,7 @@ const submitForm = async () => {
     };
     
     ElMessage.error({
-      message: '請求失敗，請確認後端服務正在運行',
+      message: error.message || '請求失敗，請確認後端服務正在運行',
       duration: 5000
     });
   } finally {

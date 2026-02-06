@@ -6,11 +6,21 @@ from pydantic import BaseModel
 from typing import List, Optional, Dict, Any
 import httpx
 import logging
+import os
 
-from backend.core.config import settings
+from backend.core.config import settings, get_current_api_keys
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+
+def get_ragflow_config():
+    """動態獲取 RAGFlow 配置"""
+    api_keys = get_current_api_keys()
+    return {
+        'api_key': api_keys['RAGFLOW_API_KEY'],
+        'api_url': api_keys['RAGFLOW_API_URL']
+    }
 
 
 class RAGFlowQuery(BaseModel):
@@ -30,11 +40,13 @@ class DocumentUpload(BaseModel):
 async def query_ragflow(request: RAGFlowQuery):
     """查詢 RAGFlow"""
     try:
+        config = get_ragflow_config()
+        
         async with httpx.AsyncClient(timeout=settings.REQUEST_TIMEOUT) as client:
             response = await client.post(
-                f"{settings.RAGFLOW_API_URL}/retrieval",
+                f"{config['api_url']}/retrieval",
                 headers={
-                    "Authorization": f"Bearer {settings.RAGFLOW_API_KEY}",
+                    "Authorization": f"Bearer {config['api_key']}",
                     "Content-Type": "application/json"
                 },
                 json={
@@ -54,10 +66,12 @@ async def query_ragflow(request: RAGFlowQuery):
 async def list_datasets():
     """獲取數據集列表"""
     try:
+        config = get_ragflow_config()
+        
         async with httpx.AsyncClient(timeout=settings.REQUEST_TIMEOUT) as client:
             response = await client.get(
-                f"{settings.RAGFLOW_API_URL}/datasets",
-                headers={"Authorization": f"Bearer {settings.RAGFLOW_API_KEY}"}
+                f"{config['api_url']}/datasets",
+                headers={"Authorization": f"Bearer {config['api_key']}"}
             )
             response.raise_for_status()
             return response.json()
@@ -70,11 +84,13 @@ async def list_datasets():
 async def create_dataset(name: str, description: str = ""):
     """創建數據集"""
     try:
+        config = get_ragflow_config()
+        
         async with httpx.AsyncClient(timeout=settings.REQUEST_TIMEOUT) as client:
             response = await client.post(
-                f"{settings.RAGFLOW_API_URL}/datasets",
+                f"{config['api_url']}/datasets",
                 headers={
-                    "Authorization": f"Bearer {settings.RAGFLOW_API_KEY}",
+                    "Authorization": f"Bearer {config['api_key']}",
                     "Content-Type": "application/json"
                 },
                 json={"name": name, "description": description}
@@ -91,8 +107,9 @@ async def upload_document(
     dataset_id: str,
     file: UploadFile = File(...)
 ):
-    """上傳文檔到 RAGFlow"""
+    """上傳文檔"""
     try:
+        config = get_ragflow_config()
         content = await file.read()
         
         async with httpx.AsyncClient(timeout=60) as client:
@@ -100,8 +117,8 @@ async def upload_document(
             data = {"dataset_id": dataset_id}
             
             response = await client.post(
-                f"{settings.RAGFLOW_API_URL}/documents",
-                headers={"Authorization": f"Bearer {settings.RAGFLOW_API_KEY}"},
+                f"{config['api_url']}/documents",
+                headers={"Authorization": f"Bearer {config['api_key']}"},
                 files=files,
                 data=data
             )
@@ -115,11 +132,13 @@ async def upload_document(
 @router.get("/documents/{dataset_id}")
 async def list_documents(dataset_id: str):
     """列出數據集中的文檔"""
+    config = get_ragflow_config()
+    
     try:
         async with httpx.AsyncClient(timeout=settings.REQUEST_TIMEOUT) as client:
             response = await client.get(
-                f"{settings.RAGFLOW_API_URL}/datasets/{dataset_id}/documents",
-                headers={"Authorization": f"Bearer {settings.RAGFLOW_API_KEY}"}
+                f"{config['api_url']}/datasets/{dataset_id}/documents",
+                headers={"Authorization": f"Bearer {config['api_key']}"}
             )
             response.raise_for_status()
             return response.json()

@@ -5,9 +5,27 @@ import * as d3 from 'd3-force';
 import { useGraphStore } from '../stores/graphStore';
 import { useLayoutStore } from '../stores/layoutStore';
 
+// ===== 工具函數: 防抖 =====
+const debounce = (func, wait) => {
+  let timeout;
+  const debounced = function(...args) {
+    clearTimeout(timeout);
+    timeout = setTimeout(() => func.apply(this, args), wait);
+  };
+  debounced.cancel = () => clearTimeout(timeout);
+  return debounced;
+};
+
 // ===== Store =====
 const graphStore = useGraphStore();
 const layoutStore = useLayoutStore();
+
+// ===== Props =====
+const props = defineProps({
+  densityThreshold: { type: Number, default: 0 },   // 0~100 密度過濾
+  focusFade: { type: Boolean, default: true },       // 聚焦時淡化無關節點
+  clusterEnabled: { type: Boolean, default: true },  // 語義聚合叢集
+});
 
 // ===== State =====
 const containerRef = ref(null);
@@ -15,67 +33,92 @@ const containerRef = ref(null);
 let graphInstance = null;
 let animationId = null;
 
+// 防抖更新鎖，避免重複渲染
+let isUpdating = ref(false);
+let updateQueue = null;
+
 // 主題相關計算屬性
 const backgroundColor = computed(() => {
-  return layoutStore.theme === 'dark' ? '#0a0a0a' : '#F5F7F9';
+  return '#0a0e27';
 });
 
 const linkColor = computed(() => {
-  // 深色模式：使用更亮的青藍色，透明度提高到 0.85（更明顯）
-  // 淺色模式：深灰色，透明度 0.5
-  return layoutStore.theme === 'dark' ? 'rgba(120, 200, 255, 0.85)' : 'rgba(50, 50, 50, 0.5)';
+  return 'rgba(120, 200, 255, 0.85)';
 });
 
 const linkParticleColor = computed(() => {
-  return layoutStore.theme === 'dark' ? 'rgba(68, 138, 255, 0.5)' : 'rgba(0, 0, 0, 0.3)';
+  return 'rgba(68, 138, 255, 0.5)';
 });
 
 const labelBgColor = computed(() => {
-  return layoutStore.theme === 'dark' ? 'rgba(10, 10, 10, 0.8)' : 'rgba(255, 255, 255, 0.9)';
+  return 'rgba(10, 14, 39, 0.8)';
 });
 
 const labelTextColor = computed(() => {
-  return layoutStore.theme === 'dark' ? '#e5e5e5' : '#1e293b';
+  return '#e5e5e5';
 });
 
-// ===== Watch: 監聽 Store 數據變更（包含 aiLinks）=====
-watch(
-  () => [graphStore.nodes, graphStore.links, graphStore.aiLinks, graphStore.isCrossGraphMode],
-  ([newNodes, newLinks, newAiLinks, isCrossGraph]) => {
-    if (graphInstance && newNodes.length > 0) {
-      console.log('🔄 [2D] 偵測到數據更新:', {
-        nodes: newNodes.length,
-        links: newLinks.length,
-        aiLinks: newAiLinks?.length || 0,
-        crossGraphMode: isCrossGraph
-      });
-      
-      // 重要: 使用深拷貝斷開 Vue Proxy 鏈接
-      const nodesClone = JSON.parse(JSON.stringify(newNodes));
-      let linksClone = JSON.parse(JSON.stringify(newLinks));
-      
-      // 🌟 跨圖譜模式：合併 AI Links
-      if (isCrossGraph && newAiLinks && newAiLinks.length > 0) {
-        const aiLinksClone = JSON.parse(JSON.stringify(newAiLinks));
-        linksClone = [...linksClone, ...aiLinksClone];
-        console.log('✨ [2D] 已合併 AI Links:', aiLinksClone.length);
-      }
-      
-      // 更新圖表數據
-      graphInstance.graphData({ nodes: nodesClone, links: linksClone });
+// ===== 防抖更新函數 =====
+const updateGraphData = debounce(() => {
+  if (!graphInstance || isUpdating.value) return;
+  
+  const newNodes = graphStore.nodes;
+  const newLinks = graphStore.links;
+  const newAiLinks = graphStore.aiLinks;
+  const isCrossGraph = graphStore.isCrossGraphMode;
+  
+  if (newNodes.length === 0) return;
+  
+  isUpdating.value = true;
+  
+  try {
+    // 重要: 使用深拷貝斷開 Vue Proxy 鏈接
+    const nodesClone = JSON.parse(JSON.stringify(newNodes));
+    let linksClone = JSON.parse(JSON.stringify(newLinks));
+    
+    // 🌟 跨圖譜模式：合併 AI Links
+    if (isCrossGraph && newAiLinks && newAiLinks.length > 0) {
+      const aiLinksClone = JSON.parse(JSON.stringify(newAiLinks));
+      linksClone = [...linksClone, ...aiLinksClone];
     }
-  },
-  { deep: true }
+    
+    // 更新圖表數據
+    graphInstance.graphData({ nodes: nodesClone, links: linksClone });
+  } finally {
+    isUpdating.value = false;
+  }
+}, 150); // 150ms 防抖延遲
+
+// ===== Watch: 監聽 Store 數據變更（簡化版，無 deep watch）=====
+watch(
+  () => ({
+    nodeCount: graphStore.nodes.length,
+    linkCount: graphStore.links.length,
+    aiLinkCount: graphStore.aiLinks.length,
+    crossGraphMode: graphStore.isCrossGraphMode,
+    currentGraphId: graphStore.currentGraphId
+  }),
+  (newVal, oldVal) => {
+    // 只在實際變化時觸發更新
+    if (graphInstance && (
+      newVal.nodeCount !== oldVal?.nodeCount ||
+      newVal.linkCount !== oldVal?.linkCount ||
+      newVal.aiLinkCount !== oldVal?.aiLinkCount ||
+      newVal.crossGraphMode !== oldVal?.crossGraphMode ||
+      newVal.currentGraphId !== oldVal?.currentGraphId
+    )) {
+      updateGraphData();
+    }
+  }
 );
 
 // ===== Methods =====
 const initGraph = async () => {
   if (!containerRef.value) return;
   
-  // 確保有數據
-  if (graphStore.nodes.length === 0) {
-    await graphStore.fetchGraphData();
-  }
+  // ✨ Manager 会自動處理緩存，不需要手動檢查
+  // 如果 Store 已有數據，Manager 会返回緩存，否則加載
+  const hasData = graphStore.nodes.length > 0;
   
   // 使用深拷貝斷開 Vue Proxy
   const nodesClone = JSON.parse(JSON.stringify(graphStore.nodes));
@@ -92,27 +135,75 @@ const initGraph = async () => {
     .nodeLabel('name')
     .nodeColor(node => node.color || '#448aff')
     .nodeVal(node => node.size || 10)
+    .nodeVisibility(node => {
+      // 密度過濾：隱藏連線數低於門檻的節點
+      if (props.densityThreshold > 0) {
+        const linkCount = graphStore.getNodeLinks(node.id).length;
+        const maxLinks = Math.max(1, ...graphStore.nodes.map(n => graphStore.getNodeLinks(n.id).length));
+        const normalised = (linkCount / maxLinks) * 100;
+        if (normalised < props.densityThreshold) return false;
+      }
+      return true;
+    })
     .nodeCanvasObject((node, ctx, globalScale) => {
+      // === Focus-fade 計算 ===
+      const selectedId = graphStore.selectedNode?.id;
+      const isSelected = selectedId === node.id;
+      let fadeAlpha = 1;
+
+      if (props.focusFade && selectedId && !isSelected) {
+        // 建立鄰居集合
+        const neighborIds = new Set();
+        graphStore.links.forEach(l => {
+          const src = typeof l.source === 'object' ? l.source.id : l.source;
+          const tgt = typeof l.target === 'object' ? l.target.id : l.target;
+          if (src === selectedId) neighborIds.add(tgt);
+          if (tgt === selectedId) neighborIds.add(src);
+        });
+        fadeAlpha = neighborIds.has(node.id) ? 0.85 : 0.12;
+      }
+
+      ctx.globalAlpha = fadeAlpha;
+
+      // === 語義聚合叢集氣泡（僅縮放 < 0.7 時繪製）===
+      if (props.clusterEnabled && globalScale < 0.7 && node.__clusterCenter) {
+        // 這個節點是叢集中心
+        const r = node.__clusterRadius || 40;
+        ctx.beginPath();
+        ctx.arc(node.x, node.y, r, 0, 2 * Math.PI);
+        ctx.fillStyle = (node.color || '#448aff') + '15';
+        ctx.fill();
+        ctx.strokeStyle = (node.color || '#448aff') + '30';
+        ctx.lineWidth = 1.5 / globalScale;
+        ctx.setLineDash([4 / globalScale, 4 / globalScale]);
+        ctx.stroke();
+        ctx.setLineDash([]);
+        // 叢集標籤
+        const clusterFont = 14 / globalScale;
+        ctx.font = `bold ${clusterFont}px 'Inter', sans-serif`;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillStyle = (node.color || '#448aff') + 'aa';
+        ctx.fillText(node.__clusterLabel || node.type, node.x, node.y - r - 6 / globalScale);
+      }
+
       // 自定義節點渲染 (圓形 + 外框 + 動畫效果)
       const label = node.name;
       // 🔧 根據縮放倍數分段調整字體大小
       let fontSize;
       if (globalScale <= 1.5) {
-        fontSize = 12;  // 正常/縮小：12px
+        fontSize = 12;
       } else if (globalScale <= 2.5) {
-        fontSize = 10;  // 放大 2 倍：10px
+        fontSize = 10;
       } else if (globalScale <= 3.5) {
-        fontSize = 8;   // 放大 3 倍：8px
+        fontSize = 8;
       } else {
-        fontSize = 6;   // 放大 4 倍以上：6px
+        fontSize = 6;
       }
       
       ctx.font = `${fontSize}px 'Inter', sans-serif`;
       const textWidth = ctx.measureText(label).width;
       const bckgDimensions = [textWidth, fontSize].map(n => n + fontSize * 0.4);
-      
-      // 判斷是否為選中節點
-      const isSelected = graphStore.selectedNode?.id === node.id;
       
       // 🎯 選中節點放大效果
       const baseNodeSize = Math.sqrt(node.size || 10) * 1.5;
@@ -123,13 +214,12 @@ const initGraph = async () => {
         const pulseSize = nodeSize + Math.sin(Date.now() / 300) * 3;
         ctx.beginPath();
         ctx.arc(node.x, node.y, pulseSize, 0, 2 * Math.PI, false);
-        ctx.fillStyle = (node.color || '#448aff') + '30'; // 30% 透明度
+        ctx.fillStyle = (node.color || '#448aff') + '30';
         ctx.fill();
         
-        // 外圈光暈
         ctx.beginPath();
         ctx.arc(node.x, node.y, pulseSize + 4, 0, 2 * Math.PI, false);
-        ctx.strokeStyle = (node.color || '#448aff') + '60'; // 60% 透明度
+        ctx.strokeStyle = (node.color || '#448aff') + '60';
         ctx.lineWidth = 3 / globalScale;
         ctx.stroke();
       }
@@ -140,49 +230,37 @@ const initGraph = async () => {
       ctx.fillStyle = node.color || '#448aff';
       ctx.fill();
       
-      // 🎨 繪製外框 (選中狀態更粗更亮)
+      // 🎨 繪製外框
       if (isSelected) {
-        // 選中：金色粗框
         ctx.strokeStyle = '#fbbf24';
         ctx.lineWidth = 3 / globalScale;
         ctx.stroke();
-        
-        // 內圈白色細框
         ctx.beginPath();
         ctx.arc(node.x, node.y, nodeSize - 2 / globalScale, 0, 2 * Math.PI, false);
         ctx.strokeStyle = 'rgba(255, 255, 255, 0.8)';
         ctx.lineWidth = 1 / globalScale;
         ctx.stroke();
       } else {
-        // 未選中：淡邊框
-        ctx.strokeStyle = layoutStore.theme === 'dark' ? 'rgba(255, 255, 255, 0.2)' : 'rgba(0, 0, 0, 0.2)';
+        ctx.strokeStyle = `rgba(255, 255, 255, ${0.2 * fadeAlpha})`;
         ctx.lineWidth = 0.5 / globalScale;
         ctx.stroke();
       }
       
-      // 📝 繪製標籤（選中節點的標籤更大更明顯）
+      // 📝 繪製標籤
       const labelFontSize = isSelected ? fontSize * 1.4 : fontSize;
       const labelOffset = nodeSize + 4;
       
       if (isSelected) {
-        // 選中節點：增強標籤顯示
-        // 計算新的文字寬度（因為字體變大了）
         ctx.font = `bold ${labelFontSize}px 'Inter', sans-serif`;
         const selectedTextWidth = ctx.measureText(label).width;
         const selectedBckgDimensions = [selectedTextWidth + labelFontSize * 0.8, labelFontSize + 8];
         
-        // 外層陰影
         ctx.shadowColor = 'rgba(0, 0, 0, 0.4)';
         ctx.shadowBlur = 8;
         ctx.shadowOffsetX = 0;
         ctx.shadowOffsetY = 2;
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.95)';
         
-        // 標籤背景（白色底，高對比）
-        ctx.fillStyle = layoutStore.theme === 'dark' 
-          ? 'rgba(255, 255, 255, 0.95)'  // 深色模式：亮白色底
-          : 'rgba(255, 255, 255, 0.98)';  // 淺色模式：純白底
-        
-        // 繪製圓角矩形背景
         const cornerRadius = 6;
         const rectX = node.x - selectedBckgDimensions[0] / 2;
         const rectY = node.y + labelOffset;
@@ -202,54 +280,74 @@ const initGraph = async () => {
         ctx.closePath();
         ctx.fill();
         
-        // 邊框（金色）
         ctx.shadowColor = 'transparent';
         ctx.strokeStyle = '#fbbf24';
         ctx.lineWidth = 2 / globalScale;
         ctx.stroke();
         
-        // 標籤文字（深色，高對比）
         ctx.shadowColor = 'transparent';
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
-        ctx.fillStyle = '#1e293b';  // 深色文字
+        ctx.fillStyle = '#1e293b';
         ctx.fillText(label, node.x, node.y + labelOffset + selectedBckgDimensions[1] / 2);
         
-      } else {
-        // 未選中節點：普通顯示
-        ctx.shadowColor = 'transparent';
-        ctx.fillStyle = labelBgColor.value;
-        ctx.fillRect(
-          node.x - bckgDimensions[0] / 2,
-          node.y + labelOffset,
-          bckgDimensions[0],
-          bckgDimensions[1]
-        );
+      } else if (fadeAlpha > 0.3) {
+        // 🧠 智慧標籤：只在放大、hover 或鄰近選中節點時才顯示
+        const isHovered = hoveredNodeId.value === node.id;
+        const showLabel = isHovered || globalScale >= 1.2;
         
-        // 標籤文字
-        ctx.font = `${labelFontSize}px 'Inter', sans-serif`;
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-        ctx.fillStyle = layoutStore.theme === 'dark' ? (node.color || '#e5e5e5') : '#1e293b';
-        ctx.fillText(label, node.x, node.y + labelOffset + labelFontSize / 2 + 2);
+        if (showLabel) {
+          ctx.shadowColor = 'transparent';
+          ctx.fillStyle = labelBgColor.value;
+          ctx.fillRect(
+            node.x - bckgDimensions[0] / 2,
+            node.y + labelOffset,
+            bckgDimensions[0],
+            bckgDimensions[1]
+          );
+          
+          ctx.font = `${labelFontSize}px 'Inter', sans-serif`;
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.fillStyle = node.color || '#e5e5e5';
+          ctx.fillText(label, node.x, node.y + labelOffset + labelFontSize / 2 + 2);
+        }
       }
+
+      // 重置 globalAlpha
+      ctx.globalAlpha = 1;
     })
-    // 🎨 根據連接類型設置顏色和樣式
+    // 🎨 Focus-fade 連線樣式
     .linkColor(link => {
-      if (link.type === 'ai-link') {
-        return link.style?.color || '#fbbf24';  // AI Link 金色
+      const selectedId = graphStore.selectedNode?.id;
+      if (props.focusFade && selectedId) {
+        const src = typeof link.source === 'object' ? link.source.id : link.source;
+        const tgt = typeof link.target === 'object' ? link.target.id : link.target;
+        const related = src === selectedId || tgt === selectedId;
+        if (!related) return 'rgba(120, 200, 255, 0.06)'; // 極淡
       }
-      return linkColor.value;  // 普通連接
+      if (link.type === 'ai-link') return link.style?.color || '#fbbf24';
+      return linkColor.value;
     })
-    // 🎨 根據連接類型設置寬度（已優化：線條更粗更明顯）
     .linkWidth(link => {
-      if (link.type === 'ai-link') {
-        return link.style?.width || 3;  // AI 連線：3px
+      const selectedId = graphStore.selectedNode?.id;
+      if (props.focusFade && selectedId) {
+        const src = typeof link.source === 'object' ? link.source.id : link.source;
+        const tgt = typeof link.target === 'object' ? link.target.id : link.target;
+        if (src !== selectedId && tgt !== selectedId) return 0.5;
       }
-      return 4;  // 普通連線：4px（更粗更明顯）
+      if (link.type === 'ai-link') return link.style?.width || 3;
+      return 4;
     })
-    // 🎨 設置線條透明度
-    .linkOpacity(0.85)  // 增加不透明度讓線條更明顯
+    .linkVisibility(link => {
+      if (props.densityThreshold <= 0) return true;
+      const src = typeof link.source === 'object' ? link.source.id : link.source;
+      const tgt = typeof link.target === 'object' ? link.target.id : link.target;
+      const srcCount = graphStore.getNodeLinks(src).length;
+      const tgtCount = graphStore.getNodeLinks(tgt).length;
+      const maxLinks = Math.max(1, ...graphStore.nodes.map(n => graphStore.getNodeLinks(n.id).length));
+      return (srcCount / maxLinks * 100 >= props.densityThreshold) && (tgtCount / maxLinks * 100 >= props.densityThreshold);
+    })
     // 🎨 流動粒子（可選的視覺增強）
     .linkDirectionalParticles(link => {
       if (link.type === 'ai-link' && link.style?.animated) {
@@ -266,22 +364,20 @@ const initGraph = async () => {
     })
     .onNodeClick(handleNodeClick)
     .onNodeHover(handleNodeHover)
-    .d3Force('charge', d3.forceManyBody().strength(-300))
-    .d3Force('link', d3.forceLink().distance(100))
+    .d3Force('charge', d3.forceManyBody().strength(-800))
+    .d3Force('link', d3.forceLink().distance(200))
+    .d3Force('collide', d3.forceCollide().radius(node => Math.sqrt(node.size || 10) * 3 + 20).strength(0.7))
     .d3VelocityDecay(0.3)
     .warmupTicks(100)  // 效能優化: 預跑 100 次物理模擬
     .cooldownTicks(300);  // 效能優化: 300 tick 後自動停止
   
-  console.log('📊 2D 圖譜已初始化:', {
-    nodes: graphStore.nodes.length,
-    links: graphStore.links.length
-  });
+  // 初始化叢集標記
+  computeClusterCenters();
 };
 
 const handleNodeClick = (node) => {
   if (node) {
     graphStore.selectNode(node.id);
-    console.log('🔍 [2D] 選中節點:', node.name);
     
     // 🎯 聚焦到節點（平滑縮放和置中）
     if (graphInstance && node.x !== undefined && node.y !== undefined) {
@@ -297,8 +393,6 @@ const handleNodeClick = (node) => {
         graphInstance.zoom(targetZoom, 600);
       }, 400);
       
-      console.log('🎯 [2D] 節點已聚焦:', node.name, '縮放:', targetZoom);
-      
       // 📍 啟動重繪動畫（用於脈衝效果）
       let frameCount = 0;
       const animate = () => {
@@ -313,11 +407,16 @@ const handleNodeClick = (node) => {
   }
 };
 
+const hoveredNodeId = ref(null);
+
 const handleNodeHover = (node) => {
+  hoveredNodeId.value = node ? node.id : null;
   // 改變游標樣式
   if (containerRef.value) {
     containerRef.value.style.cursor = node ? 'pointer' : 'grab';
   }
+  // 觸發重繪以更新 hover 標籤
+  if (graphInstance) graphInstance.nodeCanvasObject(graphInstance.nodeCanvasObject());
 };
 
 const startRotation = () => {
@@ -327,10 +426,10 @@ const startRotation = () => {
   const animate = () => {
     angle += 0.005;
     
-    if (graph) {
+    if (graphInstance) {
       const centerX = Math.cos(angle) * distance;
       const centerY = Math.sin(angle) * distance;
-      graph.centerAt(centerX, centerY, 0);
+      graphInstance.centerAt(centerX, centerY, 0);
     }
     
     animationId = requestAnimationFrame(animate);
@@ -347,47 +446,71 @@ const stopRotation = () => {
 };
 
 // ===== Watchers =====
+// 選中節點變化時，只重繪 Canvas 不重新載入數據
 watch(() => graphStore.selectedNode, (newNode) => {
-  if (graph && newNode) {
-    // 重新渲染以更新選中狀態
-    graph.graphData({
-      nodes: graphStore.nodes,
-      links: graphStore.links
-    });
+  if (graphInstance && newNode) {
+    // 只觸發重繪，不重新加載數據
+    graphInstance.nodeCanvasObject(graphInstance.nodeCanvasObject());
   }
 });
 
-watch(() => [graphStore.nodes, graphStore.links], () => {
-  if (graph) {
-    graph.graphData({
-      nodes: graphStore.nodes,
-      links: graphStore.links
-    });
-  }
-}, { deep: true });
-
-// 監聽主題變化，動態更新圖譜顏色
+// 監聽主題變化，動態更新圖譜顏色（防抖處理）
 watch(
   () => layoutStore.theme,
-  (newTheme) => {
+  debounce((newTheme) => {
     if (graphInstance) {
-      console.log('🎨 [2D] 主題切換:', newTheme);
       graphInstance.backgroundColor(backgroundColor.value);
-      // 觸發重新渲染
+      graphInstance.nodeCanvasObject(graphInstance.nodeCanvasObject());
+    }
+  }, 100)
+);
+
+// 監聽密度 / focusFade / cluster 變化 → 觸發重繪
+watch(
+  () => [props.densityThreshold, props.focusFade, props.clusterEnabled],
+  () => {
+    if (graphInstance) {
+      // 重新計算叢集中心標記
+      computeClusterCenters();
+      // force-graph 會自動重繪 nodeCanvasObject
       graphInstance.nodeCanvasObject(graphInstance.nodeCanvasObject());
     }
   }
 );
 
+// 語義叢集計算：按 type 分組，找出各組質量中心
+const computeClusterCenters = () => {
+  if (!props.clusterEnabled) return;
+  const typeGroups = {};
+  graphStore.nodes.forEach(n => {
+    const t = n.type || 'unknown';
+    if (!typeGroups[t]) typeGroups[t] = [];
+    typeGroups[t].push(n);
+  });
+  // 先清除舊標記
+  graphStore.nodes.forEach(n => { n.__clusterCenter = false; });
+  
+  Object.entries(typeGroups).forEach(([type, members]) => {
+    if (members.length < 3) return; // 太少不分群
+    // 找中心：取連線數最多的節點
+    let center = members[0];
+    let maxLinks = 0;
+    members.forEach(m => {
+      const lc = graphStore.getNodeLinks(m.id).length;
+      if (lc > maxLinks) { maxLinks = lc; center = m; }
+    });
+    center.__clusterCenter = true;
+    center.__clusterRadius = Math.max(30, Math.sqrt(members.length) * 25);
+    center.__clusterLabel = `${type} (${members.length})`;
+  });
+};
+
 // 🎯 暴露給父組件的聚焦方法（供 GraphPage.vue 調用）
 const focusNode = (node) => {
-  console.log('🎯 [2D] 外部調用 focusNode:', node.name);
-  
   // 從 graphStore 中找到對應的節點（可能包含 2D 座標）
   const graphNode = graphStore.nodes.find(n => n.id === node.id);
   
   if (!graphNode) {
-    console.warn('⚠️ [2D] 節點不存在於圖表中:', node.id);
     return;
   }
   
@@ -399,32 +522,60 @@ const focusNode = (node) => {
  const resetView = () => {
   if (graphInstance) {
     graphInstance.zoomToFit(1000);
-    console.log('🔄 [2D] 視圖已重置');
+  }
+};
+
+// 縮放控制
+const zoomIn = () => {
+  if (graphInstance) {
+    const z = graphInstance.zoom();
+    graphInstance.zoom(z * 1.4, 300);
+  }
+};
+
+const zoomOut = () => {
+  if (graphInstance) {
+    const z = graphInstance.zoom();
+    graphInstance.zoom(z / 1.4, 300);
+  }
+};
+
+const getZoom = () => {
+  return graphInstance ? graphInstance.zoom() : 1;
+};
+
+const zoomToFit = () => {
+  if (graphInstance) {
+    graphInstance.zoomToFit(800);
   }
 };
 
 // 暴露方法給父組件
 defineExpose({
   focusNode,
-  resetView
+  resetView,
+  zoomIn,
+  zoomOut,
+  getZoom,
+  zoomToFit
 });
 
 // ===== Lifecycle =====
 // 視窗大小變化處理函數（需在頂層定義以便清理）
-const handleResize = () => {
-  if (graph && containerRef.value) {
+// 防抖的視窗大小調整處理
+const handleResize = debounce(() => {
+  if (graphInstance && containerRef.value) {
     const width = containerRef.value.offsetWidth;
     const height = containerRef.value.offsetHeight;
-    graph.width(width).height(height);
-    console.log('📐 [2D] 畫布已調整:', { width, height });
+    graphInstance.width(width).height(height);
   }
-};
+}, 200);
 
 onMounted(async () => {
   await nextTick();
   await initGraph();
   
-  // 監聽視窗大小變化
+  // 監聽視窗大小變化（防抖處理）
   window.addEventListener('resize', handleResize);
 });
 
@@ -432,11 +583,14 @@ onUnmounted(() => {
   // 移除事件監聽
   window.removeEventListener('resize', handleResize);
   
+  // 取消防抖更新
+  updateGraphData.cancel();
+  
   // 清理圖譜實例
   stopRotation();
-  if (graph) {
-    graph._destructor();
-    graph = null;
+  if (graphInstance) {
+    graphInstance._destructor();
+    graphInstance = null;
   }
 });
 </script>
@@ -444,7 +598,6 @@ onUnmounted(() => {
 <template>
   <div 
     class="graph-2d-container"
-    :class="layoutStore.theme === 'dark' ? 'dark-theme' : 'light-theme'"
   >
     <div ref="containerRef" class="graph-canvas"></div>
     
@@ -488,15 +641,7 @@ onUnmounted(() => {
   width: 100%;
   height: 100%;
   overflow: hidden;
-  transition: background 0.3s ease;
-}
-
-.graph-2d-container.dark-theme {
-  background: #0a0a0a;
-}
-
-.graph-2d-container.light-theme {
-  background: #F5F7F9;
+  background: #0a0e27;
 }
 
 .graph-canvas {
@@ -522,30 +667,6 @@ onUnmounted(() => {
   padding: 20px;
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.8);
   z-index: 1000;
-}
-
-/* 淺色模式節點詳情卡片 */
-.light-theme .node-detail-card {
-  background: rgba(255, 255, 255, 0.95);
-  border: 1px solid rgba(203, 213, 225, 0.8);
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
-}
-
-.light-theme .node-name {
-  color: #1e293b;
-}
-
-.light-theme .node-description {
-  color: #475569;
-}
-
-.light-theme .close-btn {
-  color: #64748b;
-}
-
-.light-theme .close-btn:hover {
-  background: rgba(226, 232, 240, 0.8);
-  color: #1e293b;
 }
 
 .card-header {

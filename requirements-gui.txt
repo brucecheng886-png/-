@@ -1,0 +1,6 @@
+# === BruV GUI Launcher 額外依賴 ===
+# 僅在需要圖形化啟動器時安裝: pip install -r requirements-gui.txt
+
+-r requirements.txt
+
+PySide6==6.6.1

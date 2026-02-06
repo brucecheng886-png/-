@@ -7,6 +7,10 @@
 <script setup>
 import { ref, onMounted, onUnmounted } from 'vue';
 import { Graph } from '@antv/g6';
+import { useGraphStore } from '../stores/graphStore';
+
+// ===== Store =====
+const graphStore = useGraphStore();
 
 const graphContainer = ref(null);
 let graph = null;
@@ -19,9 +23,6 @@ const props = defineProps({
   }
 });
 
-// API 基礎 URL
-const API_BASE = '/api';  // 使用 Vite Proxy
-
 // 自適應畫布大小函數
 const handleResize = () => {
   if (graph && graphContainer.value) {
@@ -32,30 +33,23 @@ const handleResize = () => {
   }
 };
 
-// 載入圖譜資料
+// 載入圖譜資料（使用 Store 統一 API）
 const loadGraphData = async () => {
   try {
     let graphData = { nodes: [], edges: [] };
 
     if (props.entityId) {
-      // 如果有指定 ID，查詢鄰居節點
-      const response = await fetch(`${API_BASE}/api/graph/entities/${props.entityId}/neighbors`);
-      if (!response.ok) throw new Error('Failed to fetch neighbors');
-      const data = await response.json();
+      // 🌟 使用 Store 的統一 API：查詢鄰居節點
+      console.log('📡 [GraphView] 使用 Store.fetchNeighbors()');
+      const data = await graphStore.fetchNeighbors(props.entityId);
       
       // 轉換後端資料格式為 G6 格式
       graphData = transformBackendData(data);
     } else {
-      // 沒有指定 ID，執行 Cypher 查詢獲取初始圖譜
+      // 🌟 使用 Store 的統一 API：執行 Cypher 查詢
+      console.log('📡 [GraphView] 使用 Store.executeCypherQuery()');
       const cypherQuery = 'MATCH (n)-[r]->(m) RETURN n,r,m LIMIT 25';
-      const response = await fetch(`${API_BASE}/api/graph/query`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ query: cypherQuery })
-      });
-      
-      if (!response.ok) throw new Error('Failed to fetch graph data');
-      const data = await response.json();
+      const data = await graphStore.executeCypherQuery(cypherQuery);
       
       // 轉換 Cypher 查詢結果為 G6 格式
       graphData = transformCypherResults(data);
@@ -63,7 +57,7 @@ const loadGraphData = async () => {
 
     return graphData;
   } catch (error) {
-    console.error('載入圖譜資料失敗:', error);
+    console.error('❌ [GraphView] 載入圖譜資料失敗:', error);
     // 返回範例資料作為後備方案
     return {
       nodes: [
@@ -314,34 +308,34 @@ defineExpose({
       setTimeout(() => graph.fitView(), 300);
     }
   },
-  // 重新載入圖譜資料
+  // 重新載入圖譜資料（使用 Store）
   async refreshGraph(entityId = null) {
-    const newData = entityId 
-      ? await loadGraphDataById(entityId)
-      : await loadGraphData();
-    
-    if (graph && newData) {
-      graph.clear();
-      graph.updateData('node', newData.nodes || []);
-      graph.updateData('edge', newData.edges || []);
-      graph.layout();
-      setTimeout(() => graph.fitView(), 300);
+    try {
+      let newData;
+      
+      if (entityId) {
+        // 🌟 使用 Store 的統一 API
+        const data = await graphStore.fetchNeighbors(entityId);
+        newData = transformBackendData(data);
+      } else {
+        // 🌟 使用 Store 的統一 API
+        const cypherQuery = 'MATCH (n)-[r]->(m) RETURN n,r,m LIMIT 25';
+        const data = await graphStore.executeCypherQuery(cypherQuery);
+        newData = transformCypherResults(data);
+      }
+      
+      if (graph && newData) {
+        graph.clear();
+        graph.updateData('node', newData.nodes || []);
+        graph.updateData('edge', newData.edges || []);
+        graph.layout();
+        setTimeout(() => graph.fitView(), 300);
+      }
+    } catch (error) {
+      console.error('❌ [GraphView] 刷新圖譜失敗:', error);
     }
   }
 });
-
-// 根據 ID 載入圖譜資料的輔助函數
-const loadGraphDataById = async (entityId) => {
-  try {
-    const response = await fetch(`${API_BASE}/api/graph/entities/${entityId}/neighbors`);
-    if (!response.ok) throw new Error('Failed to fetch neighbors');
-    const data = await response.json();
-    return transformBackendData(data);
-  } catch (error) {
-    console.error('載入指定節點圖譜失敗:', error);
-    return null;
-  }
-};
 </script>
 
 <style scoped>

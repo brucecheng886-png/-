@@ -1,5 +1,5 @@
 <template>
-  <div class="cross-graph-page" :class="{ 'is-dark': layoutStore.theme === 'dark' }">
+  <div class="cross-graph-page custom-scrollbar">
     <!-- 頁面頭部 -->
     <div class="page-header">
       <div class="header-content">
@@ -403,10 +403,13 @@ onMounted(async () => {
   console.log('🚀 CrossGraphPage mounted');
   console.log('📊 當前圖譜元數據數量:', graphStore.graphMetadataList.length);
   
-  // 初始化所有可用圖譜的元數據
-  if (graphStore.graphMetadataList.length === 0) {
-    console.log('⚙️ 初始化圖譜元數據...');
-    graphStore.initializeGraphMetadata();
+  // 🌟 自動載入圖譜數據以確保同步
+  try {
+    console.log('🔄 [CrossGraphPage] 自動載入圖譜數據');
+    await graphStore.fetchGraphData(graphStore.currentGraphId);
+    console.log('✅ [CrossGraphPage] 圖譜數據已載入:', graphStore.nodeCount, '個節點');
+  } catch (error) {
+    console.warn('⚠️ [CrossGraphPage] 圖譜數據載入失敗:', error.message);
   }
   
   // 提示用戶
@@ -423,12 +426,29 @@ onMounted(async () => {
 <style scoped>
 .cross-graph-page {
   min-height: 100vh;
-  background: linear-gradient(135deg, #f5f7fa 0%, #e8eef5 100%);
+  height: 100vh;
+  overflow-y: auto;
+  background: #0a0e27;
   padding: 32px;
 }
 
-.cross-graph-page.is-dark {
-  background: linear-gradient(135deg, #0a0a15 0%, #16213e 100%);
+/* 滾動條樣式 */
+.cross-graph-page::-webkit-scrollbar {
+  width: 10px;
+}
+
+.cross-graph-page::-webkit-scrollbar-track {
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 5px;
+}
+
+.cross-graph-page::-webkit-scrollbar-thumb {
+  background: linear-gradient(180deg, #3b82f6, #8b5cf6);
+  border-radius: 5px;
+}
+
+.cross-graph-page::-webkit-scrollbar-thumb:hover {
+  background: linear-gradient(180deg, #2563eb, #7c3aed);
 }
 
 /* 頁面頭部 */
@@ -440,15 +460,11 @@ onMounted(async () => {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  background: white;
+  background: #1a1d3a;
   padding: 24px 32px;
   border-radius: 16px;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
-}
-
-.is-dark .header-content {
-  background: #1a1a2e;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  border: 1px solid #2d3154;
 }
 
 .header-left {
@@ -471,20 +487,12 @@ onMounted(async () => {
   margin: 0;
   font-size: 28px;
   font-weight: 700;
-  color: #1e293b;
-}
-
-.is-dark .page-title {
   color: #e5e5e5;
 }
 
 .page-subtitle {
   margin: 0;
   font-size: 16px;
-  color: #64748b;
-}
-
-.is-dark .page-subtitle {
   color: #94a3b8;
 }
 
@@ -497,15 +505,11 @@ onMounted(async () => {
 
 /* 左側選擇面板 */
 .selection-panel {
-  background: white;
+  background: #1a1d3a;
   border-radius: 16px;
   padding: 32px;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
-}
-
-.is-dark .selection-panel {
-  background: #1a1a2e;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  border: 1px solid #2d3154;
 }
 
 .panel-header {
@@ -520,26 +524,16 @@ onMounted(async () => {
   font-size: 14px;
   padding: 8px 20px;
   height: auto;
-  background: rgba(59, 130, 246, 0.85);
-  border-color: rgba(59, 130, 246, 0.85);
+  background: rgba(59, 130, 246, 0.75);
+  border-color: rgba(59, 130, 246, 0.75);
   transition: all 0.3s ease;
 }
 
 .sync-button:hover {
-  background: rgba(59, 130, 246, 1);
-  border-color: rgba(59, 130, 246, 1);
-  transform: translateY(-1px);
-  box-shadow: 0 4px 12px rgba(59, 130, 246, 0.3);
-}
-
-.is-dark .sync-button {
-  background: rgba(59, 130, 246, 0.75);
-  border-color: rgba(59, 130, 246, 0.75);
-}
-
-.is-dark .sync-button:hover {
   background: rgba(59, 130, 246, 0.9);
   border-color: rgba(59, 130, 246, 0.9);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(59, 130, 246, 0.3);
 }
 
 .panel-title {
@@ -549,10 +543,6 @@ onMounted(async () => {
   margin: 0 0 8px 0;
   font-size: 20px;
   font-weight: 600;
-  color: #1e293b;
-}
-
-.is-dark .panel-title {
   color: #e5e5e5;
 }
 
@@ -563,10 +553,6 @@ onMounted(async () => {
 .panel-desc {
   margin: 0;
   font-size: 16px;
-  color: #64748b;
-}
-
-.is-dark .panel-desc {
   color: #94a3b8;
 }
 
@@ -582,15 +568,10 @@ onMounted(async () => {
 .empty-graphs-state {
   padding: 80px 40px;
   text-align: center;
-  background: white;
+  background: rgba(26, 29, 58, 0.6);
   border-radius: 16px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+  border: 1px solid #2d3154;
   margin-bottom: 32px;
-}
-
-.is-dark .empty-graphs-state {
-  background: rgba(30, 41, 59, 0.4);
-  border: 1px solid rgba(148, 163, 184, 0.1);
 }
 
 .empty-graphs-state .empty-icon {
@@ -602,23 +583,15 @@ onMounted(async () => {
 .empty-graphs-state .empty-title {
   font-size: 24px;
   font-weight: 600;
-  color: #1e293b;
-  margin: 0 0 16px 0;
-}
-
-.is-dark .empty-graphs-state .empty-title {
   color: #e5e5e5;
+  margin: 0 0 16px 0;
 }
 
 .empty-graphs-state .empty-desc {
   font-size: 16px;
-  color: #64748b;
+  color: #94a3b8;
   margin: 0 0 24px 0;
   line-height: 1.8;
-}
-
-.is-dark .empty-graphs-state .empty-desc {
-  color: #94a3b8;
 }
 
 .goto-workspace-button {
@@ -632,39 +605,24 @@ onMounted(async () => {
   align-items: center;
   gap: 20px;
   padding: 24px;
-  background: #f8fafc;
-  border: 3px solid transparent;
+  background: #252847;
+  border: 3px solid #2d3154;
   border-radius: 16px;
   cursor: pointer;
   transition: all 0.3s ease;
 }
 
-.is-dark .graph-card {
-  background: #16213e;
-  border-color: #2d2d44;
-}
-
 .graph-card:hover {
-  background: #f1f5f9;
-  border-color: #cbd5e1;
-  transform: translateY(-2px);
-  box-shadow: 0 8px 16px rgba(0, 0, 0, 0.1);
-}
-
-.is-dark .graph-card:hover {
-  background: #1e293b;
+  background: #2d3154;
   border-color: #475569;
+  transform: translateY(-2px);
+  box-shadow: 0 8px 16px rgba(0, 0, 0, 0.3);
 }
 
 .graph-card.is-selected {
-  background: linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%);
-  border-color: #3b82f6;
-  box-shadow: 0 8px 24px rgba(59, 130, 246, 0.3);
-}
-
-.is-dark .graph-card.is-selected {
   background: linear-gradient(135deg, #1e3a5f 0%, #1e40af 100%);
   border-color: #3b82f6;
+  box-shadow: 0 8px 24px rgba(59, 130, 246, 0.3);
 }
 
 .graph-card.is-disabled {
@@ -685,18 +643,13 @@ onMounted(async () => {
 .checkbox {
   width: 32px;
   height: 32px;
-  border: 3px solid #cbd5e1;
+  border: 3px solid #475569;
   border-radius: 8px;
   display: flex;
   align-items: center;
   justify-content: center;
-  background: white;
+  background: #0a0e27;
   transition: all 0.3s ease;
-}
-
-.is-dark .checkbox {
-  border-color: #475569;
-  background: #0f172a;
 }
 
 .checkbox.is-checked {
@@ -740,22 +693,14 @@ onMounted(async () => {
   margin: 0 0 8px 0;
   font-size: 20px;
   font-weight: 600;
-  color: #1e293b;
-}
-
-.is-dark .card-title {
   color: #e5e5e5;
 }
 
 .card-description {
   margin: 0 0 12px 0;
   font-size: 16px;
-  color: #64748b;
-  line-height: 1.5;
-}
-
-.is-dark .card-description {
   color: #94a3b8;
+  line-height: 1.5;
 }
 
 .card-stats {
@@ -763,10 +708,6 @@ onMounted(async () => {
   align-items: center;
   gap: 8px;
   font-size: 15px;
-  color: #64748b;
-}
-
-.is-dark .card-stats {
   color: #94a3b8;
 }
 
@@ -834,15 +775,11 @@ onMounted(async () => {
 
 /* 右側統計面板 */
 .stats-panel {
-  background: white;
+  background: #1a1d3a;
   border-radius: 16px;
   padding: 32px;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
-}
-
-.is-dark .stats-panel {
-  background: #1a1a2e;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  border: 1px solid #2d3154;
 }
 
 /* 空狀態 */
@@ -861,22 +798,14 @@ onMounted(async () => {
   margin: 0 0 16px 0;
   font-size: 24px;
   font-weight: 600;
-  color: #1e293b;
-}
-
-.is-dark .empty-title {
   color: #e5e5e5;
 }
 
 .empty-desc {
   margin: 0 0 32px 0;
   font-size: 16px;
-  color: #64748b;
-  line-height: 1.8;
-}
-
-.is-dark .empty-desc {
   color: #94a3b8;
+  line-height: 1.8;
 }
 
 .selection-count {
@@ -884,12 +813,8 @@ onMounted(async () => {
   align-items: baseline;
   gap: 8px;
   padding: 12px 24px;
-  background: #f1f5f9;
+  background: #252847;
   border-radius: 12px;
-}
-
-.is-dark .selection-count {
-  background: #16213e;
 }
 
 .count-number {
@@ -900,10 +825,6 @@ onMounted(async () => {
 
 .count-label {
   font-size: 16px;
-  color: #64748b;
-}
-
-.is-dark .count-label {
   color: #94a3b8;
 }
 
@@ -919,10 +840,6 @@ onMounted(async () => {
   margin: 0;
   font-size: 20px;
   font-weight: 600;
-  color: #1e293b;
-}
-
-.is-dark .stats-title {
   color: #e5e5e5;
 }
 
@@ -939,42 +856,22 @@ onMounted(async () => {
   gap: 16px;
   padding: 20px;
   border-radius: 12px;
-  background: #f8fafc;
-}
-
-.is-dark .stat-card {
-  background: #16213e;
+  background: #252847;
 }
 
 .stat-card.total {
-  background: linear-gradient(135deg, #dbeafe 0%, #bfdbfe 100%);
-}
-
-.is-dark .stat-card.total {
   background: linear-gradient(135deg, #1e3a5f 0%, #1e40af 100%);
 }
 
 .stat-card.high {
-  background: linear-gradient(135deg, #dcfce7 0%, #bbf7d0 100%);
-}
-
-.is-dark .stat-card.high {
   background: linear-gradient(135deg, #14532d 0%, #166534 100%);
 }
 
 .stat-card.medium {
-  background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%);
-}
-
-.is-dark .stat-card.medium {
   background: linear-gradient(135deg, #422006 0%, #713f12 100%);
 }
 
 .stat-card.average {
-  background: linear-gradient(135deg, #e0e7ff 0%, #c7d2fe 100%);
-}
-
-.is-dark .stat-card.average {
   background: linear-gradient(135deg, #312e81 0%, #3730a3 100%);
 }
 
@@ -989,22 +886,14 @@ onMounted(async () => {
 .stat-number {
   font-size: 28px;
   font-weight: 700;
-  color: #1e293b;
-  margin-bottom: 4px;
-}
-
-.is-dark .stat-number {
   color: #e5e5e5;
+  margin-bottom: 4px;
 }
 
 .stat-name {
   font-size: 14px;
-  color: #64748b;
-  font-weight: 500;
-}
-
-.is-dark .stat-name {
   color: #94a3b8;
+  font-weight: 500;
 }
 
 /* 已加載圖譜 */
@@ -1016,10 +905,6 @@ onMounted(async () => {
   margin: 0 0 16px 0;
   font-size: 16px;
   font-weight: 600;
-  color: #1e293b;
-}
-
-.is-dark .section-title {
   color: #e5e5e5;
 }
 
@@ -1034,12 +919,8 @@ onMounted(async () => {
   align-items: center;
   gap: 12px;
   padding: 12px 16px;
-  background: #f8fafc;
+  background: #252847;
   border-radius: 10px;
-}
-
-.is-dark .loaded-item {
-  background: #16213e;
 }
 
 .loaded-icon {
@@ -1050,10 +931,6 @@ onMounted(async () => {
   flex: 1;
   font-size: 15px;
   font-weight: 500;
-  color: #1e293b;
-}
-
-.is-dark .loaded-name {
   color: #e5e5e5;
 }
 

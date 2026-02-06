@@ -16,11 +16,77 @@ from PySide6.QtWidgets import (
     QPushButton, QTextEdit, QLabel, QFrame, QComboBox
 )
 from PySide6.QtCore import (
-    Qt, QThread, Signal, QUrl, QTimer
+    Qt, QThread, Signal, QUrl, QTimer, QProcess
 )
 from PySide6.QtGui import (
     QFont, QColor, QPalette, QDesktopServices, QTextCursor
 )
+
+# ============================================
+# ProcessWorker - 非同步執行子進程
+# ============================================
+class ProcessWorker(QThread):
+    """異步執行 subprocess 並實時傳送日誌"""
+    log_signal = Signal(str)
+    finished_signal = Signal(object)  # 返回 process 對象
+    error_signal = Signal(str)
+    
+    def __init__(self, command, cwd, name="Process"):
+        super().__init__()
+        self.command = command
+        self.cwd = cwd
+        self.name = name
+        self.process = None
+        self._is_running = True
+    
+    def run(self):
+        """在背景執行緒中執行命令"""
+        try:
+            env = os.environ.copy()
+            env['PYTHONIOENCODING'] = 'utf-8'
+            
+            self.log_signal.emit(f"🚀 正在啟動 {self.name}...")
+            
+            self.process = subprocess.Popen(
+                self.command,
+                cwd=self.cwd,
+                env=env,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                encoding='utf-8',
+                errors='ignore',
+                creationflags=subprocess.CREATE_NO_WINDOW if platform.system() == 'Windows' else 0
+            )
+            
+            self.log_signal.emit(f"✅ {self.name} 已啟動 (PID: {self.process.pid})")
+            
+            # 實時讀取並發送日誌
+            for line in iter(self.process.stdout.readline, ''):
+                if not self._is_running:
+                    break
+                if line:
+                    self.log_signal.emit(line.strip())
+            
+            self.process.stdout.close()
+            self.process.wait()
+            
+            self.finished_signal.emit(self.process)
+            
+        except Exception as e:
+            error_msg = f"❌ {self.name} 啟動失敗: {str(e)}"
+            self.log_signal.emit(error_msg)
+            self.error_signal.emit(error_msg)
+    
+    def stop(self):
+        """停止 Worker"""
+        self._is_running = False
+        if self.process and self.process.poll() is None:
+            try:
+                self.process.terminate()
+                self.process.wait(timeout=5)
+            except:
+                self.process.kill()
 
 # 語言字典
 LANGUAGES = {
@@ -147,66 +213,166 @@ class LauncherWorker(QThread):
     status_signal = Signal(str, str)  # (service_name, status: "running"/"stopped"/"error")
     finished_signal = Signal(bool)  # 啟動完成（成功/失敗）
 
-    def __init__(self, project_root):
+    def __init__(self, project_root, mode='start'):
         super().__init__()
         self.project_root = Path(project_root)
         self.frontend_root = self.project_root / "frontend"
         self.is_windows = platform.system() == 'Windows'
         self.processes = []
         self._is_running = True
+        self.mode = mode  # 'start', 'stop', 'monitor'
 
     def log(self, message):
-        """發送 Log 到 UI"""
+        """發送 Log 到 UI（自動限制長度）"""
         self.log_signal.emit(message)
 
+    def check_port_status(self, port):
+        """檢查端口是否有服務運行（即時檢查）"""
+        try:
+            with socket.create_connection(("localhost", port), timeout=1):
+                return True
+        except (socket.timeout, ConnectionRefusedError, OSError):
+            return False
+
     def wait_for_port(self, port, timeout=60, check_interval=1):
-        """偵測端口是否開啟"""
+        """等待端口服務啟動（帶超時機制）"""
         self.log(f"⏳ 等待服務在 localhost:{port} 啟動...")
         start_time = time.time()
 
         while time.time() - start_time < timeout and self._is_running:
-            try:
-                with socket.create_connection(("localhost", port), timeout=1):
-                    elapsed = time.time() - start_time
-                    self.log(f"✅ 服務已就緒 (localhost:{port}) - 耗時 {elapsed:.1f}s")
-                    return True
-            except (socket.timeout, ConnectionRefusedError, OSError):
-                time.sleep(check_interval)
+            if self.check_port_status(port):
+                elapsed = time.time() - start_time
+                self.log(f"✅ 服務已就緒 (localhost:{port}) - 耗時 {elapsed:.1f}s")
+                return True
+            time.sleep(check_interval)
 
         self.log(f"❌ 服務啟動超時 (localhost:{port})，已等待 {timeout}s")
         return False
 
-    def check_docker_services(self):
-        """檢查 Docker 服務"""
-        self.log("🐳 檢查 Docker 服務...")
+    def kill_process_by_port(self, port):
+        """強制結束佔用指定 Port 的進程"""
+        try:
+            self.log(f"🔍 正在清理佔用 Port {port} 的殘留進程...")
+            
+            if self.is_windows:
+                # Windows: 使用 netstat 找出 LISTENING 狀態的 PID
+                result = subprocess.run(
+                    ['netstat', '-ano', '-p', 'TCP'],
+                    capture_output=True,
+                    text=True,
+                    encoding='utf-8',
+                    errors='ignore'
+                )
+                
+                killed_pids = set()
+                for line in result.stdout.split('\n'):
+                    # 精確匹配 :port 後面跟空白（避免 :80 匹配到 :8000）
+                    if f':{port} ' not in line and f':{port}\t' not in line:
+                        continue
+                    if 'LISTENING' not in line:
+                        continue
+                    parts = line.split()
+                    if len(parts) >= 5:
+                        pid = parts[-1].strip()
+                        if not pid.isdigit() or pid == '0' or pid in killed_pids:
+                            continue
+                        killed_pids.add(pid)
+                        try:
+                            # 先嘗試優雅停止
+                            subprocess.run(
+                                ['taskkill', '/T', '/PID', pid],
+                                capture_output=True, timeout=3
+                            )
+                            # 等待一下看進程是否退出
+                            time.sleep(1)
+                            # 檢查進程是否還在
+                            check = subprocess.run(
+                                ['tasklist', '/FI', f'PID eq {pid}'],
+                                capture_output=True, text=True, timeout=3
+                            )
+                            if pid in check.stdout:
+                                # 還在，強制終止
+                                subprocess.run(
+                                    ['taskkill', '/F', '/T', '/PID', pid],
+                                    capture_output=True, timeout=5
+                                )
+                                self.log(f"✅ 已強制清理進程 PID {pid} (Port {port})")
+                            else:
+                                self.log(f"✅ 已清理進程 PID {pid} (Port {port})")
+                        except Exception as e:
+                            self.log(f"⚠️  清理 PID {pid} 失敗: {e}")
+                
+                if not killed_pids:
+                    self.log(f"   Port {port} 無活動進程")
+            else:
+                # Linux/Mac: 使用 lsof 或 fuser
+                try:
+                    result = subprocess.run(
+                        ['lsof', '-t', f'-i:{port}'],
+                        capture_output=True,
+                        text=True
+                    )
+                    if result.stdout.strip():
+                        pid = result.stdout.strip()
+                        subprocess.run(['kill', '-9', pid], capture_output=True)
+                        self.log(f"✅ 已清理進程 PID {pid} (Port {port})")
+                except FileNotFoundError:
+                    # lsof 不存在，使用 fuser
+                    subprocess.run(['fuser', '-k', f'{port}/tcp'], capture_output=True)
+                    
+        except Exception as e:
+            self.log(f"⚠️  清理 Port {port} 時發生錯誤: {e}")
+
+    def check_docker_status(self):
+        """檢查 Docker 容器狀態（靜默模式，不輸出 Log）"""
         try:
             result = subprocess.run(
-                ['docker', 'compose', 'ps'],
-                cwd=self.project_root,
+                ['docker', 'ps'],
                 capture_output=True,
                 text=True,
-                timeout=10,
+                timeout=5,
                 encoding='utf-8',
                 errors='ignore'
             )
-
+            
+            # 檢查關鍵容器名稱
             if result.returncode == 0:
-                self.log("✅ Docker 服務運行中")
-                self.status_signal.emit("docker", "running")
-                return True
-            else:
-                self.log("⚠️  Docker 服務未啟動")
-                self.status_signal.emit("docker", "stopped")
-                return False
-        except Exception as e:
-            self.log(f"⚠️  Docker 檢查失敗: {e}")
-            self.status_signal.emit("docker", "error")
+                output = result.stdout.lower()
+                # 檢查是否有 ragflow 或 elasticsearch 容器
+                if 'ragflow' in output or 'es01' in output or 'dify' in output:
+                    return True
             return False
+        except Exception:
+            return False
+
+    def check_docker_services(self):
+        """檢查 Docker 服務（帶 Log 輸出）"""
+        self.log("🐳 檢查 Docker 服務...")
+        is_running = self.check_docker_status()
+        
+        if is_running:
+            self.log("✅ Docker 服務運行中")
+            self.status_signal.emit("docker", "running")
+        else:
+            self.log("⚠️  Docker 服務未啟動")
+            self.status_signal.emit("docker", "stopped")
+        
+        return is_running
 
     def start_backend(self):
         """啟動 FastAPI 後端"""
         self.log("🚀 啟動 FastAPI 後端服務...")
         self.log("=" * 60)
+        
+        # 檢查服務是否已在運行
+        if self.check_port_status(8000):
+            self.log("⚠️  後端服務已在運行中 (Port 8000)，略過啟動")
+            self.status_signal.emit("backend", "running")
+            return "already_running"
+        
+        # 預防性清理：確保 Port 8000 是乾淨的
+        self.kill_process_by_port(8000)
+        time.sleep(1)  # 等待端口釋放
 
         try:
             env = os.environ.copy()
@@ -253,6 +419,16 @@ class LauncherWorker(QThread):
         """啟動 Vue 前端"""
         self.log("🎨 啟動前端開發伺服器...")
         self.log("=" * 60)
+        
+        # 檢查服務是否已在運行
+        if self.check_port_status(5173):
+            self.log("⚠️  前端服務已在運行中 (Port 5173)，略過啟動")
+            self.status_signal.emit("frontend", "running")
+            return "already_running"
+        
+        # 預防性清理：確保 Port 5173 是乾淨的
+        self.kill_process_by_port(5173)
+        time.sleep(1)  # 等待端口釋放
 
         npm_cmd = 'npm.cmd' if self.is_windows else 'npm'
 
@@ -287,7 +463,16 @@ class LauncherWorker(QThread):
             return None
 
     def run(self):
-        """主執行流程"""
+        """主執行流程（智能路由器）"""
+        if self.mode == 'start':
+            self.run_start_mode()
+        elif self.mode == 'stop':
+            self.stop()
+        elif self.mode == 'monitor':
+            self.run_monitor_mode()
+
+    def run_start_mode(self):
+        """啟動模式：啟動所有服務"""
         self.log("🎯 BruV Enterprise 啟動器")
         self.log("=" * 60)
 
@@ -295,38 +480,41 @@ class LauncherWorker(QThread):
         self.check_docker_services()
 
         # 2. 啟動後端
-        backend_process = self.start_backend()
-        if not backend_process:
+        backend_result = self.start_backend()
+        if backend_result == "already_running":
+            # 服務已運行，直接標記為就緒
+            pass
+        elif not backend_result:
             self.finished_signal.emit(False)
             return
-
-        self.status_signal.emit("backend", "starting")
-
-        # 3. 等待後端就緒
-        if not self.wait_for_port(8000, timeout=60):
-            self.log("❌ 後端服務啟動超時")
-            self.status_signal.emit("backend", "error")
-            self.finished_signal.emit(False)
-            return
-
-        self.status_signal.emit("backend", "running")
-
-        # 4. 啟動前端
-        frontend_process = self.start_frontend()
-        if not frontend_process:
-            self.finished_signal.emit(False)
-            return
-
-        self.status_signal.emit("frontend", "starting")
-
-        # 5. 等待前端就緒
-        if not self.wait_for_port(5173, timeout=60):
-            self.log("⚠️  前端服務啟動超時")
-            self.status_signal.emit("frontend", "error")
         else:
-            self.status_signal.emit("frontend", "running")
+            self.status_signal.emit("backend", "starting")
+            # 等待後端就緒
+            if not self.wait_for_port(8000, timeout=60):
+                self.log("❌ 後端服務啟動超時")
+                self.status_signal.emit("backend", "error")
+                self.finished_signal.emit(False)
+                return
+            self.status_signal.emit("backend", "running")
 
-        # 6. 完成
+        # 3. 啟動前端
+        frontend_result = self.start_frontend()
+        if frontend_result == "already_running":
+            # 服務已運行，直接標記為就緒
+            pass
+        elif not frontend_result:
+            self.finished_signal.emit(False)
+            return
+        else:
+            self.status_signal.emit("frontend", "starting")
+            # 等待前端就緒
+            if not self.wait_for_port(5173, timeout=60):
+                self.log("⚠️  前端服務啟動超時")
+                self.status_signal.emit("frontend", "error")
+            else:
+                self.status_signal.emit("frontend", "running")
+
+        # 4. 完成
         self.log("\n" + "=" * 60)
         self.log("🎉 系統啟動完成！")
         self.log("=" * 60)
@@ -338,25 +526,99 @@ class LauncherWorker(QThread):
         self.log("=" * 60)
 
         self.finished_signal.emit(True)
+        
+        # 啟動完成後，切換到監控模式
+        self.run_monitor_mode()
+
+    def run_monitor_mode(self):
+        """監控模式：持續監控系統狀態"""
+        self.log("\n👁️  系統狀態監控已啟動...")
+        
+        last_status = {'backend': None, 'frontend': None, 'docker': None}
+        
+        while self._is_running:
+            # 檢查所有服務狀態
+            backend_alive = self.check_port_status(8000)
+            frontend_alive = self.check_port_status(5173)
+            docker_alive = self.check_docker_status()
+            
+            current_status = {
+                'backend': 'running' if backend_alive else 'stopped',
+                'frontend': 'running' if frontend_alive else 'stopped',
+                'docker': 'running' if docker_alive else 'stopped'
+            }
+            
+            # 只在狀態改變時發送信號和 Log
+            for service, status in current_status.items():
+                if status != last_status[service]:
+                    self.status_signal.emit(service, status)
+                    if status == 'stopped' and last_status[service] == 'running':
+                        self.log(f"⚠️  {service.upper()} 服務已停止")
+            
+            last_status = current_status
+            
+            # 每 2 秒檢查一次
+            time.sleep(2)
+            
+        self.log("👁️  系統狀態監控已停止")
 
     def stop(self):
-        """停止所有服務"""
+        """停止所有服務（強制清理模式）"""
         self._is_running = False
         self.log("🛑 正在停止所有服務...")
+        self.log("=" * 60)
 
-        for process in self.processes:
-            try:
-                if process.poll() is None:
-                    if self.is_windows:
-                        subprocess.run(
-                            ['taskkill', '/F', '/T', '/PID', str(process.pid)],
-                            capture_output=True
-                        )
-                    else:
-                        process.terminate()
-                        process.wait(timeout=5)
-            except Exception as e:
-                self.log(f"⚠️  停止進程失敗: {e}")
+        # 第一步：無差別強制關閉端口（不管 self.processes 是否為空）
+        self.log("\n🔥 正在執行強制清理...")
+        self.kill_process_by_port(8000)  # 後端 API
+        self.kill_process_by_port(5173)  # 前端 Vue
+
+        # 第二步：停止已知的子進程（優雅停止 → 超時後強制）
+        if self.processes:
+            self.log("\n🔄 清理已知子進程...")
+            for process in self.processes:
+                try:
+                    if process.poll() is None:
+                        self.log(f"🔄 正在優雅停止進程 PID: {process.pid}")
+                        if self.is_windows:
+                            # 先嘗試不帶 /F 的 taskkill（送 WM_CLOSE）
+                            subprocess.run(
+                                ['taskkill', '/T', '/PID', str(process.pid)],
+                                capture_output=True,
+                                timeout=5
+                            )
+                            try:
+                                process.wait(timeout=5)
+                                self.log(f"✅ 進程 {process.pid} 已優雅停止")
+                            except subprocess.TimeoutExpired:
+                                self.log(f"⚠️  進程 {process.pid} 未回應，強制終止...")
+                                subprocess.run(
+                                    ['taskkill', '/F', '/T', '/PID', str(process.pid)],
+                                    capture_output=True,
+                                    timeout=5
+                                )
+                                self.log(f"✅ 進程 {process.pid} 已強制停止")
+                        else:
+                            process.terminate()
+                            try:
+                                process.wait(timeout=5)
+                                self.log(f"✅ 進程 {process.pid} 已優雅停止")
+                            except subprocess.TimeoutExpired:
+                                process.kill()
+                                self.log(f"✅ 進程 {process.pid} 已強制停止 (SIGKILL)")
+                except Exception as e:
+                    self.log(f"⚠️  停止進程 {process.pid} 失敗: {e}")
+        else:
+            self.log("\n⚠️  進程列表為空（可能啟動器已重開過）")
+        
+        # 第三步：清空進程列表
+        self.processes.clear()
+        
+        self.log("=" * 60)
+        self.log("✅ 所有服務已停止")
+        self.log("=" * 60)
+        
+        self.finished_signal.emit(False)
 
 
 class StatusIndicator(QWidget):
@@ -400,6 +662,7 @@ class BruVLauncherGUI(QMainWindow):
         super().__init__()
         self.project_root = Path(__file__).parent
         self.worker = None
+        self.process_workers = []  # 儲存所有 ProcessWorker
         self.drag_position = None
         self.is_system_running = False  # 系統運行狀態旗標
         self.current_language = "zh_TW"  # 預設語言
@@ -927,14 +1190,15 @@ class BruVLauncherGUI(QMainWindow):
             self.append_log(self.t("log_already_running"))
             return
         
-        # 更新按鈕狀態 (Starting)
+        # 更新按鈕狀態 (Starting) 並禁用按鈕
         self.set_button_state("starting")
+        self.action_btn.setEnabled(False)  # 禁用按鈕防止重複點擊
         
         # 清空控制台
         self.console_text.clear()
         
-        # 創建並啟動工作執行緒
-        self.worker = LauncherWorker(self.project_root)
+        # 創建並啟動工作執行緒（啟動模式）
+        self.worker = LauncherWorker(self.project_root, mode='start')
         self.worker.log_signal.connect(self.append_log)
         self.worker.status_signal.connect(self.update_status)
         self.worker.finished_signal.connect(self.on_launch_finished)
@@ -942,10 +1206,6 @@ class BruVLauncherGUI(QMainWindow):
     
     def stop_system(self):
         """停止系統"""
-        if not self.worker or not self.worker.isRunning():
-            self.append_log(self.t("log_not_running"))
-            return
-        
         # 更新按鈕狀態 (Stopping)
         self.set_button_state("stopping")
         
@@ -953,13 +1213,28 @@ class BruVLauncherGUI(QMainWindow):
         self.append_log(self.t("log_stopping_system"))
         self.append_log("=" * 60)
         
-        # 停止工作執行緒
-        self.worker.stop()
-        self.worker.wait(5000)  # 等待最多 5 秒
+        # 如果有舊的 worker 在運行，先停止它
+        if self.worker and self.worker.isRunning():
+            self.worker._is_running = False
+            self.worker.wait(2000)  # 等待 2 秒
         
+        # 創建新的 worker 執行停止操作
+        self.worker = LauncherWorker(self.project_root, mode='stop')
+        self.worker.log_signal.connect(self.append_log)
+        self.worker.status_signal.connect(self.update_status)
+        self.worker.finished_signal.connect(self.on_stop_finished)
+        self.worker.start()
+    
+    def on_stop_finished(self, success):
+        """停止完成回調"""
         # 重置狀態
         self.backend_status.set_status("stopped")
         self.frontend_status.set_status("stopped")
+        
+        # 更新按鈕狀態
+        self.set_button_state("stopped")
+        
+        self.append_log(self.t("log_all_stopped"))
         
         self.append_log(self.t("log_all_stopped"))
         self.append_log("=" * 60)
@@ -1002,11 +1277,59 @@ class BruVLauncherGUI(QMainWindow):
         self.action_btn.style().polish(self.action_btn)
 
     def append_log(self, message):
-        """添加 Log 到控制台"""
+        """添加 Log 到控制台（帶自動清理和自動滾動）"""
+        # 限制日誌最大行數為 5000 行
+        MAX_LOG_LINES = 5000
+        current_text = self.console_text.toPlainText()
+        lines = current_text.split('\n')
+        
+        if len(lines) > MAX_LOG_LINES:
+            # 保留最新的 4000 行，刪除舊日誌
+            self.console_text.setPlainText('\n'.join(lines[-4000:]))
+            self.console_text.append(f"\n[日誌已清理，保留最新 4000 行]\n")
+        
         self.console_text.append(message)
+        
+        # 自動滾動到底部
         cursor = self.console_text.textCursor()
         cursor.movePosition(QTextCursor.MoveOperation.End)
         self.console_text.setTextCursor(cursor)
+        self.console_text.ensureCursorVisible()
+
+    def closeEvent(self, event):
+        """窗口關閉時清理所有進程"""
+        self.append_log("\n🛑 正在關閉啟動器，清理所有進程...")
+        
+        # 停止 LaunchWorker
+        if hasattr(self, 'worker') and self.worker:
+            self.worker._is_running = False
+            self.worker.quit()
+            self.worker.wait(2000)
+        
+        # 停止所有 ProcessWorker
+        if hasattr(self, 'process_workers'):
+            for worker in self.process_workers:
+                worker.stop()
+                worker.quit()
+                worker.wait(1000)
+        
+        # 終止所有子進程
+        if hasattr(self, 'worker') and self.worker:
+            for process in self.worker.processes:
+                try:
+                    if process and process.poll() is None:
+                        self.append_log(f"🔪 終止進程 PID: {process.pid}")
+                        process.terminate()
+                        process.wait(timeout=3)
+                except Exception as e:
+                    self.append_log(f"⚠️ 終止進程失敗: {e}")
+                    try:
+                        process.kill()
+                    except:
+                        pass
+        
+        self.append_log("✅ 所有進程已清理完畢")
+        event.accept()
 
     def update_status(self, service, status):
         """更新服務狀態"""
@@ -1019,6 +1342,8 @@ class BruVLauncherGUI(QMainWindow):
 
     def on_launch_finished(self, success):
         """啟動完成回調"""
+        self.action_btn.setEnabled(True)  # 重新啟用按鈕
+        
         if success:
             self.is_system_running = True
             self.set_button_state("running")  # 切換到 Running 狀態 (紅色停止按鈕)

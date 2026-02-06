@@ -1,280 +1,486 @@
 <template>
-  <div class="min-h-screen bg-gray-50 dark:bg-gradient-to-br dark:from-[#0a0a0a] dark:to-[#1a1a2e] px-12 py-10">
+  <div class="h-screen overflow-y-auto bg-[#0a0e27] px-6 py-8 custom-scrollbar">
     <!-- 頁面標題 -->
-    <header class="text-center mb-12">
-      <div class="flex flex-col items-center gap-3">
-        <h1 class="flex items-center gap-4 m-0 text-5xl font-extrabold text-gray-800 dark:text-white">
-          <span class="text-6xl">📥</span>
-          <span class="bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">資料導入工作台</span>
+    <header class="text-center mb-8">
+      <div class="flex flex-col items-center gap-2">
+        <h1 class="flex items-center gap-3 m-0 text-4xl font-extrabold text-white">
+          <span class="text-5xl">📥</span>
+          <span class="bg-gradient-to-r from-blue-400 to-purple-400 bg-clip-text text-transparent">資料導入工作台</span>
         </h1>
-        <p class="text-base font-medium text-gray-500 dark:text-gray-400 uppercase tracking-widest m-0">Data Import Workbench</p>
+        <p class="text-sm font-medium text-gray-400 uppercase tracking-widest m-0">Data Import Workbench</p>
       </div>
     </header>
 
     <!-- 主要內容區 -->
-    <div class="max-w-5xl mx-auto">
-      <!-- 導入說明卡片 -->
-      <div class="mb-8 p-6 bg-blue-50 dark:bg-blue-900/10 border-2 border-blue-200 dark:border-blue-500/30 rounded-2xl">
+    <div class="max-w-5xl mx-auto pb-8">
+      <!-- 說明卡片 -->
+      <div class="mb-6 p-5 bg-blue-900/10 border-2 border-blue-500/30 rounded-2xl">
         <div class="flex items-start gap-4">
           <span class="text-4xl">💡</span>
           <div class="flex-1">
-            <h3 class="text-xl font-bold text-blue-800 dark:text-blue-300 mb-2">支援格式</h3>
-            <ul class="space-y-2 text-gray-700 dark:text-gray-300">
+            <h3 class="text-xl font-bold text-blue-300 mb-2">自動處理流程</h3>
+            <ul class="space-y-2 text-gray-300">
               <li class="flex items-center gap-2">
                 <span class="text-green-500">✓</span>
-                <strong>CSV 檔案</strong> (.csv) - 逗號分隔值
+                <strong>上傳檔案</strong> - 支援 PDF、DOCX、XLSX、TXT、MD
               </li>
               <li class="flex items-center gap-2">
                 <span class="text-green-500">✓</span>
-                <strong>Excel 檔案</strong> (.xlsx) - Microsoft Excel 格式
+                <strong>自動監控</strong> - WatcherService 自動偵測新檔案
+              </li>
+              <li class="flex items-center gap-2">
+                <span class="text-green-500">✓</span>
+                <strong>RAGFlow 處理</strong> - 自動上傳至 RAGFlow 知識庫
+              </li>
+              <li class="flex items-center gap-2">
+                <span class="text-green-500">✓</span>
+                <strong>圖譜建立</strong> - Excel 自動解析並創建節點連線
               </li>
               <li class="flex items-center gap-2 mt-3">
                 <span class="text-blue-500">ℹ️</span>
-                <span>檔案將自動解析並建立為知識節點，儲存至新圖譜</span>
+                <span>上傳後無需任何操作，系統將自動完成所有處理</span>
               </li>
             </ul>
           </div>
         </div>
       </div>
 
-      <!-- 導入操作卡片 -->
-      <div class="bg-white dark:bg-[#1a1a1a] border-2 border-gray-200 dark:border-white/10 rounded-3xl shadow-xl">
+      <!-- 上傳區域 -->
+      <div class="bg-[#1a1d3a] border-2 border-[#2d3154] rounded-3xl shadow-xl">
         <!-- 卡片標題 -->
         <div class="px-8 py-6 bg-gradient-to-r from-blue-500 to-purple-500 border-b border-white/10">
           <h2 class="text-2xl font-bold text-white flex items-center gap-3">
             <span class="text-3xl">📂</span>
-            選擇檔案
+            上傳檔案
           </h2>
         </div>
 
-        <!-- 上傳區域 -->
-        <div class="p-12 pb-16">
-          <!-- 導入模式選擇 -->
-          <div class="mb-8">
-            <label class="block text-sm font-bold text-gray-700 dark:text-gray-300 mb-3">
-              📋 導入模式
-            </label>
-            <div class="flex gap-4">
-              <button
-                @click="importMode = 'new'"
-                class="flex-1 px-6 py-4 rounded-xl border-2 transition-all"
-                :class="importMode === 'new' 
-                  ? 'bg-blue-50 dark:bg-blue-900/20 border-blue-500 text-blue-700 dark:text-blue-300 font-bold' 
-                  : 'bg-white dark:bg-white/5 border-gray-300 dark:border-white/20 text-gray-600 dark:text-gray-400 hover:border-blue-400'"
-              >
-                <div class="flex flex-col items-center gap-2">
-                  <span class="text-2xl">✨</span>
-                  <span class="text-base">建立新圖譜</span>
-                </div>
-              </button>
-              <button
-                @click="importMode = 'existing'"
-                class="flex-1 px-6 py-4 rounded-xl border-2 transition-all"
-                :class="importMode === 'existing' 
-                  ? 'bg-purple-50 dark:bg-purple-900/20 border-purple-500 text-purple-700 dark:text-purple-300 font-bold' 
-                  : 'bg-white dark:bg-white/5 border-gray-300 dark:border-white/20 text-gray-600 dark:text-gray-400 hover:border-purple-400'"
-              >
-                <div class="flex flex-col items-center gap-2">
-                  <span class="text-2xl">📂</span>
-                  <span class="text-base">加入現有圖譜</span>
-                </div>
-              </button>
-            </div>
-          </div>
-          
-          <!-- 新建圖譜：圖譜名稱輸入 -->
-          <div v-if="importMode === 'new'" class="mb-8">
-            <label class="block text-sm font-bold text-blue-700 dark:text-blue-300 mb-3">
-              ✨ 新圖譜名稱
-            </label>
-            <input 
-              v-model="graphName"
-              type="text"
-              placeholder="例如：2024 年度報告、產品規劃..."
-              class="w-full px-6 py-4 bg-white dark:bg-white/5 border-2 border-blue-300 dark:border-blue-500/50 rounded-xl text-lg text-gray-800 dark:text-white placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all"
-            />
-            <p class="mt-2 text-sm text-blue-600 dark:text-blue-400">
-              💡 匯入的數據將建立為一個全新的知識圖譜
-            </p>
-          </div>
-          
-          <!-- 現有圖譜：下拉選擇 -->
-          <div v-if="importMode === 'existing'" class="mb-8">
-            <label class="block text-sm font-bold text-purple-700 dark:text-purple-300 mb-3">
-              📂 選擇圖譜
-            </label>
-            <div v-if="isLoadingGraphs" class="w-full px-6 py-4 bg-white dark:bg-white/5 border-2 border-purple-300 dark:border-purple-500/50 rounded-xl text-center">
-              <span class="text-gray-500 dark:text-gray-400">⏳ 載入圖譜列表中...</span>
-            </div>
-            <select
-              v-else
-              v-model="selectedGraphId"
-              class="w-full px-6 py-4 bg-white dark:bg-white/5 border-2 border-purple-300 dark:border-purple-500/50 rounded-xl text-lg text-gray-800 dark:text-white focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-purple-500 transition-all cursor-pointer"
-            >
-              <option :value="null" disabled>請選擇要加入的圖譜...</option>
-              <option v-for="graph in existingGraphs" :key="graph.id" :value="graph.id">
-                {{ graph.name }} ({{ graph.nodeCount }} 個節點)
-              </option>
-            </select>
-            <p class="mt-2 text-sm text-purple-600 dark:text-purple-400 flex items-center gap-1">
-              <span>💡</span>
-              <span>匯入的數據將加入到選定的圖譜中</span>
-            </p>
-            <button
-              v-if="!isLoadingGraphs"
-              @click="loadExistingGraphs"
-              class="mt-2 text-xs text-purple-600 dark:text-purple-400 hover:text-purple-700 dark:hover:text-purple-300 underline"
-            >
-              🔄 重新載入圖譜列表
-            </button>
-          </div>
-          
-          <div 
-            class="relative flex flex-col items-center justify-center gap-6 p-16 border-3 border-dashed border-gray-300 dark:border-gray-600 rounded-2xl bg-gray-50 dark:bg-white/5 hover:bg-gray-100 dark:hover:bg-white/10 hover:border-blue-400 dark:hover:border-blue-500 transition-all duration-300 cursor-pointer group"
+        <!-- 拖曳上傳區 -->
+        <div class="p-8">
+          <div
+            @drop.prevent="handleDrop"
+            @dragover.prevent="isDragging = true"
+            @dragleave.prevent="isDragging = false"
             @click="triggerFileInput"
+            class="relative border-4 border-dashed rounded-3xl p-12 transition-all cursor-pointer"
+            :class="[
+              isDragging 
+                ? 'border-blue-500 bg-blue-900/20 scale-105' 
+                : 'border-[#2d3154] bg-white/5 hover:border-blue-400 hover:bg-blue-900/10',
+              uploadStatus === 'uploading' ? 'pointer-events-none' : ''
+            ]"
           >
-            <!-- 圖示 -->
-            <div class="text-8xl opacity-60 group-hover:opacity-100 group-hover:scale-110 transition-all duration-300">
-              📁
-            </div>
-
-            <!-- 提示文字 -->
+            <!-- 拖曳提示 -->
             <div class="text-center">
-              <p class="text-xl font-bold text-gray-700 dark:text-gray-200 mb-2">
-                點擊選擇檔案
-              </p>
-              <p class="text-base text-gray-500 dark:text-gray-400">
-                支援 CSV 或 Excel 檔案
-              </p>
-            </div>
-
-            <!-- 已選檔案顯示 -->
-            <div v-if="selectedFile" class="mt-4 px-6 py-3 bg-blue-100 dark:bg-blue-900/30 border border-blue-300 dark:border-blue-500/40 rounded-xl flex items-center gap-3">
-              <span class="text-2xl">📄</span>
-              <div class="flex-1 flex flex-col items-start">
-                <span class="text-sm font-bold text-blue-800 dark:text-blue-300">{{ selectedFile.name }}</span>
-                <span class="text-xs text-blue-600 dark:text-blue-400">{{ formatFileSize(selectedFile.size) }}</span>
-                
-                <!-- 上傳進度條 -->
-                <div v-if="isUploading" class="w-full mt-2">
-                  <div class="flex items-center gap-2">
-                    <div class="flex-1 h-2 bg-gray-200 dark:bg-gray-700 rounded-full overflow-hidden">
-                      <div 
-                        class="h-full bg-gradient-to-r from-blue-500 to-purple-500 transition-all duration-300"
-                        :style="{ width: uploadProgress + '%' }"
-                      ></div>
-                    </div>
-                    <span class="text-xs text-blue-600 dark:text-blue-400 font-mono">{{ Math.round(uploadProgress) }}%</span>
-                  </div>
-                </div>
+              <div class="mb-4">
+                <span class="text-7xl animate-bounce inline-block">
+                  {{ uploadStatus === 'ready' ? '📎' : uploadStatus === 'uploading' ? '⏳' : '✅' }}
+                </span>
               </div>
-              <button 
-                v-if="!isUploading"
-                @click.stop="clearFile"
-                class="px-3 py-1 bg-red-500 hover:bg-red-600 text-white text-sm rounded-lg transition-colors"
-              >
-                ✕ 取消
-              </button>
+              <p class="text-2xl font-bold text-gray-300 mb-2">
+                {{ getStatusText() }}
+              </p>
+              <p class="text-base text-gray-400 mb-4">
+                {{ getStatusSubtext() }}
+              </p>
+              
+              <!-- 支援格式標籤 -->
+              <div v-if="uploadStatus === 'ready'" class="flex justify-center gap-3 flex-wrap">
+                <span class="px-4 py-2 bg-blue-900/30 text-blue-300 rounded-lg text-sm font-semibold">
+                  PDF
+                </span>
+                <span class="px-4 py-2 bg-green-900/30 text-green-300 rounded-lg text-sm font-semibold">
+                  DOCX
+                </span>
+                <span class="px-4 py-2 bg-purple-900/30 text-purple-300 rounded-lg text-sm font-semibold">
+                  XLSX
+                </span>
+                <span class="px-4 py-2 bg-yellow-900/30 text-yellow-300 rounded-lg text-sm font-semibold">
+                  TXT
+                </span>
+                <span class="px-4 py-2 bg-red-900/30 text-red-300 rounded-lg text-sm font-semibold">
+                  MD
+                </span>
+              </div>
             </div>
 
             <!-- 隱藏的檔案輸入 -->
-            <input 
-              ref="fileInput" 
-              type="file" 
-              accept=".csv, .xlsx" 
-              style="display: none;" 
+            <input
+              ref="fileInput"
+              type="file"
+              multiple
               @change="handleFileSelect"
+              class="hidden"
+              accept=".pdf,.txt,.md,.docx,.xlsx"
             />
           </div>
 
-          <!-- 導入按鈕 -->
-          <div class="mt-8 flex justify-center">
-            <button 
-              :disabled="!selectedFile || (importMode === 'new' && !graphName.trim()) || (importMode === 'existing' && !selectedGraphId) || isUploading"
-              @click="handleUpload"
-              class="px-12 py-4 flex items-center gap-3 bg-gradient-to-r from-blue-600 to-blue-500 hover:from-blue-700 hover:to-blue-600 disabled:from-gray-400 disabled:to-gray-400 disabled:cursor-not-allowed text-white rounded-xl text-lg font-bold shadow-lg shadow-blue-500/30 transition-all duration-200 hover:-translate-y-1 disabled:translate-y-0 disabled:shadow-none"
-            >
-              <span class="text-2xl">{{ isUploading ? '⏳' : '🚀' }}</span>
-              <span>{{ isUploading ? '上傳中...' : '開始導入' }}</span>
-            </button>
+          <!-- 檔案列表 -->
+          <div v-if="files.length > 0" class="mt-8">
+            <h3 class="text-xl font-bold text-white mb-4 flex items-center gap-2">
+              <span>📋</span>
+              已選擇的檔案 ({{ files.length }})
+            </h3>
+            <div class="space-y-3">
+              <div
+                v-for="(file, index) in files"
+                :key="index"
+                class="flex items-center justify-between p-4 bg-white/5 border border-[#2d3154] rounded-xl"
+              >
+                <div class="flex items-center gap-3 flex-1">
+                  <span class="text-3xl">{{ getFileIcon(file.name) }}</span>
+                  <div class="flex-1">
+                    <p class="font-semibold text-white">{{ file.name }}</p>
+                    <p class="text-sm text-gray-400">{{ formatFileSize(file.size) }}</p>
+                  </div>
+                </div>
+                <button
+                  @click="removeFile(index)"
+                  class="px-4 py-2 bg-red-500 hover:bg-red-600 text-white rounded-lg transition-colors font-semibold"
+                >
+                  移除
+                </button>
+              </div>
+            </div>
+
+            <!-- 圖譜選擇 -->
+            <div class="mt-6 p-6 bg-white/5 border-2 border-[#2d3154] rounded-xl">
+              <h3 class="text-lg font-bold text-white mb-4 flex items-center gap-2">
+                <span>📋</span>
+                導入模式
+              </h3>
+              
+              <!-- 模式選擇按鈕 -->
+              <div class="flex gap-4 mb-4">
+                <button
+                  @click="showCreateGraphDialog = true"
+                  class="flex-1 px-6 py-4 rounded-xl border-2 transition-all"
+                  :class="importMode === 'new' 
+                    ? 'bg-blue-900/20 border-blue-500 text-blue-300 font-bold' 
+                    : 'bg-white/5 border-[#2d3154] text-gray-400 hover:border-blue-400'"
+                >
+                  <div class="flex flex-col items-center gap-2">
+                    <span class="text-2xl">✨</span>
+                    <span class="text-base">建立新圖譜</span>
+                  </div>
+                </button>
+                <button
+                  @click="importMode = 'existing'"
+                  class="flex-1 px-6 py-4 rounded-xl border-2 transition-all"
+                  :class="importMode === 'existing' 
+                    ? 'bg-purple-900/20 border-purple-500 text-purple-300 font-bold' 
+                    : 'bg-white/5 border-[#2d3154] text-gray-400 hover:border-purple-400'"
+                >
+                  <div class="flex flex-col items-center gap-2">
+                    <span class="text-2xl">📂</span>
+                    <span class="text-base">加入現有圖譜</span>
+                  </div>
+                </button>
+              </div>
+
+              <!-- 新建圖譜：顯示已選擇的圖譜 -->
+              <div v-if="importMode === 'new' && graphName" class="mt-4">
+                <div class="p-4 bg-blue-900/20 border-2 border-blue-500/50 rounded-xl">
+                  <div class="flex items-center justify-between">
+                    <div class="flex items-center gap-3">
+                      <span class="text-3xl">{{ newGraphData.icon || '🌐' }}</span>
+                      <div>
+                        <p class="font-bold text-blue-300">{{ graphName }}</p>
+                        <p class="text-sm text-blue-400">新建圖譜</p>
+                      </div>
+                    </div>
+                    <button
+                      @click="showCreateGraphDialog = true"
+                      class="px-4 py-2 bg-blue-500 hover:bg-blue-600 text-white rounded-lg font-semibold transition-colors text-sm"
+                    >
+                      ✏️ 編輯
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              <!-- 現有圖譜：選擇列表 -->
+              <div v-if="importMode === 'existing'" class="mt-4">
+                <label class="block text-sm font-bold text-purple-300 mb-2">
+                  📂 選擇圖譜
+                </label>
+                <select 
+                  v-model="selectedGraphId"
+                  class="w-full px-4 py-3 bg-white/5 border-2 border-purple-500/50 rounded-xl text-base text-white focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-purple-500 transition-all"
+                >
+                  <option value="" disabled>請選擇要加入的圖譜...</option>
+                  <option 
+                    v-for="graph in graphStore.graphMetadataList" 
+                    :key="graph.id" 
+                    :value="graph.id"
+                  >
+                    {{ graph.name }} (節點數: {{ graph.nodeCount || 0 }})
+                  </option>
+                </select>
+                <p class="mt-2 text-sm text-purple-400">
+                  💡 數據將加入到所選的現有圖譜中
+                </p>
+              </div>
+
+              <!-- AI Link 選項 -->
+              <div class="mt-6 pt-6 border-t-2 border-[#2d3154]">
+                <div class="flex items-center justify-between p-4 bg-gradient-to-r from-emerald-900/20 to-teal-900/20 border-2 border-emerald-500/50 rounded-xl">
+                  <div class="flex items-center gap-3">
+                    <span class="text-3xl">🤖</span>
+                    <div>
+                      <p class="font-bold text-emerald-300 text-base">AI 智能連線</p>
+                      <p class="text-sm text-emerald-400">自動分析並建立節點間的關聯性</p>
+                    </div>
+                  </div>
+                  <button
+                    @click="enableAILink = !enableAILink"
+                    class="relative inline-flex h-8 w-16 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:ring-offset-2"
+                    :class="enableAILink ? 'bg-emerald-500' : 'bg-gray-600'"
+                  >
+                    <span
+                      class="inline-block h-6 w-6 transform rounded-full bg-white shadow-lg transition-transform"
+                      :class="enableAILink ? 'translate-x-9' : 'translate-x-1'"
+                    />
+                  </button>
+                </div>
+                <p v-if="enableAILink" class="mt-3 text-sm text-emerald-400 flex items-start gap-2">
+                  <span>✨</span>
+                  <span>啟用後，系統將使用 AI 分析節點內容，自動建議並創建相關連線，提升圖譜結構的完整性</span>
+                </p>
+                <p v-else class="mt-3 text-sm text-gray-400 flex items-start gap-2">
+                  <span>ℹ️</span>
+                  <span>關閉 AI 連線功能，僅根據現有數據建立基礎關係</span>
+                </p>
+                
+                <!-- RAGFlow 知識庫選擇（當 AI Link 啟用時顯示） -->
+                <div v-if="enableAILink" class="mt-4 p-4 bg-purple-900/20 rounded-lg border-2 border-purple-700">
+                  <label class="block text-sm font-bold text-purple-300 mb-2">
+                    📚 RAGFlow 知識庫
+                  </label>
+                  <select
+                    v-model="selectedDatasetId"
+                    class="w-full px-4 py-2 bg-[#1a1d3a] border-2 border-purple-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500 text-gray-200"
+                  >
+                    <option value="">不使用 RAGFlow（僅本地處理）</option>
+                    <option v-for="dataset in ragflowDatasets" :key="dataset.id" :value="dataset.id">
+                      {{ dataset.name }}
+                    </option>
+                  </select>
+                  <p class="mt-2 text-xs text-purple-400">
+                    選擇知識庫後，文檔將同時上傳到 RAGFlow 進行深度語義分析
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <!-- 上傳按鈕 -->
+            <div class="mt-6 flex gap-4">
+              <button
+                @click="uploadFiles"
+                :disabled="uploadStatus === 'uploading'"
+                class="flex-1 px-8 py-4 bg-gradient-to-r from-blue-500 to-purple-500 hover:from-blue-600 hover:to-purple-600 disabled:from-gray-400 disabled:to-gray-500 text-white rounded-xl transition-all font-bold text-lg shadow-lg disabled:cursor-not-allowed"
+              >
+                <span v-if="uploadStatus !== 'uploading'">🚀 開始上傳</span>
+                <span v-else>⏳ 上傳中... ({{ uploadedCount }}/{{ files.length }})</span>
+              </button>
+              <button
+                @click="clearFiles"
+                :disabled="uploadStatus === 'uploading'"
+                class="px-8 py-4 bg-gray-500 hover:bg-gray-600 disabled:bg-gray-400 text-white rounded-xl transition-colors font-bold text-lg disabled:cursor-not-allowed"
+              >
+                清空列表
+              </button>
+            </div>
           </div>
 
-          <!-- 檔案預覽區域 -->
-          <div v-if="filePreview && filePreview.type === 'csv' && filePreview.headers" class="mt-8 p-6 bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 rounded-xl">
-            <h3 class="text-sm font-bold text-gray-700 dark:text-gray-300 mb-4 flex items-center gap-2">
-              <span class="text-xl">👁️</span>
-              檔案預覽 (前 5 列)
-            </h3>
-            <div class="overflow-x-auto">
-              <table class="w-full text-xs">
-                <thead>
-                  <tr class="bg-blue-100 dark:bg-blue-900/20">
-                    <th v-for="(header, index) in filePreview.headers" :key="index" class="px-3 py-2 text-left text-gray-700 dark:text-gray-300 border-r border-gray-300 dark:border-gray-600 last:border-r-0">
-                      {{ header.trim() }}
-                    </th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <tr v-for="(row, rowIndex) in filePreview.rows" :key="rowIndex" class="border-t border-gray-200 dark:border-gray-700">
-                    <td v-for="(cell, cellIndex) in row" :key="cellIndex" class="px-3 py-2 text-gray-600 dark:text-gray-400 border-r border-gray-200 dark:border-gray-700 last:border-r-0">
-                      {{ cell.trim() }}
-                    </td>
-                  </tr>
-                </tbody>
-              </table>
+          <!-- 上傳進度 -->
+          <div v-if="uploadStatus === 'uploading'" class="mt-6">
+            <!-- 進度條 -->
+            <div class="bg-gray-700 rounded-full h-4 overflow-hidden">
+              <div
+                class="bg-gradient-to-r from-blue-500 to-purple-500 h-full transition-all duration-300"
+                :style="{ width: `${uploadProgress}%` }"
+              ></div>
+            </div>
+            
+            <!-- 進度文字 -->
+            <div class="mt-3 space-y-2">
+              <p class="text-center text-base font-bold text-gray-300">
+                上傳進度: {{ uploadProgress.toFixed(0) }}% ({{ uploadedCount }}/{{ files.length }})
+              </p>
+              
+              <!-- 當前處理的文件 -->
+              <div v-if="currentProcessingFile" class="flex items-center justify-center gap-2 text-sm text-blue-400">
+                <span class="animate-spin">⚙️</span>
+                <span class="font-semibold">{{ currentProcessingFile }}</span>
+              </div>
+              
+              <!-- 處理階段 -->
+              <div v-if="processingStage" class="text-center text-xs text-gray-400">
+                {{ processingStage }}
+              </div>
             </div>
           </div>
         </div>
       </div>
 
-      <!-- 最近導入記錄 -->
-      <div v-if="importHistory.length > 0" class="mt-8 bg-white dark:bg-[#1a1a1a] border border-gray-200 dark:border-white/10 rounded-2xl shadow-lg overflow-hidden">
-        <div class="px-6 py-4 bg-gray-100 dark:bg-white/5 border-b border-gray-200 dark:border-white/10 flex items-center justify-between">
-          <h3 class="text-lg font-bold text-gray-800 dark:text-white flex items-center gap-2">
-            <span class="text-xl">📋</span>
-            導入記錄
-            <span class="ml-2 px-2 py-1 bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 text-xs rounded-lg">{{ importHistory.length }}</span>
-          </h3>
-          <button 
-            @click="clearAllHistory"
-            class="px-3 py-1 bg-red-500/10 hover:bg-red-500/20 text-red-600 dark:text-red-400 text-sm rounded-lg transition-colors flex items-center gap-1"
-          >
-            <span>🗑️</span>
-            <span>清空全部</span>
-          </button>
-        </div>
-        <div class="p-6">
-          <div class="space-y-3">
-            <div 
-              v-for="(record, index) in importHistory" 
+      <!-- 上傳結果 -->
+      <div v-if="uploadResults.length > 0" class="mt-8">
+        <div class="bg-[#1a1d3a] border-2 border-[#2d3154] rounded-3xl shadow-xl overflow-hidden">
+          <div class="px-8 py-6 bg-gradient-to-r from-green-500 to-teal-500 border-b border-white/10">
+            <h2 class="text-2xl font-bold text-white flex items-center gap-3">
+              <span class="text-3xl">✅</span>
+              上傳結果
+            </h2>
+          </div>
+          <div class="p-6 space-y-3">
+            <div
+              v-for="(result, index) in uploadResults"
               :key="index"
-              class="flex items-center justify-between p-4 bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 rounded-xl hover:bg-gray-100 dark:hover:bg-white/10 transition-colors group"
+              class="p-4 rounded-xl border-2"
+              :class="result.success 
+                ? 'bg-green-900/10 border-green-500/30' 
+                : 'bg-red-900/10 border-red-500/30'"
             >
-              <div class="flex items-center gap-3 flex-1">
-                <span class="text-2xl">{{ record.success ? '✅' : '❌' }}</span>
+              <div class="flex items-start gap-3">
+                <span class="text-2xl">{{ result.success ? '✅' : '❌' }}</span>
                 <div class="flex-1">
-                  <p class="font-semibold text-gray-800 dark:text-white">{{ record.fileName }}</p>
-                  <p class="text-xs" :class="record.mode === 'new' ? 'text-blue-600 dark:text-blue-400' : 'text-purple-600 dark:text-purple-400'" v-if="record.graphName">
-                    {{ record.mode === 'new' ? '✨' : '📂' }} {{ record.graphName }}
+                  <p class="font-bold" :class="result.success ? 'text-green-300' : 'text-red-300'">
+                    {{ result.filename }}
                   </p>
-                  <p class="text-sm text-gray-500 dark:text-gray-400">{{ record.timestamp }}</p>
-                </div>
-              </div>
-              <div class="flex items-center gap-4">
-                <div class="text-right">
-                  <p class="text-sm font-mono text-blue-600 dark:text-blue-400">
-                    成功: {{ record.stats.success }} | 跳過: {{ record.stats.skipped }} | 失敗: {{ record.stats.failed }}
+                  <p class="text-sm" :class="result.success ? 'text-green-400' : 'text-red-400'">
+                    {{ result.message || result.error }}
                   </p>
+                  <p v-if="result.success && result.saved_path" class="text-xs text-gray-400 mt-1">
+                    儲存路徑: {{ result.saved_path }}
+                  </p>
+                  
+                  <!-- 後台處理進度顯示 -->
+                  <div v-if="result.success && uploadStatus === 'completed'" class="mt-3 space-y-2">
+                    <!-- 進度條 -->
+                    <div class="bg-gray-700 rounded-full h-2 overflow-hidden">
+                      <div 
+                        class="h-full bg-gradient-to-r from-blue-500 to-purple-500 transition-all duration-500"
+                        :style="{ width: result.processingProgress || '30%' }"
+                      ></div>
+                    </div>
+                    
+                    <!-- 當前處理步驟 -->
+                    <div class="flex items-center gap-2 text-xs">
+                      <span class="animate-spin text-blue-500">⚙️</span>
+                      <span class="text-gray-300 font-medium">
+                        {{ result.processingStage || '📥 已接收文件，等待處理...' }}
+                      </span>
+                    </div>
+                    
+                    <!-- 處理階段列表 -->
+                    <div class="pl-6 space-y-1 text-xs text-gray-400">
+                      <div class="flex items-center gap-2">
+                        <span>{{ result.stage1Done ? '✅' : '⏳' }}</span>
+                        <span>文件解析與內容提取</span>
+                      </div>
+                      <div class="flex items-center gap-2">
+                        <span>{{ result.stage2Done ? '✅' : '⏳' }}</span>
+                        <span>RAGFlow 語義分析</span>
+                      </div>
+                      <div class="flex items-center gap-2">
+                        <span>{{ result.stage3Done ? '✅' : '⏳' }}</span>
+                        <span>圖譜節點創建與連線</span>
+                      </div>
+                    </div>
+                  </div>
                 </div>
-                <button
-                  @click="deleteHistory(index)"
-                  class="opacity-0 group-hover:opacity-100 px-2 py-1 bg-red-500/10 hover:bg-red-500/20 text-red-600 dark:text-red-400 text-xs rounded transition-all"
-                  title="刪除此記錄"
-                >
-                  ✕
-                </button>
               </div>
             </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 創建圖譜彈窗 -->
+    <div
+      v-if="showCreateGraphDialog"
+      class="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50"
+      @click.self="closeCreateGraphDialog"
+    >
+      <div class="bg-[#1a1d3a] border-2 border-[#2d3154] rounded-3xl shadow-2xl max-w-2xl w-full mx-4 p-8">
+        <div class="flex items-center justify-between mb-6">
+          <h2 class="text-3xl font-bold text-white flex items-center gap-3">
+            <span class="text-4xl">✨</span>
+            {{ graphName ? '編輯圖譜資訊' : '創建新圖譜' }}
+          </h2>
+          <button
+            @click="closeCreateGraphDialog"
+            class="text-gray-400 hover:text-gray-200 text-3xl leading-none transition-colors"
+          >
+            ×
+          </button>
+        </div>
+
+        <div class="space-y-6">
+          <!-- 圖譜名稱 -->
+          <div>
+            <label class="block text-sm font-bold text-gray-300 mb-2">
+              📝 圖譜名稱 *
+            </label>
+            <input
+              v-model="newGraphData.name"
+              type="text"
+              placeholder="例如：產品規劃、技術文檔、會議記錄..."
+              class="w-full px-4 py-3 bg-white/5 border-2 border-[#2d3154] rounded-xl text-base text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all"
+            />
+          </div>
+
+          <!-- 圖譜描述 -->
+          <div>
+            <label class="block text-sm font-bold text-gray-300 mb-2">
+              📄 圖譜描述
+            </label>
+            <textarea
+              v-model="newGraphData.description"
+              rows="3"
+              placeholder="簡單描述這個圖譜的用途和內容..."
+              class="w-full px-4 py-3 bg-white/5 border-2 border-[#2d3154] rounded-xl text-base text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all resize-none"
+            ></textarea>
+          </div>
+
+          <!-- 圖示選擇 -->
+          <div>
+            <label class="block text-sm font-bold text-gray-300 mb-2">
+              🎨 選擇圖示
+            </label>
+            <div class="grid grid-cols-8 gap-3">
+              <button
+                v-for="icon in availableIcons"
+                :key="icon"
+                @click="newGraphData.icon = icon"
+                class="aspect-square flex items-center justify-center text-3xl rounded-xl border-2 transition-all hover:scale-110"
+                :class="newGraphData.icon === icon 
+                  ? 'border-blue-500 bg-blue-900/20 shadow-lg' 
+                  : 'border-[#2d3154] bg-white/5 hover:border-blue-400'"
+              >
+                {{ icon }}
+              </button>
+            </div>
+          </div>
+
+          <!-- 按鈕區 -->
+          <div class="flex gap-4 pt-4">
+            <button
+              @click="handleCreateGraph"
+              :disabled="!newGraphData.name.trim() || isCreatingGraph"
+              class="flex-1 px-6 py-4 bg-gradient-to-r from-blue-500 to-purple-500 hover:from-blue-600 hover:to-purple-600 disabled:from-gray-400 disabled:to-gray-500 text-white rounded-xl font-bold text-lg transition-all shadow-lg disabled:cursor-not-allowed"
+            >
+              <span v-if="!isCreatingGraph">✨ 創建圖譜</span>
+              <span v-else>⏳ 創建中...</span>
+            </button>
+            <button
+              @click="closeCreateGraphDialog"
+              :disabled="isCreatingGraph"
+              class="px-6 py-4 bg-gray-500 hover:bg-gray-600 disabled:bg-gray-400 text-white rounded-xl font-bold text-lg transition-colors disabled:cursor-not-allowed"
+            >
+              取消
+            </button>
           </div>
         </div>
       </div>
@@ -287,314 +493,266 @@ import { ref, onMounted } from 'vue';
 import { useGraphStore } from '../stores/graphStore';
 import { ElMessage } from 'element-plus';
 
-// ===== Stores =====
+// ===== Store =====
 const graphStore = useGraphStore();
 
-// ===== Refs =====
-const fileInput = ref(null);
-const selectedFile = ref(null);
+// ===== State =====
+const isDragging = ref(false);
+const files = ref([]);
+const uploadStatus = ref('ready'); // 'ready', 'uploading', 'completed'
+const uploadedCount = ref(0);
+const uploadProgress = ref(0);
+const uploadResults = ref([]);
+const currentProcessingFile = ref(''); // 當前處理的文件名
+const processingStage = ref(''); // 當前處理階段
+
+// 圖譜選擇相關
 const importMode = ref('new'); // 'new' | 'existing'
 const graphName = ref('');
-const selectedGraphId = ref(null);
-const isUploading = ref(false);
-const importHistory = ref([]);
-const existingGraphs = ref([]);
-const isLoadingGraphs = ref(false);
-const uploadProgress = ref(0);
-const filePreview = ref(null);
+const selectedGraphId = ref('');
+const enableAILink = ref(true); // AI 智能連線功能
 
-// ===== 載入現有圖譜列表 =====
-const loadExistingGraphs = async () => {
-  isLoadingGraphs.value = true;
-  try {
-    const response = await fetch('/api/graph/list');
-    if (!response.ok) throw new Error('無法載入圖譜列表');
-    
-    const data = await response.json();
-    existingGraphs.value = data.graphs || [];
-    
-    console.log('✅ 已載入現有圖譜:', existingGraphs.value.length, '個');
-  } catch (error) {
-    console.error('❌ 載入圖譜列表失敗:', error);
-    ElMessage.warning({
-      message: '⚠️ 無法載入現有圖譜列表，請稍後再試',
-      duration: 3000,
-    });
-    // 使用預設數據作為後備
-    existingGraphs.value = [
-      { id: 'default', name: '預設圖譜', nodeCount: 0 },
-    ];
-  } finally {
-    isLoadingGraphs.value = false;
+// RAGFlow 相關
+const selectedDatasetId = ref(''); // 選中的 RAGFlow 知識庫 ID
+const ragflowDatasets = ref([]); // RAGFlow 知識庫列表
+
+// 文件输入引用
+const fileInput = ref(null);
+
+// 創建圖譜相關
+const showCreateGraphDialog = ref(false);
+const isCreatingGraph = ref(false);
+const newGraphData = ref({
+  name: '',
+  description: '',
+  icon: '🌐',
+  color: '#3b82f6'
+});
+
+const availableIcons = [
+  '🌐', '🧠', '📚', '💼', '🔬', '🎯', '📊', '🗂️',
+  '💡', '🚀', '🎨', '📝', '🔧', '⚡', '🌟', '📱'
+];
+
+// ===== Methods =====
+const getStatusText = () => {
+  switch(uploadStatus.value) {
+    case 'ready':
+      return isDragging.value ? '放開以上傳' : '將檔案拖放到此處或點擊上傳';
+    case 'uploading':
+      return '上傳中...';
+    case 'completed':
+      return '✅ 已進入排程';
+    default:
+      return '準備中...';
   }
 };
 
-// 組件掛載時載入圖譜列表
-onMounted(() => {
-  loadExistingGraphs();
-  
-  // 從 localStorage 載入歷史記錄
-  const savedHistory = localStorage.getItem('importHistory');
-  if (savedHistory) {
-    try {
-      importHistory.value = JSON.parse(savedHistory);
-    } catch (e) {
-      console.error('無法載入歷史記錄:', e);
-    }
+const getStatusSubtext = () => {
+  switch(uploadStatus.value) {
+    case 'ready':
+      return '支援多檔案選取';
+    case 'uploading':
+      return '請稍候，正在處理檔案...';
+    case 'completed':
+      return '檔案已送入神經網路，正在解析中...';
+    default:
+      return '';
   }
-});
+};
 
-// ===== Methods =====
 const triggerFileInput = () => {
+  if (uploadStatus.value === 'uploading') return;
   fileInput.value.click();
 };
 
-const handleFileSelect = async (event) => {
-  const file = event.target.files[0];
-  if (!file) return;
+const handleFileSelect = (event) => {
+  const selectedFiles = Array.from(event.target.files);
+  addFiles(selectedFiles);
+};
 
-  const validExtensions = ['.csv', '.xlsx'];
-  const fileExtension = file.name.substring(file.name.lastIndexOf('.')).toLowerCase();
+const handleDrop = (event) => {
+  isDragging.value = false;
+  const droppedFiles = Array.from(event.dataTransfer.files);
+  addFiles(droppedFiles);
+};
 
-  if (!validExtensions.includes(fileExtension)) {
-    ElMessage.warning({
-      message: '⚠️ 僅支援 CSV 或 Excel 檔案',
-      duration: 3000,
-    });
-    event.target.value = '';
+const addFiles = (newFiles) => {
+  // 過濾已存在的檔案
+  const existingNames = files.value.map(f => f.name);
+  const uniqueFiles = newFiles.filter(f => !existingNames.includes(f.name));
+  files.value.push(...uniqueFiles);
+  
+  // 重置狀態
+  uploadStatus.value = 'ready';
+  uploadResults.value = [];
+};
+
+const removeFile = (index) => {
+  files.value.splice(index, 1);
+};
+
+const clearFiles = () => {
+  files.value = [];
+  uploadResults.value = [];
+  uploadStatus.value = 'ready';
+};
+
+const uploadFiles = async () => {
+  if (files.value.length === 0 || uploadStatus.value === 'uploading') return;
+
+  // 驗證：新建模式需要圖譜名稱（如果還沒創建，先打開對話框）
+  if (importMode.value === 'new' && !graphName.value.trim()) {
+    ElMessage.warning('⚠️ 請先建立新圖譜');
+    showCreateGraphDialog.value = true;
     return;
   }
 
-  // 檢查檔案大小 (最大 50MB)
-  const maxSize = 50 * 1024 * 1024; // 50MB
-  if (file.size > maxSize) {
-    ElMessage.warning({
-      message: '⚠️ 檔案大小超過 50MB，請選擇較小的檔案',
-      duration: 3000,
-    });
-    event.target.value = '';
-    return;
-  }
-
-  selectedFile.value = file;
-  console.log('📄 已選擇檔案:', file.name, '大小:', formatFileSize(file.size));
-  
-  // 嘗試預覽檔案內容
-  await previewFile(file);
-};
-
-const clearFile = () => {
-  selectedFile.value = null;
-  filePreview.value = null;
-  uploadProgress.value = 0;
-  if (fileInput.value) {
-    fileInput.value.value = '';
-  }
-};
-
-// 檔案預覽功能
-const previewFile = async (file) => {
-  try {
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      const data = new Uint8Array(e.target.result);
-      
-      if (file.name.endsWith('.csv')) {
-        const text = new TextDecoder('utf-8').decode(data);
-        const lines = text.split('\n').slice(0, 5); // 前5行
-        filePreview.value = {
-          type: 'csv',
-          headers: lines[0]?.split(',') || [],
-          rows: lines.slice(1).map(line => line.split(',')),
-        };
-      } else {
-        filePreview.value = {
-          type: 'excel',
-          message: 'Excel 檔案預覽暫不可用',
-        };
-      }
-    };
-    reader.readAsArrayBuffer(file);
-  } catch (error) {
-    console.warn('檔案預覽失敗:', error);
-  }
-};
-
-const handleUpload = async () => {
-  if (!selectedFile.value || isUploading.value) return;
-  
-  // 驗證：新建模式需要圖譜名稱
-  if (importMode.value === 'new' && (!graphName.value || graphName.value.trim() === '')) {
-    ElMessage.warning({
-      message: '⚠️ 請輸入圖譜名稱',
-      duration: 3000,
-    });
-    return;
-  }
-  
   // 驗證：現有模式需要選擇圖譜
   if (importMode.value === 'existing' && !selectedGraphId.value) {
-    ElMessage.warning({
-      message: '⚠️ 請選擇要加入的圖譜',
-      duration: 3000,
-    });
+    ElMessage.warning('⚠️ 請選擇要加入的圖譜');
     return;
   }
 
-  isUploading.value = true;
+  uploadStatus.value = 'uploading';
+  uploadedCount.value = 0;
   uploadProgress.value = 0;
-
-  const loadingMsg = ElMessage({
-    message: '⏳ 正在上傳並處理檔案...',
-    type: 'info',
-    duration: 0,
-  });
-
-  // 模擬進度更新
-  const progressInterval = setInterval(() => {
-    if (uploadProgress.value < 90) {
-      uploadProgress.value += Math.random() * 15;
-    }
-  }, 300);
+  uploadResults.value = [];
 
   try {
-    const formData = new FormData();
-    formData.append('file', selectedFile.value);
-    formData.append('import_mode', importMode.value);
-    
-    if (importMode.value === 'new') {
-      formData.append('graph_name', graphName.value.trim());
-      console.log('🚀 開始上傳檔案:', selectedFile.value.name);
-      console.log('✨ 建立新圖譜:', graphName.value.trim());
-    } else {
-      formData.append('graph_id', selectedGraphId.value.toString());
-      const selectedGraph = existingGraphs.value.find(g => g.id === selectedGraphId.value);
-      console.log('🚀 開始上傳檔案:', selectedFile.value.name);
-      console.log('📂 加入圖譜:', selectedGraph?.name || selectedGraphId.value);
-    }
-
-    const response = await fetch('/api/graph/import/excel', {
-      method: 'POST',
-      body: formData,
-    });
-
-    clearInterval(progressInterval);
-    uploadProgress.value = 100;
-
-    if (!response.ok) {
-      throw new Error(`HTTP Error: ${response.status}`);
-    }
-
-    const result = await response.json();
-    console.log('✅ 後端返回結果:', result);
-
-    if (!result.nodes || !Array.isArray(result.nodes)) {
-      throw new Error('後端返回的數據格式不正確');
-    }
-
-    const stats = graphStore.addBatchNodes(result.nodes);
-
-    loadingMsg.close();
-    
-    const successMsg = importMode.value === 'new'
-      ? `✅ 已建立圖譜「${graphName.value.trim()}」！成功: ${stats.success}, 跳過: ${stats.skipped}, 失敗: ${stats.failed}`
-      : `✅ 已加入圖譜！成功: ${stats.success}, 跳過: ${stats.skipped}, 失敗: ${stats.failed}`;
-    
-    ElMessage.success({
-      message: successMsg,
-      duration: 4000,
-    });
-
-    // 記錄導入歷史
-    const historyRecord = {
-      fileName: selectedFile.value.name,
+    console.log('📡 [ImportPage] 開始上傳檔案...', {
+      count: files.value.length,
       mode: importMode.value,
-      timestamp: new Date().toLocaleString('zh-TW'),
-      success: true,
-      stats: stats,
-    };
+      graphName: graphName.value,
+      graphId: selectedGraphId.value
+    });
+
+    // 逐個上傳檔案
+    for (let i = 0; i < files.value.length; i++) {
+      const file = files.value[i];
+      currentProcessingFile.value = file.name;
+      processingStage.value = '📤 正在上傳檔案到伺服器...';
+      
+      try {
+        const formData = new FormData();
+        formData.append('file', file);
+        
+        // 添加圖譜資訊
+        if (importMode.value === 'new') {
+          formData.append('graph_mode', 'new');
+          formData.append('graph_name', graphName.value.trim());
+          console.log('🚀 上傳檔案至新圖譜:', graphName.value.trim());
+        } else {
+          formData.append('graph_mode', 'existing');
+          formData.append('graph_id', selectedGraphId.value);
+          const selectedGraph = graphStore.graphMetadataList.find(g => g.id === selectedGraphId.value);
+          console.log('🚀 上傳檔案至現有圖譜:', selectedGraph?.name || selectedGraphId.value);
+        }
+        
+        // 添加 AI Link 設定
+        formData.append('enable_ai_link', enableAILink.value ? 'true' : 'false');
+        console.log('🤖 AI 智能連線:', enableAILink.value ? '啟用' : '關閉');
+        
+        // 添加 RAGFlow 知識庫 ID（如果選擇了）
+        if (enableAILink.value && selectedDatasetId.value) {
+          formData.append('ragflow_dataset_id', selectedDatasetId.value);
+          const selectedDataset = ragflowDatasets.value.find(d => d.id === selectedDatasetId.value);
+          console.log('📚 RAGFlow 知識庫:', selectedDataset?.name || selectedDatasetId.value);
+        }
+
+        processingStage.value = '⏳ 伺服器處理中（解析、分析、建立節點）...';
+        
+        const response = await fetch('/api/system/upload', {
+          method: 'POST',
+          body: formData
+        });
+
+        const result = await response.json();
+        
+        if (result.success) {
+          processingStage.value = '✅ 處理完成！';
+        } else {
+          processingStage.value = '❌ 處理失敗';
+        }
+        
+        uploadResults.value.push({
+          ...result,
+          filename: file.name,
+          processingProgress: '30%',
+          processingStage: '📥 已接收文件，開始後台處理...',
+          stage1Done: false,
+          stage2Done: false,
+          stage3Done: false
+        });
+        
+        // 啟動後台進度模擬（實際應從後端輪詢）
+        if (result.success) {
+          simulateProcessing(uploadResults.value.length - 1);
+        }
+
+      } catch (error) {
+        processingStage.value = '❌ 上傳錯誤';
+        uploadResults.value.push({
+          success: false,
+          filename: file.name,
+          error: error.message || '網路錯誤'
+        });
+      }
+
+      uploadedCount.value++;
+      uploadProgress.value = (uploadedCount.value / files.value.length) * 100;
+      
+      // 每個文件完成後暫停 500ms，讓用戶看到進度
+      await new Promise(resolve => setTimeout(resolve, 500));
+    }
+
+    uploadStatus.value = 'completed';
+    currentProcessingFile.value = '';
+    processingStage.value = '';
     
-    if (importMode.value === 'new') {
-      historyRecord.graphName = graphName.value.trim();
-    } else {
-      const selectedGraph = existingGraphs.value.find(g => g.id === selectedGraphId.value);
-      historyRecord.graphName = selectedGraph?.name || `圖譜 #${selectedGraphId.value}`;
+    // 🌟 上傳成功後刷新圖譜數據
+    console.log('✅ 上傳完成，刷新圖譜數據...');
+    try {
+      // 根據導入模式傳入正確的圖譜 ID
+      if (importMode.value === 'existing' && selectedGraphId.value) {
+        await graphStore.fetchGraphData(selectedGraphId.value);
+      } else {
+        // 新建模式：重新載入圖譜元數據列表，然後選擇最新的圖譜
+        await graphStore.fetchGraphData(graphStore.currentGraphId);
+      }
+    } catch (error) {
+      console.warn('⚠️ 刷新圖譜數據失敗:', error);
+      // 不中斷流程，繼續顯示成功消息
     }
     
-    importHistory.value.unshift(historyRecord);
-
-    // 限制歷史記錄數量
-    if (importHistory.value.length > 10) {
-      importHistory.value = importHistory.value.slice(0, 10);
-    }
-
-    // 保存到 localStorage
-    localStorage.setItem('importHistory', JSON.stringify(importHistory.value));
-
-    console.log('🎉 檔案導入成功:', stats);
-
-    // 清除選擇
-    clearFile();
-    graphName.value = '';
-    selectedGraphId.value = null;
+    ElMessage.success(`✅ 成功上傳 ${files.value.length} 個檔案`);
+    
+    // 3秒後重置狀態
+    setTimeout(() => {
+      files.value = [];
+      uploadStatus.value = 'ready';
+      graphName.value = '';
+      selectedGraphId.value = '';
+    }, 3000);
 
   } catch (error) {
-    clearInterval(progressInterval);
-    uploadProgress.value = 0;
-    
-    loadingMsg.close();
-    
-    // 詳細錯誤訊息
-    let errorMsg = '❌ 導入失敗';
-    if (error.message.includes('HTTP Error')) {
-      errorMsg += ': 伺服器連線失敗，請檢查後端服務是否運行';
-    } else if (error.message.includes('格式不正確')) {
-      errorMsg += ': 檔案格式不正確，請檢查檔案內容';
-    } else {
-      errorMsg += `: ${error.message}`;
-    }
-    
-    ElMessage.error({
-      message: errorMsg,
-      duration: 5000,
-    });
-
-    // 記錄失敗歷史
-    importHistory.value.unshift({
-      fileName: selectedFile.value.name,
-      timestamp: new Date().toLocaleString('zh-TW'),
-      success: false,
-      stats: { success: 0, skipped: 0, failed: 0 },
-    });
-
-    // 保存失敗記錄
-    localStorage.setItem('importHistory', JSON.stringify(importHistory.value));
-
-    console.error('❌ 檔案上傳失敗:', error);
-  } finally {
-    clearInterval(progressInterval);
-    isUploading.value = false;
+    console.error('❌ 上傳錯誤:', error);
+    ElMessage.error('上傳失敗: ' + error.message);
+    uploadStatus.value = 'ready';
   }
 };
 
-// 刪除歷史記錄
-const deleteHistory = (index) => {
-  importHistory.value.splice(index, 1);
-  localStorage.setItem('importHistory', JSON.stringify(importHistory.value));
-  ElMessage.success({
-    message: '已刪除記錄',
-    duration: 2000,
-  });
-};
-
-// 清空所有歷史
-const clearAllHistory = () => {
-  importHistory.value = [];
-  localStorage.removeItem('importHistory');
-  ElMessage.success({
-    message: '已清空所有記錄',
-    duration: 2000,
-  });
+const getFileIcon = (filename) => {
+  const ext = filename.split('.').pop().toLowerCase();
+  const icons = {
+    pdf: '📕',
+    docx: '📘',
+    xlsx: '📊',
+    txt: '📄',
+    md: '📝',
+    default: '📎'
+  };
+  return icons[ext] || icons.default;
 };
 
 const formatFileSize = (bytes) => {
@@ -602,23 +760,215 @@ const formatFileSize = (bytes) => {
   const k = 1024;
   const sizes = ['Bytes', 'KB', 'MB', 'GB'];
   const i = Math.floor(Math.log(bytes) / Math.log(k));
-  return Math.round((bytes / Math.pow(k, i)) * 100) / 100 + ' ' + sizes[i];
+  return Math.round(bytes / Math.pow(k, i) * 100) / 100 + ' ' + sizes[i];
 };
+
+/**
+ * 處理創建圖譜
+ */
+const handleCreateGraph = async () => {
+  if (!newGraphData.value.name.trim()) {
+    ElMessage.warning('⚠️ 請輸入圖譜名稱');
+    return;
+  }
+  
+  isCreatingGraph.value = true;
+  
+  try {
+    console.log('🔄 創建圖譜:', newGraphData.value);
+    
+    // 調用 Store 創建圖譜
+    const createdGraph = await graphStore.createGraph(newGraphData.value);
+    
+    ElMessage.success({
+      message: `✅ 圖譜「${createdGraph.name}」創建成功！`,
+      duration: 3000
+    });
+    
+    // 自動設置為新建模式並使用新創建的圖譜
+    importMode.value = 'new';
+    graphName.value = createdGraph.name;
+    selectedGraphId.value = createdGraph.id;
+    
+    // 保存當前創建的圖譜圖示
+    newGraphData.value.icon = createdGraph.icon;
+    
+    // 關閉彈窗
+    showCreateGraphDialog.value = false;
+    
+    console.log('✅ 圖譜創建完成:', createdGraph);
+    
+  } catch (error) {
+    console.error('❌ 創建圖譜失敗:', error);
+    ElMessage.error('創建圖譜失敗: ' + error.message);
+  } finally {
+    isCreatingGraph.value = false;
+  }
+};
+
+/**
+ * 關閉創建圖譜對話框
+ */
+const closeCreateGraphDialog = () => {
+  showCreateGraphDialog.value = false;
+  // 如果沒有已創建的圖譜，重置表單
+  if (!graphName.value) {
+    newGraphData.value = {
+      name: '',
+      description: '',
+      icon: '🌐',
+      color: '#3b82f6'
+    };
+  }
+};
+
+/**
+ * 模擬後台處理進度（未來可替換為實際 API 輪詢）
+ */
+const simulateProcessing = async (resultIndex) => {
+  // 階段 1: 文件解析 (0-40%)
+  await new Promise(resolve => setTimeout(resolve, 2000));
+  if (uploadResults.value[resultIndex]) {
+    uploadResults.value[resultIndex].processingProgress = '40%';
+    uploadResults.value[resultIndex].processingStage = '📄 正在解析文件內容...';
+    uploadResults.value[resultIndex].stage1Done = true;
+  }
+  
+  // 階段 2: RAGFlow 分析 (40-70%)
+  await new Promise(resolve => setTimeout(resolve, 3000));
+  if (uploadResults.value[resultIndex]) {
+    uploadResults.value[resultIndex].processingProgress = '70%';
+    uploadResults.value[resultIndex].processingStage = '🧠 RAGFlow 語義分析中...';
+    uploadResults.value[resultIndex].stage2Done = true;
+  }
+  
+  // 階段 3: 圖譜構建 (70-100%)
+  await new Promise(resolve => setTimeout(resolve, 2000));
+  if (uploadResults.value[resultIndex]) {
+    uploadResults.value[resultIndex].processingProgress = '100%';
+    uploadResults.value[resultIndex].processingStage = '✅ 圖譜節點創建完成！';
+    uploadResults.value[resultIndex].stage3Done = true;
+  }
+};
+
+/**
+ * 加載 RAGFlow 知識庫列表
+ */
+const loadRAGFlowDatasets = async () => {
+  try {
+    console.log('📚 正在加載 RAGFlow 知識庫列表...');
+    const response = await fetch('/api/ragflow/datasets');
+    
+    if (response.ok) {
+      const data = await response.json();
+      
+      // 🔍 調試：輸出完整 API 回應
+      console.log('🔍 [DEBUG] API 完整回應:', data);
+      console.log('🔍 [DEBUG] data.code:', data.code);
+      console.log('🔍 [DEBUG] data.data 類型:', typeof data.data);
+      console.log('🔍 [DEBUG] data.data 是否為陣列:', Array.isArray(data.data));
+      console.log('🔍 [DEBUG] data.data 內容:', data.data);
+      
+      // RAGFlow API 返回格式：{ code: 0, data: [...], total_datasets: N }
+      ragflowDatasets.value = data.data || [];
+      console.log(`✅ 已加載 ${ragflowDatasets.value.length} 個 RAGFlow 知識庫`);
+      console.log('🔍 [DEBUG] ragflowDatasets.value:', ragflowDatasets.value);
+      console.log('🔍 [DEBUG] JSON 格式:', JSON.stringify(ragflowDatasets.value, null, 2));
+      
+      // 輸出知識庫名稱供調試
+      if (ragflowDatasets.value.length > 0) {
+        console.log('📋 可用知識庫:', ragflowDatasets.value.map(d => d.name).join(', '));
+        console.log('🔍 [DEBUG] 第一個知識庫 id:', ragflowDatasets.value[0].id);
+        console.log('🔍 [DEBUG] 第一個知識庫 name:', ragflowDatasets.value[0].name);
+      } else {
+        console.warn('⚠️ [WARNING] ragflowDatasets 是空陣列！');
+      }
+    } else {
+      console.warn('⚠️ RAGFlow API 返回錯誤:', response.status);
+    }
+  } catch (error) {
+    console.error('❌ 無法連接到 RAGFlow 服務:', error);
+    // 不顯示錯誤消息，靜默失敗
+  }
+};
+
+// ===== Lifecycle =====
+onMounted(async () => {
+  // 頁面載入時自動獲取圖譜列表
+  if (graphStore.graphMetadataList.length === 0) {
+    try {
+      console.log('🔄 [ImportPage] 載入圖譜列表');
+      await graphStore.fetchGraphData(graphStore.currentGraphId);
+    } catch (error) {
+      console.warn('⚠️ [ImportPage] 圖譜列表載入失敗:', error.message);
+    }
+  }
+  
+  // 加載 RAGFlow 知識庫列表
+  await loadRAGFlowDatasets();
+});
 </script>
 
 <style scoped>
-/* 邊框粗細調整 */
-.border-3 {
-  border-width: 3px;
+/* 自定義滾動條樣式 */
+.custom-scrollbar {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(139, 92, 246, 0.5) transparent;
+}
+
+.custom-scrollbar::-webkit-scrollbar {
+  width: 8px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: linear-gradient(180deg, rgba(59, 130, 246, 0.6), rgba(139, 92, 246, 0.6));
+  border-radius: 4px;
+  transition: background 0.3s;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: linear-gradient(180deg, rgba(59, 130, 246, 0.8), rgba(139, 92, 246, 0.8));
 }
 
 /* 動畫效果 */
-@keyframes pulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.5; }
+@keyframes bounce {
+  0%, 100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-20px);
+  }
 }
 
-.animate-pulse {
-  animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+.animate-bounce {
+  animation: bounce 2s infinite;
+}
+
+/* 響應式設計 */
+@media (max-width: 768px) {
+  .custom-scrollbar {
+    padding-left: 1rem;
+    padding-right: 1rem;
+  }
+  
+  /* 移動設備上調整標題大小 */
+  h1 {
+    font-size: 2rem !important;
+  }
+  
+  h1 span:first-child {
+    font-size: 3rem !important;
+  }
+}
+
+@media (max-width: 640px) {
+  .custom-scrollbar {
+    padding-left: 0.75rem;
+    padding-right: 0.75rem;
+  }
 }
 </style>

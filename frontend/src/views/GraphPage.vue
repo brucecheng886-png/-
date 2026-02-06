@@ -1,11 +1,16 @@
 <script setup>
-import { ref, computed, onMounted, watch } from 'vue';
+import { ref, computed, onMounted, onUnmounted, watch } from 'vue';
 import { useGraphStore } from '../stores/graphStore';
 import { useLayoutStore } from '../stores/layoutStore';
 import Graph2D from '../components/Graph2D.vue';
 import Graph3D from './Graph3D.vue';
 import NexusPanel from '../components/NexusPanel.vue';
 import ImportDashboard from '../components/ImportDashboard.vue';
+import ColorLegend from '../components/ColorLegend.vue';
+import ZoomControls from '../components/ZoomControls.vue';
+import BottomToolbar from '../components/BottomToolbar.vue';
+import StatsBar from '../components/StatsBar.vue';
+import DensitySlider from '../components/DensitySlider.vue';
 import { ElMessage } from 'element-plus';
 
 // ===== Store =====
@@ -17,10 +22,8 @@ const searchQuery = ref('');
 const isLoading = ref(false); // 改為 false，避免初始閃爍
 const showLeftPanel = ref(true);
 const showRightPanel = ref(true);
-// 將預設寬度改為 420
-const leftPanelWidth = ref(420);
-const rightPanelWidth = ref(320);
-const isDraggingRight = ref(false);
+// 將預設寬度收窄，為圖譜留更多空間
+const leftPanelWidth = ref(340);
 const localNodeData = ref({
   id: '',
   name: '',
@@ -44,6 +47,14 @@ const isSelectOpen = ref(false); // 下拉選單展開狀態
 
 // 圖表組件引用（用於調用子組件方法）
 const graphComponentRef = ref(null);
+
+// 縮放比例
+const zoomPercent = ref(100);
+let zoomPollTimer = null;
+
+// 密度過濾 / 叢集控制
+const densityThreshold = ref(0);
+const clusterEnabled = ref(true);
 
 // ===== Computed =====
 const currentComponent = computed(() => {
@@ -84,6 +95,16 @@ const handleSearch = () => {
   console.log('🔍 搜尋:', searchQuery.value);
   if (filteredNodes.value.length > 0 && searchQuery.value) {
     graphStore.selectNode(filteredNodes.value[0].id);
+  }
+};
+
+// 顏色圖例篩選
+const handleFilterByType = (type) => {
+  searchQuery.value = `type:${type}`;
+  const matched = graphStore.nodes.filter(n => (n.type || '').toLowerCase() === type);
+  if (matched.length > 0) {
+    graphStore.selectNode(matched[0].id);
+    ElMessage({ message: `已篩選 ${matched.length} 個「${type}」節點`, type: 'info', duration: 1500 });
   }
 };
 
@@ -206,7 +227,7 @@ const handleFileClick = ({ fileId, nodeId }) => {
   ElMessage.success(`✅ 已聲焚至檔案: ${node?.name || fileId}`);
 };
 
-// ImportGallery 檔案上傳處理
+// ImportGallery 檔案上傳處理（使用 Store 統一 API）
 const handleFileUploaded = async (files) => {
   console.log('📥 開始上傳檔案:', files.length);
   
@@ -217,33 +238,11 @@ const handleFileUploaded = async (files) => {
   });
   
   try {
-    // 建立 FormData
-    const formData = new FormData();
-    files.forEach(file => {
-      formData.append('files', file);
-    });
+    // 🌟 使用 Store 的統一 API
+    console.log('📡 [GraphPage] 使用 Store.importMultipleFiles()');
+    const stats = await graphStore.importMultipleFiles(files);
     
-    // 發送請求到後端 API
-    const response = await fetch('/api/graph/import/files', {
-      method: 'POST',
-      body: formData
-    });
-    
-    if (!response.ok) {
-      const errorData = await response.json().catch(() => ({ detail: '未知錯誤' }));
-      throw new Error(errorData.detail || `HTTP ${response.status}`);
-    }
-    
-    const data = await response.json();
     loadingMsg.close();
-    
-    // 驗證回傳數據
-    if (!Array.isArray(data)) {
-      throw new Error('伺服器回傳數據格式錯誤');
-    }
-    
-    // 調用 graphStore.addBatchNodes 添加節點
-    const stats = graphStore.addBatchNodes(data);
     
     ElMessage.success({
       message: `✅ 匯入成功！成功: ${stats.success}, 跳過: ${stats.skipped}, 失敗: ${stats.failed}`,
@@ -410,10 +409,16 @@ const deleteNode = () => {
 
 // ===== NEXUS 控制台 Methods =====
 const handleGraphChange = (event) => {
-  const graphId = parseInt(event.target.value);
+  // 支持字符串和数字 ID
+  let graphId = event.target.value;
+  if (!isNaN(graphId) && graphId.trim() !== '') {
+    graphId = parseInt(graphId);
+  }
+  console.log('📊 [GraphPage] 切換圖譜:', graphId);
+  
   selectedGraphId.value = graphId;
   graphStore.fetchGraphData(graphId);
-  ElMessage.success(`🔄 已切換到圖譜 ID: ${graphId}`);
+  ElMessage.success(`🔄 已切換到圖譜: ${graphId}`);
   isSelectOpen.value = false;
 };
 
@@ -443,6 +448,51 @@ const setFilter = (filter) => {
   activeFilter.value = filter;
   graphStore.setFilterMode(filter);
   ElMessage.info(`🔎 已切換到: ${filter === 'all' ? '顯示全部' : filter === 'focus' ? '焦點模式' : '部分顯示'}`);
+};
+
+// ===== Zoom 控制 =====
+const handleZoomIn = () => {
+  graphComponentRef.value?.zoomIn?.();
+  updateZoomPercent();
+};
+
+const handleZoomOut = () => {
+  graphComponentRef.value?.zoomOut?.();
+  updateZoomPercent();
+};
+
+const handleZoomFit = () => {
+  graphComponentRef.value?.zoomToFit?.();
+  setTimeout(updateZoomPercent, 900);
+};
+
+const handleZoomReset = () => {
+  graphComponentRef.value?.resetView?.();
+  setTimeout(updateZoomPercent, 1100);
+};
+
+const updateZoomPercent = () => {
+  const z = graphComponentRef.value?.getZoom?.();
+  if (z) zoomPercent.value = Math.round(z * 100);
+};
+
+// ===== Focus 模式 =====
+const isFocusMode = computed(() => activeFilter.value === 'focus');
+
+const toggleFocusMode = () => {
+  const next = isFocusMode.value ? 'all' : 'focus';
+  setFilter(next);
+};
+
+// ===== 快速新增節點 =====
+const handleQuickAddNode = () => {
+  const name = `新節點 ${graphStore.nodeCount + 1}`;
+  graphStore.addNode({
+    name,
+    type: 'note',
+    description: '',
+  });
+  ElMessage.success(`✅ 已新增：${name}`);
 };
 
 const toggleViewMode = () => {
@@ -555,26 +605,6 @@ const stopDragLeft = () => {
   document.removeEventListener('mouseup', stopDragLeft);
 };
 
-// ===== 右側拖動處理 =====
-const startDragRight = () => {
-  isDraggingRight.value = true;
-  document.addEventListener('mousemove', onDragRight);
-  document.addEventListener('mouseup', stopDragRight);
-};
-
-const onDragRight = (e) => {
-  if (!isDraggingRight.value) return;
-  // 從右邊緣計算寬度，限制在 280-600px 之間
-  const newWidth = window.innerWidth - e.clientX;
-  rightPanelWidth.value = Math.max(280, Math.min(600, newWidth));
-};
-
-const stopDragRight = () => {
-  isDraggingRight.value = false;
-  document.removeEventListener('mousemove', onDragRight);
-  document.removeEventListener('mouseup', stopDragRight);
-};
-
 // ===== Watch: 監聽選中節點變化，自動同步到本地編輯數據 =====
 watch(
   () => graphStore.selectedNode,
@@ -596,30 +626,37 @@ watch(
 
 // ===== Lifecycle =====
 onMounted(async () => {
-  // 只有在沒有資料時才顯示載入狀態
-  if (graphStore.nodes.length === 0) {
-    isLoading.value = true;
-    try {
-      await graphStore.fetchGraphData();
-    } catch (error) {
-      console.error('❌ 圖譜數據加載失敗:', error);
-      ElMessage.error('圖譜數據加載失敗');
-    } finally {
-      isLoading.value = false;
-    }
+  // 🌟 每次進入頁面都刷新數據，確保同步（Manager 自動處理緩存）
+  console.log('🔄 [GraphPage] 加載圖譜數據');
+  isLoading.value = true;
+  
+  try {
+    await graphStore.fetchGraphData(graphStore.currentGraphId);
+    console.log('✅ [GraphPage] 圖譜數據已加載:', graphStore.nodeCount, '個節點,', graphStore.linkCount, '個連接');
+    // 啟動縮放比例輪詢
+    zoomPollTimer = setInterval(updateZoomPercent, 2000);
+  } catch (error) {
+    console.error('❌ 圖譜數據加載失敗:', error);
+    ElMessage.error('圖譜數據加載失敗');
+  } finally {
+    isLoading.value = false;
   }
+});
+
+onUnmounted(() => {
+  if (zoomPollTimer) clearInterval(zoomPollTimer);
 });
 </script>
 
 <template>
-  <div class="flex h-screen w-screen overflow-hidden bg-[#F8F9FB]">
+  <div class="flex h-screen w-screen overflow-hidden bg-[#0a0e27]">
     <!-- 左側可拖拉欄: 預設 420px -->
     <aside 
-      class="h-full flex-shrink-0 border-r bg-white dark:bg-[#0f0f0f] flex flex-col shadow-sm z-20 border-gray-200 dark:border-white/10 relative"
+      class="h-full flex-shrink-0 border-r bg-[#0a0e27] flex flex-col shadow-sm z-20 border-[#2d3154] relative"
       :style="{ width: leftPanelWidth + 'px' }"
     >
       <!-- 上方: NexusPanel (flex-1 可滾動) -->
-      <div class="flex-1 overflow-y-auto border-b border-gray-200 dark:border-white/10">
+      <div class="flex-1 overflow-y-auto border-b border-[#2d3154]">
         <NexusPanel 
           v-model:searchQuery="searchQuery"
           v-model:selectedGraphId="selectedGraphId"
@@ -639,13 +676,18 @@ onMounted(async () => {
         />
       </div>
       
+      <!-- 顏色圖例 -->
+      <div class="px-3 py-2 border-t border-[#2d3154]">
+        <ColorLegend @filter-type="handleFilterByType" />
+      </div>
+      
       <!-- 拖動手柄 -->
       <div
         class="absolute top-0 right-0 h-full w-1 cursor-col-resize hover:bg-blue-500/50 transition-colors z-30"
         @mousedown="startDragLeft"
         title="拖動調整寬度"
       >
-        <div class="h-full w-px mx-auto bg-gray-300 dark:bg-white/20"></div>
+        <div class="h-full w-px mx-auto bg-white/20"></div>
       </div>
     </aside>
 
@@ -653,74 +695,64 @@ onMounted(async () => {
     <main class="flex-1 relative bg-black">
       <!-- 載入動畫 -->
       <div v-if="isLoading" class="absolute inset-0 flex flex-col items-center justify-center gap-5 z-10">
-        <div class="w-15 h-15 border-4 border-blue-200 dark:border-blue-500/20 border-t-blue-600 dark:border-t-blue-500 rounded-full animate-spin"></div>
-        <p class="text-sm text-gray-600 dark:text-gray-400 m-0">載入知識圖譜中...</p>
+        <div class="w-15 h-15 border-4 border-blue-500/20 border-t-blue-500 rounded-full animate-spin"></div>
+        <p class="text-sm text-gray-400 m-0">載入知識圖譜中...</p>
       </div>
       
       <!-- 圖譜畫布 -->
       <keep-alive v-else>
-        <component :is="currentComponent" :key="graphStore.viewMode" ref="graphComponentRef" />
+        <component 
+          :is="currentComponent" 
+          :key="graphStore.viewMode" 
+          ref="graphComponentRef"
+          :density-threshold="densityThreshold"
+          :focus-fade="isFocusMode || !!graphStore.selectedNode"
+          :cluster-enabled="clusterEnabled"
+        />
       </keep-alive>
+
+      <!-- 右側縮放控制列 (Overlay) -->
+      <div class="absolute right-4 top-1/2 -translate-y-1/2 z-30 flex flex-col gap-3">
+        <ZoomControls
+          :zoom-percent="zoomPercent"
+          :is3-d="graphStore.viewMode === '3d'"
+          @zoom-in="handleZoomIn"
+          @zoom-out="handleZoomOut"
+          @zoom-fit="handleZoomFit"
+          @zoom-reset="handleZoomReset"
+          @toggle-layout="toggleViewMode"
+        />
+        <DensitySlider v-model="densityThreshold" />
+      </div>
+
+      <!-- 底部工具列 (Overlay) -->
+      <div class="absolute bottom-14 left-1/2 -translate-x-1/2 z-30">
+        <BottomToolbar
+          :is-focus-mode="isFocusMode"
+          :is-linking-mode="isLinkingMode"
+          :active-filter="activeFilter"
+          @toggle-focus="toggleFocusMode"
+          @set-filter="setFilter"
+          @add-node="handleQuickAddNode"
+          @toggle-linking="toggleLinkingMode"
+        />
+      </div>
+
+      <!-- 底部統計列 (Overlay) -->
+      <div class="absolute bottom-3 left-1/2 -translate-x-1/2 z-30">
+        <StatsBar />
+      </div>
     </main>
-
-    <!-- 右側可拖動面板: 預設 320px -->
-    <aside 
-      class="h-full flex-shrink-0 border-l bg-white dark:bg-[#0f0f0f] flex flex-col shadow-sm z-20 border-gray-200 dark:border-white/10 relative"
-      :style="{ width: rightPanelWidth + 'px' }"
-    >
-      <!-- 拖動手柄 -->
-      <div
-        class="absolute top-0 left-0 h-full w-1 cursor-col-resize hover:bg-blue-500/50 transition-colors z-30"
-        @mousedown="startDragRight"
-        title="拖動調整寬度"
-      >
-        <div class="h-full w-px mx-auto bg-gray-300 dark:bg-white/20"></div>
-      </div>
-
-      <!-- 面板內容 -->
-      <div class="flex-1 overflow-y-auto p-6">
-        <div class="space-y-6">
-          <!-- 標題 -->
-          <div class="flex items-center justify-between">
-            <h2 class="text-xl font-bold text-gray-800 dark:text-white">工具面板</h2>
-            <button 
-              class="px-3 py-1.5 text-sm text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white transition-colors"
-              @click="showRightPanel = false"
-            >
-              收起 ▶
-            </button>
-          </div>
-
-          <!-- 分隔線 -->
-          <div class="h-px bg-gray-200 dark:bg-white/10"></div>
-
-          <!-- 預留內容區域 -->
-          <div class="space-y-4">
-            <div class="p-4 rounded-lg border border-gray-200 dark:border-white/10 bg-gray-50 dark:bg-white/5">
-              <p class="text-sm text-gray-600 dark:text-gray-400">右側工具面板內容區域</p>
-            </div>
-          </div>
-        </div>
-      </div>
-    </aside>
 
     <!-- 頂部橫向面板: 節點檢查器 (Inspector) -->
     <transition name="slide-down">
       <div 
         v-if="showRightPanel && graphStore.selectedNode" 
-        class="fixed top-16 left-1/2 -translate-x-1/2 w-[950px] max-h-[85vh] z-50 backdrop-blur-xl border rounded-xl shadow-2xl overflow-hidden transition-all duration-300"
-        :class="[
-          layoutStore.theme === 'dark' 
-            ? 'bg-[#0f0f0f]/95 border-white/10' 
-            : 'bg-white/80 border-gray-200'
-        ]"
+        class="fixed top-16 left-1/2 -translate-x-1/2 w-[950px] max-h-[85vh] z-50 backdrop-blur-xl border rounded-xl shadow-2xl overflow-hidden transition-all duration-300 bg-[#0f0f0f]/95 border-white/10"
       >
         <!-- 關閉按鈕 -->
         <button 
-          class="absolute top-3 right-3 w-7 h-7 flex items-center justify-center rounded-lg transition-all z-10" 
-          :class="layoutStore.theme === 'dark' 
-            ? 'bg-white/10 hover:bg-white/20 text-white' 
-            : 'bg-gray-200 hover:bg-gray-300 text-gray-600'"
+          class="absolute top-3 right-3 w-7 h-7 flex items-center justify-center rounded-lg transition-all z-10 bg-white/10 hover:bg-white/20 text-white"
           @click="closeInspector" 
           title="關閉"
         >✕</button>
@@ -729,10 +761,10 @@ onMounted(async () => {
         <div class="flex items-stretch h-full">
           <!-- 左側: 預覽圖 -->
           <div class="w-64 flex-shrink-0">
-            <div class="relative group h-full bg-gray-100 dark:bg-white/5 border-r" :class="layoutStore.theme === 'dark' ? 'border-white/10' : 'border-gray-200'">
+            <div class="relative group h-full bg-white/5 border-r border-white/10">
               <div v-if="!localNodeData.image" class="w-full h-full flex flex-col items-center justify-center gap-2">
                 <span class="text-5xl opacity-30">🖼️</span>
-                <span class="text-sm text-gray-500 dark:text-gray-400 font-medium">No Cover</span>
+                <span class="text-sm text-gray-400 font-medium">No Cover</span>
               </div>
               <img 
                 v-else 
@@ -755,30 +787,30 @@ onMounted(async () => {
               <input 
                 v-model="localNodeData.name"
                 type="text"
-                class="w-full px-4 py-2.5 bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 rounded-lg text-lg font-bold text-gray-800 dark:text-white placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all"
+                class="w-full px-4 py-2.5 bg-white/5 border border-white/10 rounded-lg text-lg font-bold text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all"
                 placeholder="節點標題..."
               />
             </div>
 
             <!-- SRL -->
             <div class="flex flex-col gap-1.5">
-              <label class="text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider">SRL</label>
+              <label class="text-xs font-bold text-gray-400 uppercase tracking-wider">SRL</label>
               <input 
                 v-model="localNodeData.id"
                 type="text"
-                class="px-3 py-2 bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 rounded-lg text-sm text-gray-800 dark:text-white font-mono focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all"
+                class="px-3 py-2 bg-white/5 border border-white/10 rounded-lg text-sm text-white font-mono focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all"
                 readonly
               />
             </div>
 
             <!-- LINK -->
             <div class="flex flex-col gap-1.5">
-              <label class="text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider">LINK</label>
+              <label class="text-xs font-bold text-gray-400 uppercase tracking-wider">LINK</label>
               <div class="flex gap-2">
                 <input 
                   v-model="localNodeData.link"
                   type="text"
-                  class="flex-1 px-3 py-2 bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 rounded-lg text-sm text-gray-800 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all"
+                  class="flex-1 px-3 py-2 bg-white/5 border border-white/10 rounded-lg text-sm text-white focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all"
                   placeholder="https://..."
                 />
                 <button class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-semibold transition-all" @click="openLink">Go</button>
@@ -787,10 +819,10 @@ onMounted(async () => {
 
             <!-- AI 建議連線區塊 -->
             <div v-if="suggestedLinks.length > 0" class="flex flex-col gap-2 mt-2">
-              <label class="text-xs font-bold text-purple-600 dark:text-purple-400 uppercase tracking-wider flex items-center gap-1.5">
+              <label class="text-xs font-bold text-purple-400 uppercase tracking-wider flex items-center gap-1.5">
                 <span>🤖</span>
                 <span>AI 建議連線</span>
-                <span class="text-xs font-normal text-gray-500 dark:text-gray-400">(取消勾選不儲存)</span>
+                <span class="text-xs font-normal text-gray-400">(取消勾選不儲存)</span>
               </label>
               <div class="max-h-32 overflow-y-auto space-y-2 pr-2">
                 <div 
@@ -799,8 +831,8 @@ onMounted(async () => {
                   class="group flex items-start gap-2 p-2.5 rounded-lg border transition-all cursor-pointer"
                   :class="[
                     selectedSuggestedLinks.has(link.id)
-                      ? 'bg-purple-50 dark:bg-purple-500/10 border-purple-300 dark:border-purple-500/30'
-                      : 'bg-gray-50 dark:bg-white/5 border-gray-200 dark:border-white/10',
+                      ? 'bg-purple-500/10 border-purple-500/30'
+                      : 'bg-white/5 border-white/10',
                     hoveredLinkTarget === link.target_id ? 'ring-2 ring-purple-500' : ''
                   ]"
                   @mouseenter="handleLinkHover(link.target_id)"
@@ -817,10 +849,10 @@ onMounted(async () => {
                   <!-- 連線資訊 -->
                   <div class="flex-1 text-sm">
                     <div class="flex items-center gap-2 mb-1">
-                      <span class="font-semibold text-gray-800 dark:text-white">{{ getTargetNodeName(link.target_id) }}</span>
-                      <span class="px-2 py-0.5 bg-purple-100 dark:bg-purple-500/20 text-purple-700 dark:text-purple-300 text-xs font-medium rounded">{{ link.relation }}</span>
+                      <span class="font-semibold text-white">{{ getTargetNodeName(link.target_id) }}</span>
+                      <span class="px-2 py-0.5 bg-purple-500/20 text-purple-300 text-xs font-medium rounded">{{ link.relation }}</span>
                     </div>
-                    <p class="text-xs text-gray-600 dark:text-gray-400 leading-relaxed">{{ link.reason }}</p>
+                    <p class="text-xs text-gray-400 leading-relaxed">{{ link.reason }}</p>
                   </div>
                 </div>
               </div>
@@ -847,12 +879,12 @@ onMounted(async () => {
           </div>
 
           <!-- 右側: 描述區域 -->
-          <div class="w-80 flex-shrink-0 p-5 border-l" :class="layoutStore.theme === 'dark' ? 'border-white/10' : 'border-gray-200'">
+          <div class="w-80 flex-shrink-0 p-5 border-l border-white/10">
             <div class="flex flex-col gap-2 h-full">
-              <label class="text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider">DESCRIPTION</label>
+              <label class="text-xs font-bold text-gray-400 uppercase tracking-wider">DESCRIPTION</label>
               <textarea 
                 v-model="localNodeData.description"
-                class="flex-1 px-3 py-2.5 bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 rounded-lg text-sm leading-relaxed text-gray-800 dark:text-white placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none transition-all"
+                class="flex-1 px-3 py-2.5 bg-white/5 border border-white/10 rounded-lg text-sm leading-relaxed text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none transition-all"
                 placeholder="節點描述..."
               ></textarea>
             </div>

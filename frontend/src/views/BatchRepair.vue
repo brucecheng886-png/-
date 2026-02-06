@@ -1,5 +1,5 @@
 <template>
-  <div class="batch-repair-container">
+  <div class="batch-repair-container custom-scrollbar">
     <!-- 頁面標題 -->
     <div class="page-header">
       <h1 class="page-title">📊 批量資料處理</h1>
@@ -413,7 +413,7 @@ const saveData = () => {
   // 實際 API 調用範例（註解）
   /*
   try {
-    const response = await fetch('http://localhost:8000/api/batch/save', {
+    const response = await fetch('/api/batch/save', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -462,10 +462,31 @@ const resetUpload = () => {
 .batch-repair-container {
   width: 100%;
   min-height: 100vh;
-  background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
+  height: 100vh;
+  overflow-y: auto;
+  background: #0a0e27;
   padding: 32px;
   position: relative;
   overflow-x: hidden;
+}
+
+/* 滾動條樣式 */
+.batch-repair-container::-webkit-scrollbar {
+  width: 8px;
+}
+
+.batch-repair-container::-webkit-scrollbar-track {
+  background: rgba(59, 130, 246, 0.05);
+  border-radius: 4px;
+}
+
+.batch-repair-container::-webkit-scrollbar-thumb {
+  background: linear-gradient(180deg, #3b82f6, #8b5cf6);
+  border-radius: 4px;
+}
+
+.batch-repair-container::-webkit-scrollbar-thumb:hover {
+  background: linear-gradient(180deg, #2563eb, #7c3aed);
 }
 
 /* 背景效果 */
@@ -477,8 +498,8 @@ const resetUpload = () => {
   right: 0;
   bottom: 0;
   background: 
-    radial-gradient(circle at 20% 50%, rgba(59, 130, 246, 0.1) 0%, transparent 50%),
-    radial-gradient(circle at 80% 80%, rgba(139, 92, 246, 0.1) 0%, transparent 50%);
+    radial-gradient(circle at 20% 50%, rgba(59, 130, 246, 0.06) 0%, transparent 50%),
+    radial-gradient(circle at 80% 80%, rgba(139, 92, 246, 0.06) 0%, transparent 50%);
   pointer-events: none;
 }
 
@@ -509,9 +530,9 @@ const resetUpload = () => {
   max-width: 800px;
   margin: 0 auto;
   padding: 60px 40px;
-  background: rgba(255, 255, 255, 0.05);
+  background: rgba(26, 29, 58, 0.5);
   backdrop-filter: blur(20px);
-  border: 2px dashed rgba(255, 255, 255, 0.2);
+  border: 2px dashed #2d3154;
   border-radius: 24px;
   transition: all 0.3s ease;
   position: relative;
@@ -519,8 +540,8 @@ const resetUpload = () => {
 }
 
 .upload-area.dragging {
-  background: rgba(59, 130, 246, 0.15);
-  border-color: rgba(59, 130, 246, 0.6);
+  background: rgba(59, 130, 246, 0.1);
+  border-color: rgba(59, 130, 246, 0.5);
   transform: scale(1.02);
   box-shadow: 0 8px 32px rgba(59, 130, 246, 0.3);
 }
@@ -633,9 +654,9 @@ const resetUpload = () => {
   justify-content: space-between;
   align-items: center;
   padding: 20px 24px;
-  background: rgba(255, 255, 255, 0.05);
+  background: rgba(26, 29, 58, 0.8);
   backdrop-filter: blur(20px);
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  border: 1px solid #2d3154;
   border-radius: 16px 16px 0 0;
   margin-bottom: 0;
 }
@@ -716,9 +737,9 @@ const resetUpload = () => {
 
 /* ===== 表格包裝器 ===== */
 .table-wrapper {
-  background: rgba(20, 20, 30, 0.8);
+  background: rgba(12, 16, 41, 0.8);
   backdrop-filter: blur(20px);
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  border: 1px solid #2d3154;
   border-top: none;
   overflow: hidden;
 }
@@ -734,24 +755,24 @@ const resetUpload = () => {
 }
 
 :deep(.el-table th.el-table__cell) {
-  background: rgba(59, 130, 246, 0.2) !important;
-  color: #ffffff !important;
+  background: rgba(59, 130, 246, 0.15) !important;
+  color: #e5e5e5 !important;
   font-weight: 600;
-  border-color: rgba(255, 255, 255, 0.1) !important;
+  border-color: #2d3154 !important;
 }
 
 :deep(.el-table td.el-table__cell) {
-  background: rgba(20, 20, 30, 0.6) !important;
-  color: #e5e7eb !important;
-  border-color: rgba(255, 255, 255, 0.1) !important;
+  background: rgba(12, 16, 41, 0.6) !important;
+  color: #e5e5e5 !important;
+  border-color: #2d3154 !important;
 }
 
 :deep(.el-table__row:hover > td) {
-  background: rgba(59, 130, 246, 0.15) !important;
+  background: rgba(59, 130, 246, 0.1) !important;
 }
 
 :deep(.el-table--striped .el-table__row--striped td) {
-  background: rgba(30, 30, 40, 0.5) !important;
+  background: rgba(26, 29, 58, 0.5) !important;
 }
 
 :deep(.el-table__body-wrapper::-webkit-scrollbar) {
@@ -843,12 +864,12 @@ const resetUpload = () => {
   display: flex;
   gap: 24px;
   padding: 16px 24px;
-  background: rgba(255, 255, 255, 0.05);
+  background: rgba(26, 29, 58, 0.8);
   backdrop-filter: blur(20px);
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  border: 1px solid #2d3154;
   border-top: none;
   border-radius: 0 0 16px 16px;
-  color: rgba(255, 255, 255, 0.7);
+  color: #9ca3af;
   font-size: 14px;
 }
 

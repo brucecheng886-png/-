@@ -1,0 +1,681 @@
+================================================================================
+BruV Enterprise Server — 完整系統架構文件
+================================================================================
+版本：v3.0 Anytype Edition
+日期：2026-02-07
+用途：企業級地端化 AI 知識管理伺服器
+
+本文件完整描述 BruV Enterprise Server 的系統架構、技術選型、
+安全機制、資料流程與部署方式，適用於架構簡報與技術審查。
+
+================================================================================
+目錄
+================================================================================
+1. 系統總覽
+2. 架構圖
+3. 前端架構
+4. 後端架構
+5. API 端點一覽
+6. 資料庫與儲存
+7. Docker 容器服務
+8. 安全機制
+9. 配置管理
+10. 任務佇列與持久化
+11. 檔案監控與自動匯入
+12. Nginx 反向代理
+13. 依賴清單
+14. 部署與啟動方式
+
+================================================================================
+1. 系統總覽
+================================================================================
+
+BruV Enterprise Server 是一套企業級、完全地端部署的 AI 知識管理平台。
+它整合了三大核心引擎：
+
+  (1) Dify — 大語言模型 (LLM) 對話平台，用於 AI 聊天、自動化工作流
+  (2) RAGFlow — 檢索增強生成 (RAG) 知識檢索引擎，用於文件解析與語義搜尋
+  (3) KuzuDB — 圖資料庫，用於知識圖譜的節點與關係管理
+
+前端提供 2D (AntV G6) 與 3D (Three.js + 3D-Force-Graph) 雙模式的知識圖譜
+視覺化介面，支援拖放操作、跨圖譜關聯、智能推薦連結等功能。
+
+所有資料與模型完全執行在本地環境，不依賴任何外部雲端服務，
+滿足企業對資料隱私與合規性的嚴格要求。
+
+主要技術棧：
+  - 前端：Vue 3 + Vite 5 + Pinia + Element Plus + Tailwind CSS
+  - 後端：Python FastAPI + Uvicorn (ASGI)
+  - 圖資料庫：KuzuDB
+  - AI 引擎：Dify (LLM) + RAGFlow (RAG)
+  - 容器化：Docker Compose (9 個微服務)
+  - 反向代理：Nginx (SSL/TLS + 安全標頭 + 速率限制)
+  - 物件儲存：MinIO (S3 相容)
+  - 搜尋引擎：Elasticsearch 8.11
+  - 關聯式資料庫：PostgreSQL 15 (Dify) / MySQL 8.0 (RAGFlow)
+  - 快取：Redis 7 (兩組獨立實例)
+
+================================================================================
+2. 架構圖
+================================================================================
+
+使用者瀏覽器
+     |
+     v
+[Vue 3 前端 (Port 5173 開發 / 靜態部署)]
+     |  所有 /api/* 請求透過 Vite Proxy 或 Nginx 轉發
+     v
+[FastAPI 後端 (Port 8765)]
+  ├── Auth Middleware (Bearer Token 認證)
+  ├── CORS Middleware (白名單式 Origin 控制)
+  ├── /api/graph/*     -> KuzuDB 圖資料庫操作
+  ├── /api/dify/*      -> Dify LLM 代理 (轉發至 Dify API)
+  ├── /api/ragflow/*   -> RAGFlow 知識檢索代理
+  ├── /api/system/*    -> 系統配置、連線測試、檔案上傳
+  ├── /api/media/*     -> 媒體庫管理 (MinIO / 本地儲存)
+  ├── /api/tasks/*     -> 背景任務狀態查詢
+  ├── /api/auth/*      -> 認證登入與狀態
+  └── Lifespan 管理
+       ├── httpx 共享連線池 (最大 50 連線)
+       ├── TaskQueue 背景 Worker (SQLite 持久化)
+       ├── WatcherService 檔案監控
+       └── KuzuDBManager 圖資料庫連線
+
+[Docker Compose 容器群組 (bruv_network)]
+  ├── Dify Web (Port 82) + Dify API (Port 5001)
+  │     ├── PostgreSQL 15 (Dify 專用)
+  │     └── Redis 7 (Dify 專用)
+  ├── RAGFlow (Port 81, API Port 9380/9381)
+  │     ├── MySQL 8.0 (RAGFlow 專用)
+  │     ├── Redis 7 (RAGFlow 專用)
+  │     ├── MinIO (Port 9000/9001)
+  │     └── Elasticsearch 8.11 (Port 9200)
+  └── Nginx 反向代理 (HTTPS 443)
+
+[本地檔案系統]
+  ~/BruV_Data/
+  ├── kuzu_db/          -> KuzuDB 圖資料庫檔案
+  ├── Auto_Import/      -> WatcherService 監控目錄
+  ├── media_library/    -> 本地媒體儲存 (MinIO fallback)
+  ├── auth_token.json   -> 認證 Token 雜湊
+  └── task_queue.db     -> SQLite 任務持久化
+
+================================================================================
+3. 前端架構
+================================================================================
+
+3.1 技術選型
+  - 框架：Vue 3 (Composition API + <script setup>)
+  - 建構工具：Vite 5.4.21
+  - 狀態管理：Pinia 3.x (defineStore Composition 風格)
+  - UI 組件庫：Element Plus 2.5
+  - CSS 框架：Tailwind CSS 3.4
+  - 2D 圖譜渲染：AntV G6 5.0
+  - 3D 圖譜渲染：3D-Force-Graph 1.79 + Three.js 0.182
+  - HTTP 客戶端：Axios 1.13 + 原生 fetch (authFetch 封裝)
+  - 路由：Vue Router 4.2 (History Mode)
+  - 其他：markdown-it (Markdown 渲染)、xlsx (Excel 解析)、
+          splitpanes (面板分割)、vuedraggable (拖放)
+
+3.2 路由表 (全部 Lazy Loading)
+
+  路徑              名稱            組件                    說明
+  /                 —               redirect → /nexus       首頁重定向
+  /nexus            Nexus           NexusPage               知識中樞主頁面
+  /graph-page       GraphPage       GraphPage               知識圖譜頁面
+  /graph            Graph           GraphView               舊版 2D 圖譜
+  /graph-3d         Graph3D         Graph3D                 3D 圖譜視覺化
+  /cross-graph      CrossGraph      CrossGraphPage          跨圖譜關聯
+  /import           Import          ImportPage              資料匯入
+  /file-import      FileImport      FileImport              檔案匯入
+  /batch-repair     BatchRepair     BatchRepair             批量修復
+  /create           Create          KnowledgeForm           建立知識節點
+  /settings         Settings        Settings                系統設定
+  /monitor          SystemMonitor   SystemMonitorPage       系統監控
+  /timeline         Timeline        TimelinePage            時間線
+  /login            Login           LoginPage               公開登入頁面
+
+  認證守衛 (router.beforeEach)：
+  - 首次載入時呼叫 /api/auth/status 檢查認證是否啟用
+  - 未帶 Token 時重定向至 /login
+  - 標記 meta.public: true 的路由免認證
+
+3.3 狀態管理 (Pinia Stores)
+
+  graphStore.js (1270 行)：
+  - 管理知識圖譜的所有狀態：nodes、links、選中節點、
+    2D/3D 模式切換、跨圖譜 AI Link
+  - executeCypherQuery() — 含前端安全驗證 (CYPHER_BLOCKED regex)
+  - 呼叫 GraphDataManager 取得資料
+
+3.4 核心服務層
+
+  GraphDataManager.js (393 行)：
+  - 設計模式：單例 (Singleton)
+  - LRU 快取 (Map, 上限 10 個圖譜, TTL 5 分鐘)
+  - 請求去重 (pendingRequests Map) — 同一 graphId 的並發請求只發送一次
+  - 使用 authFetch 自動附加認證 Token
+
+  apiClient.js (102 行)：
+  - authFetch(url, options) 封裝原生 fetch
+  - 自動附加 Authorization: Bearer <token> header
+  - Token 存於 localStorage('bruv_api_token')
+  - 超時控制：30 秒 (AbortController)
+  - 401 回應時自動清除 Token 並重定向至 /login
+
+3.5 前端安全措施
+  - Cypher 查詢雙重防護：前端 regex 攔截 + 後端白/黑名單驗證
+  - 查詢長度限制：2000 字元
+  - 黑名單關鍵字：CREATE, DELETE, DETACH, SET, REMOVE, MERGE,
+                   DROP, ALTER, CALL, COPY, LOAD
+
+3.6 建構配置 (vite.config.js)
+  - Dev Server：Port 5173
+  - API Proxy：/api -> http://127.0.0.1:8000
+  - 手動分塊策略：vue-vendor、element-plus、g6、xlsx、markdown
+  - 路徑別名：@ -> ./src
+  - Terser 壓縮、sourcemap 關閉、chunk 上限 1500KB
+
+================================================================================
+4. 後端架構
+================================================================================
+
+4.1 主程式進入點 (app_anytype.py, 646 行)
+
+  框架：FastAPI + Uvicorn (ASGI)
+  應用模式：Lifespan Context Manager (取代已棄用的 on_event)
+
+  初始化流程 (lifespan)：
+    啟動時：
+    1. 啟動 TaskQueue 背景 Worker (asyncio)
+    2. 建立共享 httpx.AsyncClient 連線池 (max_connections=50)
+    3. 初始化 KuzuDBManager (失敗時 fallback 到 MockKuzuManager)
+    4. 初始化 WatcherService (監控 AUTO_IMPORT_DIR)
+    5. 將所有服務存於 app.state (非全域變數)
+
+    關閉時：
+    1. 停止 TaskQueue Worker
+    2. 停止 WatcherService
+    3. 關閉 KuzuDB 連線
+    4. 關閉 httpx 連線池
+
+  中間件：
+    - CORSMiddleware — 白名單式 origin 控制
+    - APIAuthMiddleware — Bearer Token 認證
+
+  掛載的 Router：
+    /api/tasks     -> tasks_router     (任務管理)
+    /api/dify      -> dify_router      (Dify LLM 代理)
+    /api/ragflow   -> ragflow_router   (RAGFlow 知識檢索代理)
+    /api/graph     -> graph_router     (知識圖譜 CRUD)
+    /api/graph     -> graph_import_router (Excel/CSV 匯入)
+    /api/system    -> system_router    (系統配置與上傳)
+    /api/media     -> media_library_router (媒體庫管理)
+
+  靜態檔案：/static -> frontend/ 目錄
+
+4.2 核心模組 (backend/core/)
+
+  config.py (168 行)：
+  - Settings 類別 (Pydantic BaseSettings)
+  - 配置優先級：config.json > 環境變數 (.env) > 程式碼預設值
+  - 執行緒安全：threading.Lock 保護 config.json 讀寫
+  - 原子寫入：先寫 .tmp 再 rename
+  - API Key 快取：@lru_cache(maxsize=1)，save 時自動清除
+
+  auth.py (189 行)：
+  - Bearer Token 認證機制
+  - Token 首次啟動時自動生成 (secrets.token_urlsafe(32))
+  - Token 以 SHA-256 雜湊存於 auth_token.json (不存明文)
+  - APIAuthMiddleware 攔截每個請求
+  - 白名單免認證路徑：/docs, /redoc, /openapi.json, /api/health,
+    /api/auth/login, /api/auth/status, /
+  - 白名單前綴：/assets/, /favicon
+
+  kuzu_manager.py (566 行)：
+  - KuzuDBManager — 管理 KuzuDB 圖資料庫
+  - 功能：Schema 初始化、實體 CRUD、關係操作、Cypher 查詢
+  - 路徑處理：非 ASCII 路徑 fallback 到 C:/BruV_Data/kuzu_db
+  - MockKuzuManager 用於開發/測試環境的 fallback
+
+4.3 API 路由模組 (backend/api/)
+
+  graph.py (395 行)：
+  - 知識圖譜核心 API — 實體建立、關係管理、鄰居查詢
+  - Cypher 查詢端點含安全驗證 (白名單 + 黑名單)
+  - 圖譜元資料 CRUD (metadata)
+
+  graph_import.py (421 行)：
+  - Excel/CSV 智能解析匯入至知識圖譜
+  - 整合 LLM Prompt v2.0 進行自動標題生成、描述撰寫、關係推薦
+  - 支援多語言 (中/英) 和領域特化
+
+  dify.py (208 行)：
+  - Dify LLM 平台代理路由
+  - 動態取得 API Key (get_current_api_keys)
+  - 整合 agent_service 進行智能意圖路由
+  - httpx 轉發請求到 Dify API
+
+  ragflow.py (148 行)：
+  - RAGFlow 知識檢索平台代理路由
+  - 支援查詢 (RAGFlowQuery: question, dataset_ids, top_k)
+  - httpx 轉發請求到 RAGFlow API
+
+  system.py (547 行)：
+  - 系統配置讀寫 (GET/POST /config)
+  - 連線測試 (Dify/RAGFlow)
+  - 通用檔案上傳 (含大小限制)
+
+  media_library.py (438 行)：
+  - 媒體檔案上傳/列表/下載/刪除/統計
+  - 支援 MinIO 物件儲存 (可選用本地 fallback)
+  - 整合標籤分類、OCR 識別
+
+  tasks.py (64 行)：
+  - 任務狀態查詢 (列表/單一)
+  - 封裝 TaskQueue 服務
+
+4.4 服務層 (backend/services/)
+
+  agent_service.py (338 行)：
+  - 智能代理核心 — 意圖路由 (Intent Router)
+  - 意圖類型：RAG (知識檢索) / AUTOMATION (系統自動化) / CHAT (閒聊)
+  - 中文關鍵字匹配進行意圖識別
+  - 連接 Dify (LLM 對話) 和 RAGFlow (知識檢索)
+  - httpx 非同步 HTTP 呼叫，超時由 settings.REQUEST_TIMEOUT 控制
+
+  task_queue.py (443 行)：
+  - asyncio 背景 Worker 模式
+  - SQLite 持久化 (~/BruV_Data/task_queue.db)
+  - 任務狀態：PENDING → PROCESSING → COMPLETED | FAILED
+  - 任務追蹤：進度百分比、total/processed/failed items、current stage
+  - 最大歷史記錄 500 條，自動清理過期任務
+  - 支援使用者離開頁面後繼續執行
+
+  watcher.py (573 行)：
+  - watchdog 庫 (Observer + FileSystemEventHandler)
+  - 監控 AUTO_IMPORT_DIR 目錄
+  - 支援副檔名：.pdf, .txt, .md, .docx, .xlsx
+  - 偵測新檔案 → 自動上傳至 RAGFlow + 同步至 KuzuDB 知識圖譜
+  - 整合 TaskQueue 追蹤上傳進度
+
+4.5 RAG 客戶端 (backend/rag_client.py, 119 行)
+
+  - 非同步 HTTP 客戶端 (httpx.AsyncClient)
+  - 連接 RAGFlow Server API (http://localhost:81)
+  - 方法：async_upload_file() — 上傳文件到指定知識庫
+  - 支援 MIME 類型檢測、chunk method 配置
+  - Bearer Token 授權
+  - 同時提供同步方法供 WatcherService 背景執行緒使用
+
+================================================================================
+5. API 端點一覽
+================================================================================
+
+認證 API
+  POST   /api/auth/login          Token 驗證登入
+  GET    /api/auth/status         認證狀態查詢 (是否啟用認證)
+
+系統 API
+  GET    /api/health              健康檢查
+  GET    /api/system/config       讀取目前配置
+  POST   /api/system/config       更新配置 (寫入 config.json)
+  GET    /api/system/env-file     讀取 .env 檔案
+  POST   /api/system/test-connection  測試 Dify/RAGFlow 連線
+  POST   /api/system/upload       通用檔案上傳
+
+知識圖譜 API
+  POST   /api/graph/entities      建立實體節點
+  POST   /api/graph/relations     建立關係邊
+  GET    /api/graph/entities/{id} 取得單一實體
+  GET    /api/graph/entities      搜尋/列出實體
+  GET    /api/graph/entities/{id}/neighbors  取得鄰居節點
+  GET    /api/graph/list          列出圖譜
+  POST   /api/graph/query         執行 Cypher 查詢 (僅讀取)
+  POST   /api/graph/metadata      建立圖譜元資料
+  GET    /api/graph/metadata      列出所有圖譜元資料
+  GET    /api/graph/metadata/{id} 取得單一圖譜元資料
+  PUT    /api/graph/metadata/{id} 更新圖譜元資料
+  DELETE /api/graph/metadata/{id} 刪除圖譜元資料
+
+圖譜匯入 API
+  POST   /api/graph/import        Excel/CSV 智能匯入
+
+AI 代理 API
+  POST   /api/dify/chat           Dify LLM 對話
+  POST   /api/ragflow/query       RAGFlow 知識檢索
+
+媒體庫 API
+  POST   /api/media/upload        上傳媒體檔案
+  GET    /api/media/list          列出媒體庫
+  GET    /api/media/files/{path}  取得檔案
+  DELETE /api/media/{file_id}     刪除檔案
+  GET    /api/media/stats         媒體庫統計
+
+任務 API
+  GET    /api/tasks               取得所有任務列表
+  GET    /api/tasks/{task_id}     取得單一任務狀態
+
+================================================================================
+6. 資料庫與儲存
+================================================================================
+
+6.1 KuzuDB (圖資料庫)
+  - 路徑：~/BruV_Data/kuzu_db (可透過 KUZU_DB_PATH 環境變數設定)
+  - 用途：知識圖譜的節點 (Entity) 與關係 (Relation) 儲存
+  - 查詢語言：Cypher (僅允許讀取操作，寫入透過管理 API)
+  - 管理類別：KuzuDBManager (生產) / MockKuzuManager (開發 fallback)
+
+6.2 PostgreSQL 15 (Dify 專用)
+  - 容器名稱：dify-db
+  - 用途：Dify 平台內部資料儲存
+  - 密碼透過 DIFY_DB_PASSWORD 環境變數注入
+
+6.3 MySQL 8.0 (RAGFlow 專用)
+  - 容器名稱：ragflow-mysql
+  - 用途：RAGFlow 平台內部資料儲存
+  - 密碼透過 RAGFLOW_MYSQL_PASSWORD 環境變數注入
+
+6.4 Elasticsearch 8.11.3
+  - 容器名稱：es01
+  - Port：127.0.0.1:9200
+  - 用途：RAGFlow 全文搜尋與語義索引
+  - 已啟用安全功能 (xpack.security.enabled=true)
+  - 密碼透過 ELASTIC_PASSWORD 環境變數注入
+
+6.5 Redis 7 (兩組獨立實例)
+  - dify-redis：Dify 平台快取與佇列
+  - ragflow-redis：RAGFlow 平台快取
+  - 密碼透過環境變數注入
+
+6.6 MinIO (S3 相容物件儲存)
+  - 容器名稱：ragflow-minio
+  - API Port：127.0.0.1:9000
+  - Console Port：127.0.0.1:9001
+  - 用途：RAGFlow 文件儲存 / 媒體庫檔案儲存
+  - 帳號密碼透過 MINIO_ROOT_USER/PASSWORD 環境變數注入
+
+6.7 SQLite (任務佇列持久化)
+  - 路徑：~/BruV_Data/task_queue.db
+  - 用途：背景任務狀態持久化
+  - 最大歷史記錄：500 條
+  - 自動清理過期的 completed/failed 任務
+
+6.8 本地檔案系統
+  - ~/BruV_Data/Auto_Import/ — WatcherService 監控目錄
+  - ~/BruV_Data/media_library/ — 本地媒體儲存 (MinIO fallback)
+  - ~/BruV_Data/auth_token.json — 認證 Token SHA-256 雜湊
+  - config.json — 應用程式配置 (原子寫入)
+
+================================================================================
+7. Docker 容器服務
+================================================================================
+
+使用 Docker Compose 編排 9 個微服務，所有服務在 bruv_network (bridge) 網路中通訊。
+
+服務名稱         映像                            外部 Port (bind 127.0.0.1)
+-----------      ----------------------------    --------------------------
+dify             langgenius/dify-web:0.6.16      82 → 3000
+dify-api         langgenius/dify-api:0.6.16      5001 → 5001
+dify-db          postgres:15-alpine              (無外部)
+dify-redis       redis:7-alpine                  (無外部)
+ragflow          infiniflow/ragflow:v0.16.0      81→80, 9380→9380, 9381→9381
+es01             elasticsearch:8.11.3            9200 → 9200
+ragflow-mysql    mysql:8.0                       (無外部)
+ragflow-minio    minio/minio:latest              9000→9000, 9001→9001
+ragflow-redis    redis:7-alpine                  (無外部)
+
+安全措施：
+  - 所有 Port 綁定到 127.0.0.1 (僅本地存取，禁止外部直連)
+  - Elasticsearch 啟用安全功能 (xpack.security.enabled=true)
+  - 所有資料庫密碼透過 .env 注入，使用 ${VAR:?error message} 強制必填
+  - Dify 服務設定資源限制 (各 2 CPU + 4GB RAM)
+
+磁碟卷 (Volumes)：
+  dify_db_data, dify_redis_data, dify_storage,
+  ragflow_data, ragflow_logs, ragflow_mysql_data,
+  ragflow_minio_data, ragflow_redis_data, es01_data
+
+================================================================================
+8. 安全機制
+================================================================================
+
+8.1 認證與授權
+  - Bearer Token 認證 (Authorization header)
+  - Token 自動生成 (secrets.token_urlsafe(32))
+  - Token 以 SHA-256 雜湊儲存，不存明文
+  - 可透過 BRUV_AUTH_ENABLED=false 停用認證 (開發模式)
+  - 前端 authFetch() 自動附加 Token
+  - 401 回應時自動清除 Token 並重定向至登入頁
+
+8.2 API 安全
+  - Cypher 查詢雙重驗證 (前端 regex + 後端白/黑名單)
+  - 黑名單關鍵字：CREATE, DELETE, DETACH, SET, REMOVE, MERGE,
+                   DROP, ALTER, CALL, COPY, LOAD
+  - 查詢長度限制 2000 字元
+  - 違反安全規則回傳 HTTP 403
+
+8.3 上傳安全
+  - 檔案大小限制：MAX_UPLOAD_SIZE (預設 100MB)
+  - 超過限制回傳 HTTP 413
+  - Nginx client_max_body_size 128M
+
+8.4 CORS
+  - 白名單式 Origin 控制
+  - 預設允許：localhost:8000, localhost:8001
+  - 可透過 CORS_ORIGINS 環境變數擴充
+
+8.5 Nginx 安全
+  - SSL/TLS 1.2-1.3
+  - 安全標頭：
+    X-Frame-Options: DENY
+    X-Content-Type-Options: nosniff
+    X-XSS-Protection: 1; mode=block
+    Referrer-Policy: strict-origin-when-cross-origin
+    Content-Security-Policy: default-src 'self'
+    Strict-Transport-Security: max-age=31536000 (HSTS 1 年)
+    Permissions-Policy: camera=(), microphone=(), geolocation=()
+  - 速率限制：API 30r/s (burst 50)、上傳 5r/s (burst 10)
+  - 禁止存取隱藏檔 (/.)
+  - 禁止敏感副檔名 (.env, .git, .bak, .sql, .log)
+  - HTTP → HTTPS 301 重定向
+  - server_tokens off (隱藏 Nginx 版本號)
+
+8.6 配置安全
+  - config.json 原子寫入 (先 .tmp 再 rename)
+  - threading.Lock 防止並發讀寫競爭
+  - 密碼/金鑰透過 .env 注入，不寫死在程式碼中
+  - Docker Compose 使用 ${VAR:?message} 強制必填環境變數
+
+8.7 進程管理安全
+  - Launcher GUI 先嘗試優雅停止 (taskkill 不帶 /F)
+  - 5 秒超時後才強制終止 (taskkill /F)
+  - Port 佔用檢測：精準定位佔用特定 Port 的進程 (非殺所有 Python)
+
+================================================================================
+9. 配置管理
+================================================================================
+
+9.1 配置優先級（高 → 低）
+
+  1. config.json (使用者透過 UI 設定頁面修改)
+  2. 環境變數 (.env 檔案)
+  3. 程式碼預設值 (Settings 類別)
+
+9.2 Settings 類別欄位
+
+  欄位名稱              預設值                       說明
+  HOST                  127.0.0.1                    伺服器監聽位址
+  PORT                  8765                         伺服器監聽埠號
+  ENVIRONMENT           development                  執行環境
+  DIFY_API_URL          http://localhost:80/v1        Dify API 位址
+  RAGFLOW_API_URL       http://localhost:81/api/v1    RAGFlow API 位址
+  KUZU_DB_PATH          ~/BruV_Data/kuzu_db           圖資料庫路徑
+  AUTO_IMPORT_DIR       ~/BruV_Data/Auto_Import       自動匯入監控目錄
+  MEDIA_LIBRARY_PATH    ~/BruV_Data/media_library     媒體庫路徑
+  MINIO_ENDPOINT        localhost:9000                MinIO 端點
+  MINIO_ROOT_USER       minioadmin                   MinIO 使用者
+  MINIO_ROOT_PASSWORD   (空)                          MinIO 密碼
+  REQUEST_TIMEOUT       30                            HTTP 請求超時 (秒)
+  BRUV_AUTH_ENABLED     true                          啟用 API 認證
+  BRUV_API_TOKEN        (空)                          自訂 Token
+  MAX_UPLOAD_SIZE       104857600                    上傳大小限制 (100MB)
+
+9.3 環境變數 (.env.example)
+
+  DIFY_API_URL, DIFY_API_KEY, DIFY_SECRET_KEY,
+  RAGFLOW_API_URL, RAGFLOW_API_KEY,
+  KUZU_DB_PATH, DEBUG, LOG_LEVEL,
+  BRUV_AUTH_ENABLED, BRUV_API_TOKEN,
+  DIFY_DB_PASSWORD, RAGFLOW_MYSQL_PASSWORD,
+  MINIO_ROOT_USER, MINIO_ROOT_PASSWORD,
+  RAGFLOW_REDIS_PASSWORD, ELASTIC_PASSWORD
+
+================================================================================
+10. 任務佇列與持久化
+================================================================================
+
+TaskQueue 是一個基於 asyncio 的背景任務系統，搭配 SQLite 持久化。
+
+任務生命週期：
+  PENDING → PROCESSING → COMPLETED 或 FAILED
+
+任務類型：
+  - file_upload (檔案上傳至 RAGFlow)
+  - excel_parse (Excel 智能解析匯入)
+
+每個任務追蹤：
+  - 進度百分比 (0-100%)
+  - 總項目數 / 已處理 / 失敗項目數
+  - 當前階段描述
+  - 結果 (JSON) 或錯誤訊息
+  - 建立/開始/完成時間
+
+持久化機制：
+  - 儲存路徑：~/BruV_Data/task_queue.db (SQLite)
+  - 每次 create/update 即時寫入 SQLite
+  - 啟動時自動載入未完成的任務
+  - 歷史記錄上限 500 條，自動清理
+
+================================================================================
+11. 檔案監控與自動匯入
+================================================================================
+
+WatcherService 使用 watchdog 庫監控 AUTO_IMPORT_DIR 目錄。
+
+監控流程：
+  1. 使用者將檔案放入 ~/BruV_Data/Auto_Import/
+  2. WatcherService 偵測到新檔案事件
+  3. 檢查副檔名是否支援 (.pdf, .txt, .md, .docx, .xlsx)
+  4. 建立 TaskQueue 任務，開始追蹤進度
+  5. 上傳檔案至 RAGFlow 知識庫
+  6. 同步文件元資料至 KuzuDB 知識圖譜
+
+watchdog callback 在獨立的背景執行緒中執行，
+不會阻塞 FastAPI 的 asyncio 事件迴圈。
+
+================================================================================
+12. Nginx 反向代理
+================================================================================
+
+配置檔案：nginx/ragflow.conf (127 行)
+
+功能：
+  - SSL/TLS 終端 (TLS 1.2 + TLS 1.3)
+  - 上游代理：127.0.0.1:9380 (RAGFlow API)
+  - WebSocket 支援：/ws 路徑 (read_timeout 86400)
+  - Gzip 壓縮 (level 6)
+  - 靜態資源快取 30 天 (immutable)
+  - HTTP → HTTPS 301 重定向 (保留 /health)
+
+速率限制：
+  - bruv_api_limit: 30 requests/second (burst 50, nodelay)
+  - bruv_upload_limit: 5 requests/second (burst 10, nodelay)
+  - 上傳超時 600 秒
+
+================================================================================
+13. 依賴清單
+================================================================================
+
+13.1 Python 後端依賴 (requirements.txt) — 全部版本鎖定
+
+  fastapi==0.104.1          Web 框架
+  uvicorn[standard]==0.24.0 ASGI 伺服器
+  pydantic==2.5.0           資料驗證
+  pydantic-settings==2.1.0  設定管理
+  httpx==0.25.1             非同步 HTTP 客戶端
+  requests==2.32.5          同步 HTTP 客戶端
+  kuzu==0.1.0               圖資料庫
+  python-multipart==0.0.6   檔案上傳
+  pandas==3.0.0             資料處理
+  openpyxl==3.1.5           Excel 讀寫
+  python-dotenv==1.0.0      環境變數載入
+  watchdog==6.0.0           檔案系統監控
+  minio==7.2.20             MinIO 物件儲存客戶端
+
+13.2 GUI 啟動器額外依賴 (requirements-gui.txt)
+
+  PySide6==6.6.1            Qt GUI 框架 (僅啟動器需要)
+
+13.3 前端依賴 (package.json 摘要)
+
+  vue: ^3.4.15              UI 框架
+  vue-router: ^4.2.5        路由
+  pinia: ^3.0.4             狀態管理
+  element-plus: ^2.5.4      UI 組件庫
+  @antv/g6: ^5.0.0          2D 圖譜渲染
+  3d-force-graph: ^1.79     3D 圖譜渲染
+  three: ^0.182             3D 引擎
+  axios: ^1.13.4            HTTP 客戶端
+  markdown-it: ^14.0.0      Markdown 渲染
+  xlsx: ^0.18.5             Excel 解析
+  splitpanes: ^4.0.4        面板分割
+  vuedraggable: ^4.1.0      拖放功能
+
+  開發依賴：
+  vite: ^5.0                建構工具
+  tailwindcss: ^3.4          CSS 框架
+  postcss + autoprefixer    CSS 後處理
+
+================================================================================
+14. 部署與啟動方式
+================================================================================
+
+14.1 開發環境啟動
+
+  步驟 1：啟動 Docker 容器群組
+    docker-compose up -d
+
+  步驟 2：啟動 FastAPI 後端
+    PowerShell: .\start_backend.ps1
+    或手動: uvicorn app_anytype:app --host 127.0.0.1 --port 8765
+
+  步驟 3：啟動前端開發伺服器
+    cd frontend && npm run dev
+
+  步驟 4 (選用)：啟動 GUI 啟動器
+    python launcher_gui.py
+
+14.2 GUI 啟動器 (launcher_gui.py, 1454 行)
+
+  PySide6 桌面應用程式，整合式管理介面：
+  - 一鍵啟動/停止所有服務
+  - 即時日誌輸出
+  - 服務健康狀態指示燈 (後端/前端/Dify/RAGFlow)
+  - 快速連結 (開啟 BruV AI / Dify / RAGFlow)
+  - 多語言支援 (繁體中文/英文)
+  - 系統設定頁面 (API 配置/認證管理)
+  - 優雅停止機制 (先 terminate，5 秒超時後才 force kill)
+
+14.3 資料目錄
+
+  預設路徑：~/BruV_Data/ (可透過 BRUV_DATA_DIR 環境變數覆蓋)
+  ├── kuzu_db/          KuzuDB 圖資料庫
+  ├── Auto_Import/      自動匯入監控目錄
+  ├── media_library/    本地媒體儲存
+  ├── auth_token.json   認證 Token 雜湊
+  └── task_queue.db     SQLite 任務持久化
+
+================================================================================
+文件結束
+================================================================================

@@ -8,46 +8,60 @@ export default {
   theme: {
     extend: {
       colors: {
-        // Anytype Space Architecture 配色
+        // Nexus 霓虹藍風格配色
+        nexus: {
+          bg: '#0a0e27',           // 深藍黑背景
+          surface: '#1a1d3a',      // 卡片表面
+          elevated: '#252847',     // 懸浮元素
+          border: '#2d3154',       // 邊框
+          glow: '#3b82f6',         // 電藍光暈
+        },
+        neon: {
+          blue: '#3b82f6',         // 主要霓虹藍
+          purple: '#8b5cf6',       // 紫色
+          cyan: '#06b6d4',         // 青色
+          pink: '#ec4899',         // 粉紅
+          indigo: '#6366f1',       // 靛藍
+        },
         primary: {
-          DEFAULT: '#335eea',      // Anytype Blue
-          dark: '#2549d8',
-          light: '#5983f0',
+          DEFAULT: '#3b82f6',      // 電藍
+          dark: '#2563eb',
+          light: '#60a5fa',
         },
         accent: {
-          orange: '#ff8e3c',       // Anytype Orange (數據顯示)
-          green: '#00c2a8',        // 成功狀態
+          orange: '#ff8e3c',       
+          green: '#10b981',        
         },
         
-        // 語意化顏色 (映射到 CSS 變數)
-        main: 'var(--bg-main)',           // 主背景
-        surface: 'var(--bg-surface)',     // 面板表面
-        'border-color': 'var(--border-color)',  // 邊框
-        'txt-main': 'var(--text-primary)',      // 主要文字
-        'txt-sec': 'var(--text-secondary)',     // 次要文字
+        // 語意化顏色
+        main: 'var(--bg-main)',
+        surface: 'var(--bg-surface)',
+        'border-color': 'var(--border-color)',
+        'txt-main': 'var(--text-primary)',
+        'txt-sec': 'var(--text-secondary)',
         
-        // 保留向後兼容的 void 色系
+        // 深色主題色系
         void: {
-          black: '#000000',        // 純黑底
-          primary: '#191919',      // 深空黑 (主背景)
-          surface: '#111111',      // 面板表面
-          elevated: '#1a1a1a',     // 懸浮元素
-          hover: '#262626',        // Hover 狀態
+          black: '#000000',
+          primary: '#0a0e27',      // Nexus 背景
+          surface: '#1a1d3a',
+          elevated: '#252847',
+          hover: '#2d3154',
         },
         text: {
-          primary: '#e5e5e5',      // 主要文字 (灰白)
-          secondary: '#888888',    // 次要文字 (暗灰)
-          tertiary: '#4d4d4d',     // 輔助文字
-          disabled: '#333333',     // 禁用文字
+          primary: '#e5e5e5',
+          secondary: '#9ca3af',
+          tertiary: '#6b7280',
+          disabled: '#4b5563',
         },
         border: {
-          primary: '#333333',      // 主要邊框
-          subtle: '#222222',       // 更細微的分隔線
-          focus: '#335eea',        // 焦點邊框
+          primary: '#2d3154',
+          subtle: '#1f2337',
+          focus: '#3b82f6',
         },
-        success: '#00c2a8',
-        warning: '#ffc107',
-        danger: '#ff5c5c',
+        success: '#10b981',
+        warning: '#f59e0b',
+        danger: '#ef4444',
       },
       fontFamily: {
         sans: ['Inter', 'PingFang TC', 'Microsoft JhengHei', 'ui-sans-serif', 'system-ui', 'sans-serif'],
@@ -70,10 +84,15 @@ export default {
         'void-md': '0 4px 20px rgba(0, 0, 0, 0.6)',
         'void-lg': '0 8px 40px rgba(0, 0, 0, 0.8)',
         'void-xl': '0 12px 60px rgba(0, 0, 0, 0.9)',
+        'neon-blue': '0 0 20px rgba(59, 130, 246, 0.5), 0 0 40px rgba(59, 130, 246, 0.3)',
+        'neon-purple': '0 0 20px rgba(139, 92, 246, 0.5), 0 0 40px rgba(139, 92, 246, 0.3)',
+        'neon-cyan': '0 0 20px rgba(6, 182, 212, 0.5), 0 0 40px rgba(6, 182, 212, 0.3)',
       },
       animation: {
         'fade-in': 'fadeIn 0.3s ease-out',
         'slide-up': 'slideUp 0.3s ease-out',
+        'pulse-glow': 'pulseGlow 2s ease-in-out infinite',
+        'float': 'float 3s ease-in-out infinite',
       },
       keyframes: {
         fadeIn: {
@@ -83,6 +102,14 @@ export default {
         slideUp: {
           '0%': { transform: 'translateY(10px)', opacity: '0' },
           '100%': { transform: 'translateY(0)', opacity: '1' },
+        },
+        pulseGlow: {
+          '0%, 100%': { opacity: '0.5', boxShadow: '0 0 20px rgba(59, 130, 246, 0.3)' },
+          '50%': { opacity: '1', boxShadow: '0 0 40px rgba(59, 130, 246, 0.6)' },
+        },
+        float: {
+          '0%, 100%': { transform: 'translateY(0)' },
+          '50%': { transform: 'translateY(-10px)' },
         },
       },
     },

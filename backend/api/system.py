@@ -1,14 +1,17 @@
 """
 系統配置管理 API
-用於動態更新 .env 檔案中的 API Keys
+用於動態更新配置（優先使用 config.json，兼容 .env）
 """
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, UploadFile, File, Form
 from pydantic import BaseModel
 from typing import Optional
 import os
 import re
 import logging
+import shutil
 from pathlib import Path
+from datetime import datetime
+from backend.core.config import load_config_from_file, save_config_to_file, get_current_api_keys, settings
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -18,6 +21,8 @@ class ConfigUpdateRequest(BaseModel):
     """配置更新請求模型"""
     dify_key: Optional[str] = None
     ragflow_key: Optional[str] = None
+    dify_api_url: Optional[str] = None
+    ragflow_api_url: Optional[str] = None
 
 
 class ConfigResponse(BaseModel):
@@ -137,35 +142,32 @@ def reload_env_to_os() -> None:
 @router.get("/config")
 async def get_config():
     """
-    獲取當前系統配置（API Keys 已遮蔽）
+    獲取當前系統配置
     
     返回格式:
     {
         "success": true,
         "config": {
-            "dify_key": "app-x*****",
-            "ragflow_key": "ragfl*****",
+            "dify_key": "app-xxxxxxxx",
+            "ragflow_key": "ragflow-xxxxxxxx",
             "dify_api_url": "http://localhost:80/v1",
             "ragflow_api_url": "http://localhost:81/api/v1"
         }
     }
     """
     try:
-        # 讀取環境變數
-        dify_key = os.getenv('DIFY_API_KEY', '')
-        ragflow_key = os.getenv('RAGFLOW_API_KEY', '')
-        dify_url = os.getenv('DIFY_API_URL', 'http://localhost:80/v1')
-        ragflow_url = os.getenv('RAGFLOW_API_URL', 'http://localhost:81/api/v1')
+        # 從統一的配置源獲取（config.json 優先，然後是環境變數）
+        api_keys = get_current_api_keys()
         
         return ConfigResponse(
             success=True,
             message="配置獲取成功",
             config={
-                "dify_key": mask_api_key(dify_key),
-                "ragflow_key": mask_api_key(ragflow_key),
-                "dify_api_url": dify_url,
-                "ragflow_api_url": ragflow_url,
-                "env_file": str(get_env_file_path())
+                "dify_key": mask_api_key(api_keys['DIFY_API_KEY']),
+                "ragflow_key": mask_api_key(api_keys['RAGFLOW_API_KEY']),
+                "dify_api_url": api_keys['DIFY_API_URL'],
+                "ragflow_api_url": api_keys['RAGFLOW_API_URL'],
+                "config_source": "config.json (C:/BruV_Data/config.json)"
             }
         )
     
@@ -177,59 +179,69 @@ async def get_config():
 @router.post("/config")
 async def update_config(request: ConfigUpdateRequest):
     """
-    更新系統配置（API Keys）
+    更新系統配置（保存到 config.json）
     
     請求格式:
     {
         "dify_key": "app-xxxxxxxxxxxxxxxx",
-        "ragflow_key": "ragflow-xxxxxxxxxxxxxxxx"
+        "ragflow_key": "ragflow-xxxxxxxxxxxxxxxx",
+        "dify_api_url": "http://localhost:80/v1",
+        "ragflow_api_url": "http://localhost:81/api/v1"
     }
     
     返回格式:
     {
         "success": true,
         "message": "配置更新成功",
-        "config": {
-            "dify_key": "app-x*****",
-            "ragflow_key": "ragfl*****"
-        }
+        "config": { ... }
     }
     """
     try:
-        updates = {}
+        config_updates = {}
         
-        # 準備要更新的變數
+        # 準備要更新的配置
         if request.dify_key:
-            updates['DIFY_API_KEY'] = request.dify_key
-            logger.info("準備更新 DIFY_API_KEY")
+            config_updates['dify_api_key'] = request.dify_key
+            logger.info("準備更新 dify_api_key")
         
         if request.ragflow_key:
-            updates['RAGFLOW_API_KEY'] = request.ragflow_key
-            logger.info("準備更新 RAGFLOW_API_KEY")
+            config_updates['ragflow_api_key'] = request.ragflow_key
+            logger.info("準備更新 ragflow_api_key")
         
-        if not updates:
+        if request.dify_api_url:
+            config_updates['dify_api_url'] = request.dify_api_url
+            logger.info(f"準備更新 dify_api_url: {request.dify_api_url}")
+        
+        if request.ragflow_api_url:
+            config_updates['ragflow_api_url'] = request.ragflow_api_url
+            logger.info(f"準備更新 ragflow_api_url: {request.ragflow_api_url}")
+        
+        if not config_updates:
             raise HTTPException(
                 status_code=400, 
-                detail="至少需要提供一個 API Key (dify_key 或 ragflow_key)"
+                detail="至少需要提供一個設定項目"
             )
         
-        # 更新 .env 檔案
-        if not update_env_file(updates):
-            raise HTTPException(status_code=500, detail="更新 .env 檔案失敗")
+        # 保存到 config.json
+        success = save_config_to_file(config_updates)
         
-        # 嘗試即時生效（重新載入環境變數）
-        reload_env_to_os()
+        if not success:
+            raise HTTPException(status_code=500, detail="更新配置檔案失敗")
         
-        # 返回更新結果（遮蔽後的 Key）
+        # 準備回應配置（返回完整 API Key，不遮罩）
         response_config = {}
         if request.dify_key:
-            response_config['dify_key'] = mask_api_key(request.dify_key)
+            response_config['dify_key'] = request.dify_key
         if request.ragflow_key:
-            response_config['ragflow_key'] = mask_api_key(request.ragflow_key)
+            response_config['ragflow_key'] = request.ragflow_key
+        if request.dify_api_url:
+            response_config['dify_api_url'] = request.dify_api_url
+        if request.ragflow_api_url:
+            response_config['ragflow_api_url'] = request.ragflow_api_url
         
         return ConfigResponse(
             success=True,
-            message="配置更新成功。提示: 部分服務可能需要重啟才能完全生效",
+            message="✅ 配置已保存到 config.json！修改將立即生效",
             config=response_config
         )
     
@@ -268,3 +280,267 @@ async def get_env_file_location():
     except Exception as e:
         logger.error(f"獲取 .env 檔案資訊失敗: {e}")
         raise HTTPException(status_code=500, detail=f"獲取檔案資訊失敗: {str(e)}")
+
+
+@router.post("/test-connection")
+async def test_connection():
+    """
+    測試 Dify 和 RAGFlow 服務連接
+    
+    返回格式:
+    {
+        "success": true,
+        "dify": {
+            "status": "ok" | "error",
+            "url": "http://localhost:80/v1",
+            "message": "連接成功" | "錯誤訊息",
+            "api_key_configured": true
+        },
+        "ragflow": {
+            "status": "ok" | "error",
+            "url": "http://localhost:81/api/v1",
+            "message": "連接成功" | "錯誤訊息",
+            "api_key_configured": true
+        }
+    }
+    """
+    from backend.core.config import get_current_api_keys
+    import httpx
+    
+    api_keys = get_current_api_keys()
+    results = {
+        "success": True,
+        "dify": {
+            "status": "unknown",
+            "url": api_keys['DIFY_API_URL'],
+            "message": "",
+            "api_key_configured": bool(api_keys['DIFY_API_KEY'])
+        },
+        "ragflow": {
+            "status": "unknown",
+            "url": api_keys['RAGFLOW_API_URL'],
+            "message": "",
+            "api_key_configured": bool(api_keys['RAGFLOW_API_KEY'])
+        }
+    }
+    
+    # 測試 Dify 連接
+    try:
+        if not api_keys['DIFY_API_KEY']:
+            results['dify']['status'] = 'warning'
+            results['dify']['message'] = '❌ API Key 未配置'
+        else:
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                # 簡單測試 Dify API 是否可訪問
+                response = await client.get(
+                    api_keys['DIFY_API_URL'],
+                    headers={"Authorization": f"Bearer {api_keys['DIFY_API_KEY']}"}
+                )
+                # 任何有效的 HTTP 響應都表示服務在運行
+                # 401/404 都是正常的（服務運行但端點/權限問題）
+                if response.status_code in [200, 401, 404, 422]:
+                    results['dify']['status'] = 'ok'
+                    results['dify']['message'] = '✅ 連接成功'
+                elif response.status_code == 403:
+                    results['dify']['status'] = 'error'
+                    results['dify']['message'] = '❌ API Key 無權限'
+                else:
+                    results['dify']['status'] = 'error'
+                    results['dify']['message'] = f'❌ 服務錯誤 ({response.status_code})'
+    except httpx.ConnectError:
+        results['dify']['status'] = 'error'
+        results['dify']['message'] = f'❌ 無法連接到 {api_keys["DIFY_API_URL"]} - 請確認服務已啟動'
+    except httpx.TimeoutException:
+        results['dify']['status'] = 'error'
+        results['dify']['message'] = '❌ 連接超時'
+    except Exception as e:
+        results['dify']['status'] = 'error'
+        results['dify']['message'] = f'❌ {str(e)}'
+    
+    # 測試 RAGFlow 連接
+    try:
+        if not api_keys['RAGFLOW_API_KEY']:
+            results['ragflow']['status'] = 'warning'
+            results['ragflow']['message'] = '❌ API Key 未配置'
+        else:
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                # 測試 RAGFlow datasets 端點
+                response = await client.get(
+                    f"{api_keys['RAGFLOW_API_URL'].rstrip('/')}/datasets",
+                    headers={"Authorization": f"Bearer {api_keys['RAGFLOW_API_KEY']}"}
+                )
+                if response.status_code == 200:
+                    results['ragflow']['status'] = 'ok'
+                    data = response.json()
+                    # 安全地獲取數據集數量
+                    datasets = data.get('data', [])
+                    if isinstance(datasets, list):
+                        dataset_count = len(datasets)
+                        results['ragflow']['message'] = f'✅ 連接成功（找到 {dataset_count} 個知識庫）'
+                    else:
+                        results['ragflow']['message'] = '✅ 連接成功'
+                elif response.status_code == 401:
+                    results['ragflow']['status'] = 'error'
+                    results['ragflow']['message'] = '❌ API Key 無效或已過期'
+                else:
+                    results['ragflow']['status'] = 'error'
+                    results['ragflow']['message'] = f'❌ 服務錯誤 ({response.status_code})'
+    except httpx.ConnectError:
+        results['ragflow']['status'] = 'error'
+        results['ragflow']['message'] = f'❌ 無法連接到 {api_keys["RAGFLOW_API_URL"]} - 請確認服務已啟動'
+    except httpx.TimeoutException:
+        results['ragflow']['status'] = 'error'
+        results['ragflow']['message'] = '❌ 連接超時'
+    except Exception as e:
+        results['ragflow']['status'] = 'error'
+        results['ragflow']['message'] = f'❌ {str(e)}'
+    
+    # 判斷整體狀態
+    if results['dify']['status'] == 'error' or results['ragflow']['status'] == 'error':
+        results['success'] = False
+    
+    return results
+
+
+@router.post("/upload")
+async def upload_file(
+    file: UploadFile = File(...),
+    graph_id: str = Form("1"),
+    graph_mode: str = Form("existing"),
+    graph_name: str = Form(None),
+    enable_ai_link: str = Form("false"),
+    ragflow_dataset_id: str = Form(None)
+):
+    """
+    上傳檔案到監控資料夾，自動觸發 WatcherService 處理
+    
+    Args:
+        file: 上傳的檔案
+        graph_id: 目標圖譜 ID (預設為 "1" 主腦圖譜)
+        graph_mode: 圖譜模式 ("new" 或 "existing")
+        graph_name: 新圖譜名稱 (當 graph_mode="new" 時使用)
+        enable_ai_link: 是否啟用 AI 智能連線 ("true" 或 "false")
+        ragflow_dataset_id: RAGFlow 知識庫 ID (當 enable_ai_link="true" 時使用)
+    
+    Returns:
+        上傳結果資訊
+    """
+    try:
+        ai_enabled = enable_ai_link.lower() == "true"
+        logger.info(f"收到文件上傳請求: {file.filename}, graph_mode={graph_mode}, graph_id={graph_id}")
+        
+        # 檔案大小限制檢查
+        content = await file.read()
+        if len(content) > settings.MAX_UPLOAD_SIZE:
+            max_mb = settings.MAX_UPLOAD_SIZE // (1024 * 1024)
+            raise HTTPException(
+                status_code=413,
+                detail=f"檔案大小超過限制（最大 {max_mb} MB）"
+            )
+        
+        # 使用監控資料夾作為上傳目錄（跨平台路徑）
+        upload_dir = Path(settings.AUTO_IMPORT_DIR)
+        
+        # 確保上傳目錄存在
+        upload_dir.mkdir(parents=True, exist_ok=True)
+        
+        # 檢查檔案名稱
+        if not file.filename:
+            raise HTTPException(status_code=400, detail="檔案名稱不能為空")
+        
+        # 清洗檔案名稱，防止路徑遍歷攻擊
+        import re
+        safe_filename = re.sub(r'[\\/:*?"<>|]', '_', Path(file.filename).name)
+        if safe_filename.startswith('.'):
+            safe_filename = '_' + safe_filename
+        
+        # 生成檔案路徑
+        file_path = upload_dir / safe_filename
+        
+        # 如果檔案已存在，添加時間戳
+        if file_path.exists():
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            file_stem = file_path.stem
+            file_suffix = file_path.suffix
+            file_path = upload_dir / f"{file_stem}_{timestamp}{file_suffix}"
+        
+        # 儲存檔案（已讀取到 content）
+        with open(file_path, "wb") as buffer:
+            buffer.write(content)
+        
+        # 如果啟用 AI 處理，先上傳到 RAGFlow
+        ragflow_result = None
+        if ai_enabled and ragflow_dataset_id:
+            try:
+                logger.info(f"🤖 正在上傳到 RAGFlow 知識庫: {ragflow_dataset_id}")
+                from backend.rag_client import RAGFlowClient
+                from backend.core.config import get_current_api_keys
+                
+                # 動態獲取當前 API Keys
+                api_keys = get_current_api_keys()
+                
+                # 檢查 API Key 是否配置
+                if not api_keys['RAGFLOW_API_KEY']:
+                    logger.warning("⚠️ RAGFlow API Key 未配置，跳過 RAGFlow 上傳")
+                else:
+                    # 修正 base_url，確保最終為 http://localhost:81/api/v1/document/upload
+                    # 只去除最後的 /v1，保留 /api
+                    ragflow_api_url = api_keys['RAGFLOW_API_URL']
+                    if ragflow_api_url.endswith('/v1'):
+                        base_url = ragflow_api_url[:-3]  # 去除 /v1
+                    else:
+                        base_url = ragflow_api_url
+                    rag_client = RAGFlowClient(
+                        api_key=api_keys['RAGFLOW_API_KEY'],
+                        base_url=base_url
+                    )
+                    
+                    # 上傳到 RAGFlow
+                    ragflow_result = rag_client.upload_file(
+                        dataset_id=ragflow_dataset_id,
+                        file_path=str(file_path)
+                    )
+                    logger.info(f"✅ RAGFlow 上傳成功: {ragflow_result}")
+            except Exception as e:
+                logger.warning(f"⚠️ RAGFlow 上傳失敗（繼續處理）: {e}")
+        
+        # 保存圖譜元數據到文件的擴展屬性（供 WatcherService 使用）
+        metadata_file = file_path.with_suffix(file_path.suffix + '.meta.json')
+        metadata = {
+            "graph_id": graph_id,
+            "graph_mode": graph_mode,
+            "graph_name": graph_name,
+            "upload_time": datetime.now().isoformat(),
+            "ai_enabled": ai_enabled,
+            "ragflow_dataset_id": ragflow_dataset_id if ai_enabled else None,
+            "ragflow_result": ragflow_result
+        }
+        
+        import json
+        with open(metadata_file, 'w', encoding='utf-8') as f:
+            json.dump(metadata, f, ensure_ascii=False, indent=2)
+        
+        logger.info(f"✅ 檔案上傳成功，已進入監控佇列: {file_path}")
+        logger.info(f"📋 圖譜元數據已保存: {metadata}")
+        
+        message = "檔案已送入神經網路，正在解析中..."
+        if ai_enabled:
+            if ragflow_result:
+                message = "✨ 檔案已上傳到 RAGFlow 並送入神經網路，正在 AI 分析中..."
+            else:
+                message = "⚠️ 檔案已送入神經網路（RAGFlow 上傳失敗），正在解析中..."
+        
+        return {
+            "success": True,
+            "message": message,
+            "filename": file.filename,
+            "saved_path": str(file_path),
+            "size": os.path.getsize(file_path),
+            "upload_time": datetime.now().isoformat(),
+            "ai_enabled": ai_enabled,
+            "ragflow_processed": ragflow_result is not None
+        }
+        
+    except Exception as e:
+        logger.error(f"❌ 檔案上傳失敗: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"檔案上傳失敗: {str(e)}")

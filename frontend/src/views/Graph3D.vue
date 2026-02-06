@@ -1,7 +1,6 @@
 <template>
   <div 
     class="graph-3d-container"
-    :class="layoutStore.theme === 'dark' ? 'dark-theme' : 'light-theme'"
   >
     <!-- 3D 圖表容器 -->
     <div ref="graphContainer" class="graph-canvas"></div>
@@ -29,13 +28,12 @@ let breathingInterval = null; // 呼吸燈動畫定時器
 
 // 主題相關計算屬性
 const backgroundColor = computed(() => {
-  return layoutStore.theme === 'dark' ? '#0a0a15' : '#F5F7F9';
+  return '#0a0e27';
 });
 
 const linkColor = computed(() => {
-  // 深色模式：使用更亮的青藍色，透明度 0.85（與 2D 統一）
-  // 淺色模式：保持原樣的淡黑色
-  return layoutStore.theme === 'dark' ? 'rgba(120, 200, 255, 0.85)' : 'rgba(0, 0, 0, 0.2)';
+  // 強制使用白色作為一般連接線的顏色（不論深色或淺色模式）
+  return 'rgba(255, 255, 255, 0.8)';
 });
 
 // 重要: 不要將 graph 實例放在 ref 中，避免 Vue Proxy
@@ -159,20 +157,15 @@ watch(
   }
 );
 
-// API 基礎 URL
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
-
-// 從後端 API 加載真實數據
+// 從 Store 加載數據（已經統一使用 Store 的 fetchGraphData）
 const loadGraphDataFromAPI = async () => {
   try {
-    const response = await fetch(`${API_BASE_URL}/api/graph/data`);
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-    }
+    console.log('� [Graph3D] 使用 Store.fetchGraphData() 刷新數據');
     
-    const result = await response.json();
+    // 🌟 每次都重新加載以確保數據同步
+    const result = await graphStore.fetchGraphData(graphStore.currentGraphId);
     
-    if (result.success && result.data) {
+    if (result && result.nodes) {
       // 根據 group 設置顏色
       const colorMap = {
         1: '#3b82f6',  // Person - 藍色
@@ -181,7 +174,7 @@ const loadGraphDataFromAPI = async () => {
       };
       
       // 處理節點數據
-      result.data.nodes.forEach(node => {
+      result.nodes.forEach(node => {
         node.color = colorMap[node.group] || '#f59e0b';
         // 確保有 connections 屬性
         if (!node.connections) {
@@ -190,14 +183,14 @@ const loadGraphDataFromAPI = async () => {
       });
       
       // 統計每個節點的連結數
-      result.data.links.forEach(link => {
-        const sourceNode = result.data.nodes.find(n => n.id === link.source);
-        const targetNode = result.data.nodes.find(n => n.id === link.target);
+      result.links.forEach(link => {
+        const sourceNode = result.nodes.find(n => n.id === link.source);
+        const targetNode = result.nodes.find(n => n.id === link.target);
         if (sourceNode) sourceNode.connections++;
         if (targetNode) targetNode.connections++;
       });
       
-      return result.data;
+      return result;
     }
     
     throw new Error('API 返回數據格式錯誤');
@@ -252,7 +245,7 @@ const initGraph = async () => {
   
   // 確保有數據
   if (graphStore.nodes.length === 0) {
-    await graphStore.fetchGraphData();
+    await graphStore.fetchGraphData(graphStore.currentGraphId);
   }
   
   // 使用深拷貝斷開 Vue Proxy
@@ -273,20 +266,18 @@ const initGraph = async () => {
     .nodeLabel('name')
     .nodeColor(node => node.color || '#448aff')
     .nodeVal(node => node.size || 10)
+    
     // 🎨 根據連接類型設置顏色
     .linkColor(link => {
-      if (link.type === 'ai-link') {
-        return link.style?.color || '#fbbf24';  // AI Link 金色
-      }
-      return linkColor.value;  // 普通連接
-    })
-    // 🎨 根據連接類型設置寬度（已優化：線條更粗）
+    // 這裡設定顏色 (白色)
+    if (graphStore.highlightLinks.has(link)) return '#ff0000'; 
+    return 'rgba(255, 255, 255, 0.6)'; 
+    })  // <--- 注意這裡不能有分號 ;
     .linkWidth(link => {
-      if (link.type === 'ai-link') {
-        return link.style?.width || 4;  // AI 連線：4px
-      }
-      return 5;  // 普通連線：5px（更明顯）
+    // 這裡設定粗細 (被選中變粗)
+    return graphStore.highlightLinks.has(link) ? 1.5 : 0.5;
     })
+
     // 🎨 根據連接類型設置透明度
     .linkOpacity(link => {
       if (link.type === 'ai-link') {
@@ -425,8 +416,8 @@ const initGraph = async () => {
   
   // 4. 半球光（天空和地面的顏色漸變）
   const hemisphereLight = new THREE.HemisphereLight(
-    layoutStore.theme === 'dark' ? 0x4466ff : 0xffffee,  // 天空顏色
-    layoutStore.theme === 'dark' ? 0x080820 : 0x444444,  // 地面顏色
+    0x4466ff,  // 天空顏色
+    0x080820,  // 地面顏色
     0.5
   );
   scene.add(hemisphereLight);
@@ -598,7 +589,7 @@ const resetCamera = () => {
 // 重新生成圖表 (改用 Store 數據)
 const generateNewGraph = async () => {
   if (graphStore) {
-    await graphStore.fetchGraphData();
+    await graphStore.fetchGraphData(graphStore.currentGraphId);
   }
   selectedNode.value = null;
 };
@@ -760,15 +751,7 @@ onUnmounted(() => {
   height: 100%;
   position: relative;
   overflow: hidden;
-  transition: background 0.3s ease;
-}
-
-.graph-3d-container.dark-theme {
-  background: linear-gradient(135deg, #0a0a15 0%, #1a1a2e 100%);
-}
-
-.graph-3d-container.light-theme {
-  background: linear-gradient(135deg, #F5F7F9 0%, #E8EEF2 100%);
+  background: #0a0e27;
 }
 
 .graph-canvas {

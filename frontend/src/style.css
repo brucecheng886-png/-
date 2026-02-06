@@ -10,51 +10,51 @@
   box-sizing: border-box;
 }
 
-/* ===== 根元素樣式 (Anytype Space Architecture) ===== */
+/* ===== 根元素樣式 (Nexus Universe Architecture) ===== */
 :root {
-  /* Anytype 主題色彩 */
-  --primary-blue: #335eea;          /* Anytype Blue - 主要強調色 */
-  --accent-orange: #ff8e3c;         /* Anytype Orange - 數據/圖表 */
-  --success-green: #00c2a8;         /* 成功狀態 */
-  --warning-yellow: #ffc107;        /* 警告 */
-  --danger-red: #ff5c5c;            /* 錯誤 */
+  /* Nexus 主題色彩 */
+  --primary-blue: #3b82f6;            /* Nexus Blue - 主要強調色 */
+  --accent-orange: #ff8e3c;           /* 數據/圖表 */
+  --success-green: #10b981;           /* 成功狀態 */
+  --warning-yellow: #f59e0b;          /* 警告 */
+  --danger-red: #ef4444;              /* 錯誤 */
   
-  /* 語意化顏色變數 (深色模式 Dark - 預設) */
-  --bg-main: #0f0f0f;               /* 主背景 (深空黑) - 更深，更純淨 */
-  --bg-surface: #1a1a1a;            /* 面板表面 (極夜黑) - 提高一級 */
-  --bg-elevated: #252525;           /* 懸浮元素 - 更明顯的層次 */
-  --border-color: #2a2a2a;          /* 邊框 (極細灰) - 提高可見度 */
-  --text-primary: #f5f5f5;          /* 主要文字 (灰白) - 對比度 15.8:1 */
-  --text-secondary: #a0a0a0;        /* 次要文字 (暗灰) - 對比度 7.5:1 */
-  --text-tertiary: #707070;         /* 輔助文字 (深灰) - 對比度 4.5:1 */
+  /* 語意化顏色變數 (Nexus 深藍主題 - 固定) */
+  --bg-main: #0c1029;                 /* 主背景 (深空藍) */
+  --bg-surface: #1a1d3a;              /* 面板表面 */
+  --bg-elevated: #252847;             /* 懸浮元素 */
+  --border-color: #2d3154;            /* 邊框 */
+  --text-primary: #e5e5e5;            /* 主要文字 */
+  --text-secondary: #9ca3af;          /* 次要文字 */
+  --text-tertiary: #6b7280;           /* 輔助文字 */
   
-  /* Void Black 背景系統 (保留向後兼容) */
-  --bg-void: #0a0a0a;               /* 純黑底 (最深層) */
-  --bg-primary: var(--bg-main);     /* 映射到語意化變數 */
-  --bg-hover: #303030;              /* Hover 狀態 - 提高可見度 */
+  /* Nexus 背景系統 */
+  --bg-void: #0a0e27;                 /* 最深層背景 */
+  --bg-primary: var(--bg-main);
+  --bg-hover: #2d3154;                /* Hover 狀態 */
   
-  /* Swiss Typography 文字色 (保留向後相容) */
-  --text-disabled: #505050;         /* 禁用文字 - 提高可識別度 */
+  /* 文字色 */
+  --text-disabled: #4b5563;
   
-  /* Minimal Borders (保留向後兼容) */
+  /* Borders */
   --border-primary: var(--border-color);
-  --border-subtle: #252525;         /* 更細微的分隔線 - 增強可見度 */
-  --border-focus: #4a7bff;          /* 焦點邊框 - 更鮮明 */
+  --border-subtle: #1f2337;
+  --border-focus: #3b82f6;
   
-  /* Matte Shadow (啞光陰影) - 業界標準優化 */
-  --shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.45);
-  --shadow-md: 0 4px 20px rgba(0, 0, 0, 0.55);
-  --shadow-lg: 0 8px 40px rgba(0, 0, 0, 0.65);     /* 懸浮感 */
-  --shadow-xl: 0 12px 60px rgba(0, 0, 0, 0.75);
+  /* Nexus Shadow (霓虹陰影) */
+  --shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.5);
+  --shadow-md: 0 4px 20px rgba(0, 0, 0, 0.6);
+  --shadow-lg: 0 8px 40px rgba(0, 0, 0, 0.7);
+  --shadow-xl: 0 12px 60px rgba(0, 0, 0, 0.8);
   
-  /* 圓角 (保持現代感) */
+  /* 圓角 */
   --radius-sm: 8px;
   --radius-md: 12px;
   --radius-lg: 16px;
   --radius-xl: 24px;
   --radius-2xl: 32px;
   
-  /* 間距 (瑞士網格) */
+  /* 間距 */
   --spacing-xs: 4px;
   --spacing-sm: 8px;
   --spacing-md: 16px;
@@ -63,33 +63,7 @@
   --spacing-2xl: 48px;
 }
 
-/* ===== 淺色模式 (Light Mode - Anytype Paper White) ===== */
-html.light {
-  /* 語意化顏色變數 (淺色模式覆蓋) */
-  --bg-main: #ffffff;               /* 純白 (主背景) */
-  --bg-surface: #f8f9fa;            /* 淺灰 (面板表面) - 更柔和 */
-  --bg-elevated: #ffffff;           /* 懸浮元素 - 純白層次 */
-  --border-color: #e0e0e0;          /* 極淺灰 (邊框) - 提高可見度 */
-  --text-primary: #1a1a1a;          /* 深灰黑 (主要文字) - 對比度 16.1:1 */
-  --text-secondary: #666666;        /* 中灰 (次要文字) - 對比度 7.0:1 */
-  --text-tertiary: #999999;         /* 輔助文字 - 對比度 4.5:1 */
-  
-  /* 向後兼容變數覆蓋 */
-  --bg-void: #fafafa;               /* 極淺灰底 */
-  --bg-primary: var(--bg-main);     /* 映射 */
-  --bg-hover: #f0f0f0;              /* Hover 狀態 - 明顯回饋 */
-  
-  --text-disabled: #c0c0c0;         /* 禁用文字 */
-  
-  --border-primary: var(--border-color);
-  --border-subtle: #ebebeb;         /* 更細微的分隔線 - 增強可見度 */
-  
-  /* 淺色模式陰影 - 業界標準優化 (Material Design 參考) */
-  --shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.08);
-  --shadow-md: 0 4px 20px rgba(0, 0, 0, 0.12);
-  --shadow-lg: 0 8px 40px rgba(0, 0, 0, 0.15);
-  --shadow-xl: 0 12px 60px rgba(0, 0, 0, 0.18);
-}
+/* ===== 淺色模式已停用 (Nexus 固定深色主題) ===== */
 
 /* ===== HTML & Body ===== */
 html {
@@ -104,11 +78,11 @@ body {
   font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 
                'Oxygen', 'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 
                'Helvetica Neue', sans-serif;
-  background: var(--bg-primary);           /* 純色深空黑，無漸層 */
+  background: #0a0e27;                    /* Nexus 深藍背景 */
   color: var(--text-primary);
   overflow-x: hidden;
-  font-weight: 400;                        /* Swiss Typography 標準字重 */
-  letter-spacing: -0.01em;                 /* 緊湊字距 */
+  font-weight: 400;
+  letter-spacing: -0.01em;
 }
 
 /* ===== App 容器 ===== */
@@ -537,4 +511,51 @@ img {
   font-weight: 600;
   color: var(--accent-orange);
   letter-spacing: -0.02em;
+}
+
+/* ===== 全域滾動條樣式 ===== */
+/* 通用滾動條 class（用於需要自定義滾動的容器） */
+.custom-scrollbar {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(139, 92, 246, 0.6) rgba(255, 255, 255, 0.05);
+}
+
+/* Webkit 瀏覽器滾動條（Chrome, Safari, Edge） */
+.custom-scrollbar::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 5px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: linear-gradient(180deg, #3b82f6, #8b5cf6);
+  border-radius: 5px;
+  transition: all 0.3s ease;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: linear-gradient(180deg, #2563eb, #7c3aed);
+  box-shadow: 0 0 8px rgba(139, 92, 246, 0.5);
+}
+
+/* 淺色模式滾動條 */
+html.light .custom-scrollbar {
+  scrollbar-color: rgba(139, 92, 246, 0.4) rgba(0, 0, 0, 0.05);
+}
+
+html.light .custom-scrollbar::-webkit-scrollbar-track {
+  background: rgba(0, 0, 0, 0.05);
+}
+
+html.light .custom-scrollbar::-webkit-scrollbar-thumb {
+  background: linear-gradient(180deg, #60a5fa, #a78bfa);
+}
+
+html.light .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: linear-gradient(180deg, #3b82f6, #8b5cf6);
+  box-shadow: 0 0 8px rgba(139, 92, 246, 0.3);
 }

@@ -6,12 +6,22 @@ from pydantic import BaseModel
 from typing import Dict, Any, Optional
 import httpx
 import logging
+import os
 
-from backend.core.config import settings
+from backend.core.config import settings, get_current_api_keys
 from backend.services.agent_service import agent_service
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+
+def get_dify_config():
+    """動態獲取 Dify 配置"""
+    api_keys = get_current_api_keys()
+    return {
+        'api_key': api_keys['DIFY_API_KEY'],
+        'api_url': api_keys['DIFY_API_URL']
+    }
 
 
 class DifyRequest(BaseModel):
@@ -38,12 +48,14 @@ class WorkflowRequest(BaseModel):
 @router.post("/chat")
 async def chat_with_dify(request: DifyRequest):
     """與 Dify 對話"""
+    config = get_dify_config()
+    
     try:
         async with httpx.AsyncClient(timeout=settings.REQUEST_TIMEOUT) as client:
             response = await client.post(
-                f"{settings.DIFY_API_URL}/chat-messages",
+                f"{config['api_url']}/chat-messages",
                 headers={
-                    "Authorization": f"Bearer {settings.DIFY_API_KEY}",
+                    "Authorization": f"Bearer {config['api_key']}",
                     "Content-Type": "application/json"
                 },
                 json={
@@ -61,7 +73,7 @@ async def chat_with_dify(request: DifyRequest):
         logger.error(f"Dify 連線失敗: {e}")
         raise HTTPException(
             status_code=503,
-            detail=f"無法連接到 Dify API ({settings.DIFY_API_URL})。請確認 Docker 容器已啟動 (docker compose up -d)"
+            detail=f"無法連接到 Dify API ({config['api_url']})。請確認 Docker 容器已啟動 (docker compose up -d)"
         )
     
     except httpx.HTTPStatusError as e:
@@ -96,12 +108,14 @@ async def chat_with_dify(request: DifyRequest):
 @router.post("/workflow/run")
 async def run_workflow(request: WorkflowRequest):
     """執行 Dify Workflow"""
+    config = get_dify_config()
+    
     try:
         async with httpx.AsyncClient(timeout=settings.REQUEST_TIMEOUT) as client:
             response = await client.post(
-                f"{settings.DIFY_API_URL}/workflows/run",
+                f"{config['api_url']}/workflows/run",
                 headers={
-                    "Authorization": f"Bearer {settings.DIFY_API_KEY}",
+                    "Authorization": f"Bearer {config['api_key']}",
                     "Content-Type": "application/json"
                 },
                 json={
@@ -120,11 +134,13 @@ async def run_workflow(request: WorkflowRequest):
 @router.get("/conversations/{conversation_id}")
 async def get_conversation(conversation_id: str):
     """獲取對話歷史"""
+    config = get_dify_config()
+    
     try:
         async with httpx.AsyncClient(timeout=settings.REQUEST_TIMEOUT) as client:
             response = await client.get(
-                f"{settings.DIFY_API_URL}/conversations/{conversation_id}",
-                headers={"Authorization": f"Bearer {settings.DIFY_API_KEY}"}
+                f"{config['api_url']}/conversations/{conversation_id}",
+                headers={"Authorization": f"Bearer {config['api_key']}"}
             )
             response.raise_for_status()
             return response.json()
@@ -136,11 +152,13 @@ async def get_conversation(conversation_id: str):
 @router.get("/messages")
 async def get_messages(conversation_id: str, limit: int = 20):
     """獲取消息列表"""
+    config = get_dify_config()
+    
     try:
         async with httpx.AsyncClient(timeout=settings.REQUEST_TIMEOUT) as client:
             response = await client.get(
-                f"{settings.DIFY_API_URL}/messages",
-                headers={"Authorization": f"Bearer {settings.DIFY_API_KEY}"},
+                f"{config['api_url']}/messages",
+                headers={"Authorization": f"Bearer {config['api_key']}"},
                 params={"conversation_id": conversation_id, "limit": limit}
             )
             response.raise_for_status()

@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia';
 import { ref, computed } from 'vue';
 import crossGraphData from '../data/crossGraphTestData.js';
+import graphDataManager from '../services/GraphDataManager.js';
 
 /**
  * Graph Store - 圖譜數據管理
@@ -68,10 +69,10 @@ export const useGraphStore = defineStore('graph', () => {
   const filterMode = ref('all');
   
   /**
-   * 跨圖譜功能 - 圖譜元數據列表
+   * 跨圖譜功能 - 圖譜元數據列表（從後端 API 加載）
    * @type {import('vue').Ref<Array<Object>>}
    */
-  const graphMetadataList = ref(JSON.parse(localStorage.getItem('graphMetadataList') || '[]'));
+  const graphMetadataList = ref([]);
   
   /**
    * 跨圖譜功能 - AI Link 連接列表
@@ -96,6 +97,25 @@ export const useGraphStore = defineStore('graph', () => {
    * @type {import('vue').Ref<Array<Object>>}
    */
   const importedFiles = ref([]);
+  
+  /**
+   * 當前選中的圖譜 ID
+   * @type {import('vue').Ref<number|string>}
+   */
+  const currentGraphId = ref(1);
+  
+  // ===== 初始化：加載圖譜列表（使用 Manager）=====
+  const loadGraphMetadataList = async (options = {}) => {
+    try {
+      const graphs = await graphDataManager.loadMetadataList(options);
+      graphMetadataList.value = graphs;
+      console.log(`✅ [Store] 圖譜列表已加載: ${graphs.length} 個`);
+      return graphs;
+    } catch (error) {
+      console.error('❌ [Store] 加載圖譜列表失敗:', error);
+      throw error;
+    }
+  };
   
   // ===== Computed =====
   
@@ -227,339 +247,66 @@ export const useGraphStore = defineStore('graph', () => {
   // ===== Actions =====
   
   /**
-   * 獲取圖譜數據 (目前使用 Mock Data)
-   * 未來可替換為實際 API 調用
-   * @param {number} graphId - 圖譜 ID (1: 主腦圖譜, 2: 開發筆記, 3: 私人日記)
+   * 獲取圖譜數據（使用 Manager - 自動去重和緩存）
+   * @param {number} graphId - 圖譜 ID (1: 主腦圖譜, 其他: 用戶圖譜)
+   * @param {Object} options - 選項
+   * @param {boolean} options.forceRefresh - 強制刷新（忽略緩存）
    */
-  const fetchGraphData = async (graphId = 1) => {
+  const fetchGraphData = async (graphId = 1, options = {}) => {
     loading.value = true;
     error.value = null;
     
     try {
-      // 模擬 API 延遲
-      await new Promise(resolve => setTimeout(resolve, 500));
+      // 更新當前圖譜 ID
+      currentGraphId.value = graphId;
       
-      console.log(`🔄 正在載入圖譜 ID: ${graphId}`);
+      console.log(`🔄 [Store] 加載圖譜數據: ${graphId}`);
       
-      // ===== Mock Data 字典 (根據 graphId 載入不同數據集) =====
-      const mockDataSets = {
-        // ID 1: 主腦圖譜 (50+ 節點 - 龐大複雜的第二大腦)
-        1: {
-          name: '主腦圖譜',
-          nodes: [
-            // === AI 群組 (藍色系) ===
-            { id: 'ai-1', name: 'GPT-4', type: '概念', group: 1, color: '#448aff', size: 32, description: 'OpenAI 旗艦大模型' },
-            { id: 'ai-2', name: 'Claude 3.5', type: '概念', group: 1, color: '#448aff', size: 30, description: 'Anthropic 對話模型' },
-            { id: 'ai-3', name: 'LangChain', type: '工具', group: 1, color: '#5a9eff', size: 28, description: 'LLM 應用開發框架' },
-            { id: 'ai-4', name: 'RAG 架構', type: '概念', group: 1, color: '#448aff', size: 30, description: '檢索增強生成' },
-            { id: 'ai-5', name: 'Vector DB', type: '工具', group: 1, color: '#5a9eff', size: 26, description: 'FAISS/Milvus 向量數據庫' },
-            { id: 'ai-6', name: 'Prompt 工程', type: '概念', group: 1, color: '#448aff', size: 24, description: '提示詞設計技巧' },
-            { id: 'ai-7', name: 'Fine-tuning', type: '概念', group: 1, color: '#448aff', size: 22, description: '模型微調' },
-            { id: 'ai-8', name: 'Agent 系統', type: '概念', group: 1, color: '#448aff', size: 28, description: 'AutoGPT/BabyAGI' },
-            { id: 'ai-9', name: '多模態', type: '概念', group: 1, color: '#448aff', size: 26, description: '圖文音視頻理解' },
-            { id: 'ai-10', name: 'Embedding', type: '概念', group: 1, color: '#448aff', size: 24, description: '文本向量化' },
-            
-            // === Coding 群組 (綠色系) ===
-            { id: 'code-1', name: 'Vue 3', type: '工具', group: 2, color: '#4caf50', size: 30, description: '前端框架 Composition API' },
-            { id: 'code-2', name: 'React', type: '工具', group: 2, color: '#4caf50', size: 28, description: 'Facebook 前端庫' },
-            { id: 'code-3', name: 'Python', type: '工具', group: 2, color: '#4caf50', size: 32, description: '後端開發語言' },
-            { id: 'code-4', name: 'FastAPI', type: '工具', group: 2, color: '#4caf50', size: 28, description: '現代化 Web 框架' },
-            { id: 'code-5', name: 'TypeScript', type: '工具', group: 2, color: '#4caf50', size: 26, description: 'JS 超集語言' },
-            { id: 'code-6', name: 'Docker', type: '工具', group: 2, color: '#4caf50', size: 30, description: '容器化技術' },
-            { id: 'code-7', name: 'Git', type: '工具', group: 2, color: '#4caf50', size: 28, description: '版本控制' },
-            { id: 'code-8', name: 'PostgreSQL', type: '工具', group: 2, color: '#4caf50', size: 26, description: '關係型數據庫' },
-            { id: 'code-9', name: 'Redis', type: '工具', group: 2, color: '#4caf50', size: 24, description: '緩存數據庫' },
-            { id: 'code-10', name: 'Nginx', type: '工具', group: 2, color: '#4caf50', size: 22, description: '反向代理' },
-            
-            // === Life 群組 (橘色系) ===
-            { id: 'life-1', name: '晨間儀式', type: '習慣', group: 3, color: '#ff8b38', size: 26, description: '冥想+運動+規劃' },
-            { id: 'life-2', name: '番茄工作法', type: '方法', group: 3, color: '#ff8b38', size: 24, description: '25分鐘專注時段' },
-            { id: 'life-3', name: 'GTD', type: '方法', group: 3, color: '#ff8b38', size: 26, description: 'Getting Things Done' },
-            { id: 'life-4', name: '閱讀清單', type: '文件', group: 3, color: '#ff8b38', size: 22, description: '待讀書籍列表' },
-            { id: 'life-5', name: '健身計劃', type: '任務', group: 3, color: '#ff8b38', size: 20, description: '每週3次訓練' },
-            { id: 'life-6', name: '學習筆記', type: '文件', group: 3, color: '#ff8b38', size: 24, description: 'Obsidian 知識庫' },
-            { id: 'life-7', name: '旅行規劃', type: '任務', group: 3, color: '#ff8b38', size: 18, description: '2026 旅遊目標' },
-            { id: 'life-8', name: '財務管理', type: '文件', group: 3, color: '#ff8b38', size: 22, description: '收支記錄' },
-            
-            // === Projects 群組 (紫色系) ===
-            { id: 'proj-1', name: 'BruV Platform', type: '任務', group: 4, color: '#ab47bc', size: 35, description: '企業級 AI 平台' },
-            { id: 'proj-2', name: 'Dify 整合', type: '任務', group: 4, color: '#ab47bc', size: 28, description: 'LLMOps 集成' },
-            { id: 'proj-3', name: 'RAGFlow 整合', type: '任務', group: 4, color: '#ab47bc', size: 28, description: 'RAG 引擎集成' },
-            { id: 'proj-4', name: '知識圖譜', type: '任務', group: 4, color: '#ab47bc', size: 30, description: '3D 視覺化' },
-            { id: 'proj-5', name: 'Anytype 風格', type: '任務', group: 4, color: '#ab47bc', size: 26, description: 'UI/UX 重構' },
-            { id: 'proj-6', name: 'AI Copilot', type: '任務', group: 4, color: '#ab47bc', size: 28, description: '懸浮助手' },
-            
-            // === Knowledge 群組 (青色系) ===
-            { id: 'know-1', name: '認知科學', type: '概念', group: 5, color: '#00bcd4', size: 28, description: '大腦運作原理' },
-            { id: 'know-2', name: '系統思維', type: '概念', group: 5, color: '#00bcd4', size: 26, description: '整體性思考' },
-            { id: 'know-3', name: '設計模式', type: '概念', group: 5, color: '#00bcd4', size: 24, description: '軟件工程模式' },
-            { id: 'know-4', name: '微服務', type: '概念', group: 5, color: '#00bcd4', size: 26, description: '架構設計' },
-            { id: 'know-5', name: 'DDD', type: '概念', group: 5, color: '#00bcd4', size: 24, description: '領域驅動設計' },
-            { id: 'know-6', name: 'SOLID', type: '概念', group: 5, color: '#00bcd4', size: 22, description: '面向對象原則' },
-            
-            // === People 群組 (粉色系) ===
-            { id: 'ppl-1', name: 'Bruce', type: '人物', group: 6, color: '#e91e63', size: 36, description: '專案負責人' },
-            { id: 'ppl-2', name: 'GitHub Copilot', type: '人物', group: 6, color: '#e91e63', size: 30, description: 'AI 編程助手' },
-            { id: 'ppl-3', name: 'Claude', type: '人物', group: 6, color: '#e91e63', size: 28, description: 'AI 對話助手' },
-            { id: 'ppl-4', name: '開源社群', type: '人物', group: 6, color: '#e91e63', size: 24, description: 'Contributors' },
-            
-            // === Tags 群組 (灰色系) ===
-            { id: 'tag-1', name: '#AI', type: '標籤', group: 7, color: '#9e9e9e', size: 14, description: '人工智能' },
-            { id: 'tag-2', name: '#Frontend', type: '標籤', group: 7, color: '#9e9e9e', size: 14, description: '前端開發' },
-            { id: 'tag-3', name: '#Backend', type: '標籤', group: 7, color: '#9e9e9e', size: 14, description: '後端開發' },
-            { id: 'tag-4', name: '#DevOps', type: '標籤', group: 7, color: '#9e9e9e', size: 14, description: '運維' },
-            { id: 'tag-5', name: '#Learning', type: '標籤', group: 7, color: '#9e9e9e', size: 14, description: '學習' },
-            { id: 'tag-6', name: '#Life', type: '標籤', group: 7, color: '#9e9e9e', size: 14, description: '生活' }
-          ],
-          links: [
-            // AI 群組內部連結
-            { source: 'ai-1', target: 'ai-4', value: 5, label: '支持' },
-            { source: 'ai-2', target: 'ai-4', value: 5, label: '支持' },
-            { source: 'ai-3', target: 'ai-4', value: 4, label: '實現' },
-            { source: 'ai-4', target: 'ai-5', value: 4, label: '依賴' },
-            { source: 'ai-4', target: 'ai-10', value: 4, label: '使用' },
-            { source: 'ai-6', target: 'ai-1', value: 3, label: '優化' },
-            { source: 'ai-6', target: 'ai-2', value: 3, label: '優化' },
-            { source: 'ai-7', target: 'ai-1', value: 3, label: '改進' },
-            { source: 'ai-8', target: 'ai-3', value: 4, label: '基於' },
-            { source: 'ai-9', target: 'ai-1', value: 3, label: '擴展' },
-            
-            // Coding 群組內部連結
-            { source: 'code-1', target: 'code-5', value: 4, label: '配合' },
-            { source: 'code-2', target: 'code-5', value: 4, label: '配合' },
-            { source: 'code-3', target: 'code-4', value: 5, label: '語言' },
-            { source: 'code-4', target: 'code-8', value: 4, label: '連接' },
-            { source: 'code-6', target: 'code-4', value: 4, label: '容器化' },
-            { source: 'code-6', target: 'code-10', value: 3, label: '部署' },
-            { source: 'code-7', target: 'code-6', value: 3, label: 'CI/CD' },
-            { source: 'code-8', target: 'code-9', value: 3, label: '配合' },
-            
-            // Life 群組內部連結
-            { source: 'life-1', target: 'life-2', value: 3, label: '包含' },
-            { source: 'life-3', target: 'life-2', value: 3, label: '方法' },
-            { source: 'life-4', target: 'life-6', value: 4, label: '記錄於' },
-            { source: 'life-5', target: 'life-1', value: 2, label: '納入' },
-            
-            // Projects 群組內部連結
-            { source: 'proj-1', target: 'proj-2', value: 5, label: '包含' },
-            { source: 'proj-1', target: 'proj-3', value: 5, label: '包含' },
-            { source: 'proj-1', target: 'proj-4', value: 5, label: '包含' },
-            { source: 'proj-1', target: 'proj-5', value: 4, label: '包含' },
-            { source: 'proj-1', target: 'proj-6', value: 4, label: '包含' },
-            { source: 'proj-2', target: 'ai-4', value: 4, label: '應用' },
-            { source: 'proj-3', target: 'ai-4', value: 4, label: '應用' },
-            { source: 'proj-4', target: 'code-1', value: 4, label: '使用' },
-            { source: 'proj-5', target: 'code-1', value: 5, label: '重構' },
-            { source: 'proj-6', target: 'ai-1', value: 4, label: '集成' },
-            
-            // Knowledge 群組內部連結
-            { source: 'know-3', target: 'know-5', value: 3, label: '相關' },
-            { source: 'know-4', target: 'know-5', value: 4, label: '應用' },
-            { source: 'know-5', target: 'know-6', value: 3, label: '原則' },
-            
-            // 跨群組連結 (AI <-> Coding)
-            { source: 'ai-1', target: 'code-3', value: 4, label: 'API 調用' },
-            { source: 'ai-3', target: 'code-3', value: 5, label: '框架' },
-            { source: 'ai-5', target: 'code-8', value: 3, label: '存儲' },
-            
-            // 跨群組連結 (Projects <-> Coding)
-            { source: 'proj-1', target: 'code-1', value: 5, label: '前端' },
-            { source: 'proj-1', target: 'code-4', value: 5, label: '後端' },
-            { source: 'proj-1', target: 'code-6', value: 4, label: '部署' },
-            
-            // 跨群組連結 (People <-> Projects)
-            { source: 'ppl-1', target: 'proj-1', value: 5, label: '負責' },
-            { source: 'ppl-2', target: 'proj-1', value: 4, label: '協助' },
-            { source: 'ppl-3', target: 'proj-6', value: 5, label: '核心' },
-            
-            // 跨群組連結 (Life <-> Knowledge)
-            { source: 'life-6', target: 'know-1', value: 3, label: '學習' },
-            { source: 'life-6', target: 'know-2', value: 3, label: '學習' },
-            
-            // Tags 連結
-            { source: 'tag-1', target: 'ai-1', value: 1, label: '標記' },
-            { source: 'tag-1', target: 'ai-4', value: 1, label: '標記' },
-            { source: 'tag-2', target: 'code-1', value: 1, label: '標記' },
-            { source: 'tag-3', target: 'code-4', value: 1, label: '標記' },
-            { source: 'tag-4', target: 'code-6', value: 1, label: '標記' },
-            { source: 'tag-5', target: 'life-6', value: 1, label: '標記' },
-            { source: 'tag-6', target: 'life-1', value: 1, label: '標記' }
-          ]
-        },
-        
-        // ID 2: BruV 開發筆記 (20 節點 - 專注於技術棧)
-        2: {
-          name: 'BruV 開發筆記',
-          nodes: [
-            // Vue 生態
-            { id: 'vue-1', name: 'Vue 3 核心', type: '工具', group: 1, color: '#42b883', size: 30, description: 'Composition API' },
-            { id: 'vue-2', name: 'Pinia', type: '工具', group: 1, color: '#42b883', size: 24, description: '狀態管理' },
-            { id: 'vue-3', name: 'Vue Router', type: '工具', group: 1, color: '#42b883', size: 22, description: '路由管理' },
-            { id: 'vue-4', name: 'Vite', type: '工具', group: 1, color: '#42b883', size: 26, description: '構建工具' },
-            
-            // Python 生態
-            { id: 'py-1', name: 'FastAPI', type: '工具', group: 2, color: '#009688', size: 28, description: 'Web 框架' },
-            { id: 'py-2', name: 'Pydantic', type: '工具', group: 2, color: '#009688', size: 22, description: '數據驗證' },
-            { id: 'py-3', name: 'SQLAlchemy', type: '工具', group: 2, color: '#009688', size: 24, description: 'ORM' },
-            { id: 'py-4', name: 'Uvicorn', type: '工具', group: 2, color: '#009688', size: 20, description: 'ASGI 服務器' },
-            
-            // Docker 生態
-            { id: 'dk-1', name: 'Docker', type: '工具', group: 3, color: '#2496ed', size: 30, description: '容器技術' },
-            { id: 'dk-2', name: 'Docker Compose', type: '工具', group: 3, color: '#2496ed', size: 26, description: '多容器編排' },
-            { id: 'dk-3', name: 'Dockerfile', type: '文件', group: 3, color: '#2496ed', size: 20, description: '鏡像定義' },
-            { id: 'dk-4', name: 'Nginx', type: '工具', group: 3, color: '#2496ed', size: 24, description: '反向代理' },
-            
-            // AI 服務
-            { id: 'ai-1', name: 'Dify', type: '工具', group: 4, color: '#ff6b6b', size: 28, description: 'LLMOps 平台' },
-            { id: 'ai-2', name: 'RAGFlow', type: '工具', group: 4, color: '#ff6b6b', size: 28, description: 'RAG 引擎' },
-            { id: 'ai-3', name: 'OpenAI API', type: '工具', group: 4, color: '#ff6b6b', size: 26, description: 'GPT 接口' },
-            
-            // 數據庫
-            { id: 'db-1', name: 'PostgreSQL', type: '工具', group: 5, color: '#336791', size: 26, description: '關係型數據庫' },
-            { id: 'db-2', name: 'Redis', type: '工具', group: 5, color: '#dc382d', size: 24, description: '緩存數據庫' },
-            { id: 'db-3', name: 'Kùzu', type: '工具', group: 5, color: '#336791', size: 22, description: '圖數據庫' },
-            
-            // 其他
-            { id: 'misc-1', name: 'Git', type: '工具', group: 6, color: '#f05032', size: 24, description: '版本控制' },
-            { id: 'misc-2', name: 'VS Code', type: '工具', group: 6, color: '#007acc', size: 22, description: '開發工具' }
-          ],
-          links: [
-            // Vue 生態內部
-            { source: 'vue-1', target: 'vue-2', value: 4, label: '使用' },
-            { source: 'vue-1', target: 'vue-3', value: 4, label: '使用' },
-            { source: 'vue-4', target: 'vue-1', value: 5, label: '構建' },
-            
-            // Python 生態內部
-            { source: 'py-1', target: 'py-2', value: 5, label: '依賴' },
-            { source: 'py-1', target: 'py-3', value: 4, label: '集成' },
-            { source: 'py-4', target: 'py-1', value: 5, label: '運行' },
-            
-            // Docker 生態內部
-            { source: 'dk-2', target: 'dk-1', value: 5, label: '基於' },
-            { source: 'dk-3', target: 'dk-1', value: 4, label: '定義' },
-            { source: 'dk-4', target: 'dk-1', value: 3, label: '容器化' },
-            
-            // AI 服務內部
-            { source: 'ai-1', target: 'ai-3', value: 4, label: '調用' },
-            { source: 'ai-2', target: 'ai-3', value: 4, label: '調用' },
-            
-            // 跨群組連結
-            { source: 'vue-1', target: 'py-1', value: 5, label: '前後端' },
-            { source: 'dk-1', target: 'vue-4', value: 4, label: '部署' },
-            { source: 'dk-1', target: 'py-1', value: 4, label: '部署' },
-            { source: 'dk-2', target: 'ai-1', value: 5, label: '編排' },
-            { source: 'dk-2', target: 'ai-2', value: 5, label: '編排' },
-            { source: 'py-3', target: 'db-1', value: 5, label: '連接' },
-            { source: 'py-1', target: 'db-2', value: 3, label: '緩存' },
-            { source: 'misc-1', target: 'vue-1', value: 3, label: '管理' },
-            { source: 'misc-1', target: 'py-1', value: 3, label: '管理' },
-            { source: 'misc-2', target: 'vue-1', value: 4, label: '開發' },
-            { source: 'misc-2', target: 'py-1', value: 4, label: '開發' }
-          ]
-        },
-        
-        // ID 3: 私人日記 (10 節點 - 線性/小型數據集)
-        3: {
-          name: '私人日記',
-          nodes: [
-            { id: 'diary-1', name: '2026-01-01 新年目標', type: '文件', group: 1, color: '#e91e63', size: 24, description: '年度規劃與願景' },
-            { id: 'diary-2', name: '2026-01-15 專案啟動', type: '事件', group: 1, color: '#e91e63', size: 22, description: 'BruV 平台開發開始' },
-            { id: 'diary-3', name: '2026-01-20 技術選型', type: '文件', group: 1, color: '#e91e63', size: 20, description: 'Vue3 + FastAPI 決策' },
-            { id: 'diary-4', name: '2026-01-25 首次部署', type: '事件', group: 1, color: '#e91e63', size: 22, description: 'Docker 環境搭建完成' },
-            { id: 'diary-5', name: '2026-02-01 UI 重構', type: '事件', group: 1, color: '#e91e63', size: 24, description: 'Anytype 風格改造' },
-            { id: 'diary-6', name: '2026-02-02 圖譜功能', type: '事件', group: 1, color: '#e91e63', size: 26, description: '3D 知識圖譜上線' },
-            { id: 'diary-7', name: '學習筆記', type: '文件', group: 1, color: '#9c27b0', size: 20, description: 'AI 技術學習記錄' },
-            { id: 'diary-8', name: '健身記錄', type: '文件', group: 1, color: '#ff9800', size: 18, description: '運動打卡日誌' },
-            { id: 'diary-9', name: '閱讀清單', type: '文件', group: 1, color: '#03a9f4', size: 18, description: '書籍與文章收藏' },
-            { id: 'diary-10', name: '靈感筆記', type: '文件', group: 1, color: '#4caf50', size: 20, description: '創意想法記錄' }
-          ],
-          links: [
-            // 時間線性連結
-            { source: 'diary-1', target: 'diary-2', value: 3, label: '之後' },
-            { source: 'diary-2', target: 'diary-3', value: 3, label: '之後' },
-            { source: 'diary-3', target: 'diary-4', value: 3, label: '之後' },
-            { source: 'diary-4', target: 'diary-5', value: 3, label: '之後' },
-            { source: 'diary-5', target: 'diary-6', value: 3, label: '之後' },
-            
-            // 相關連結
-            { source: 'diary-7', target: 'diary-2', value: 2, label: '相關' },
-            { source: 'diary-7', target: 'diary-3', value: 2, label: '相關' },
-            { source: 'diary-10', target: 'diary-6', value: 2, label: '靈感來源' },
-            { source: 'diary-1', target: 'diary-8', value: 1, label: '包含' },
-            { source: 'diary-1', target: 'diary-9', value: 1, label: '包含' }
-          ]
-        }
-      };
+      // ✨ 使用 Manager 加載（自動處理緩存和去重）
+      const result = await graphDataManager.loadGraph(graphId, options);
       
-      // 根據 graphId 獲取對應的數據集
-      const dataSet = mockDataSets[graphId];
+      const { nodes: apiNodes, links: apiLinks, metadata } = result;
       
-      if (!dataSet) {
-        throw new Error(`圖譜 ID ${graphId} 不存在`);
-      }
-      
-      const mockNodes = dataSet.nodes;
-      const mockLinks = dataSet.links;
-      
-      // 更新狀態
-      nodes.value = mockNodes;
-      links.value = mockLinks;
+      // 更新 Store 數據
+      nodes.value = apiNodes || [];
+      links.value = apiLinks || [];
       lastUpdate.value = new Date();
       
-      // 自動註冊圖譜到元數據列表（用於跨圖譜功能）
-      const graphIconMap = {
-        'main': '🌐',
-        'tech': '🧠',
-        'knowledge': '📚',
-        'diary': '📔',
-        'private': '🔒'
-      };
-      
-      const graphDescriptionMap = {
-        'main': '當前工作檯的主圖譜',
-        'tech': 'AI 與開發技術知識體系',
-        'knowledge': '知識庫與文檔系統',
-        'diary': '個人日記與生活記錄',
-        'private': '私人日記與回憶'
-      };
-      
-      const graphMetadata = {
-        id: graphId,
-        name: dataSet.name || '主圖譜',
-        description: graphDescriptionMap[graphId] || dataSet.description || '當前工作檯的圖譜',
-        icon: graphIconMap[graphId] || '🌐',
-        color: '#3b82f6',
-        nodeCount: mockNodes.length,
-        linkCount: mockLinks.length,
-        lastUpdate: new Date().toISOString()
-      };
-      
-      // 檢查是否已存在
-      const existingIndex = graphMetadataList.value.findIndex(g => g.id === graphId);
+      // 更新元數據統計
+      const existingIndex = graphMetadataList.value.findIndex(g => String(g.id) === String(graphId));
       if (existingIndex >= 0) {
-        graphMetadataList.value[existingIndex] = graphMetadata;
-        console.log('📝 更新圖譜元數據:', graphMetadata.name);
+        graphMetadataList.value[existingIndex] = {
+          ...graphMetadataList.value[existingIndex],
+          nodeCount: apiNodes.length,
+          linkCount: apiLinks?.length || 0,
+          lastUpdate: new Date().toISOString()
+        };
       } else {
-        graphMetadataList.value.push(graphMetadata);
-        console.log('➕ 註冊新圖譜:', graphMetadata.name);
+        // 新圖譜建立元數據
+        graphMetadataList.value.push({
+          id: graphId,
+          name: metadata?.note || `圖譜 ${graphId}`,
+          description: '從 KuzuDB 載入的知識圖譜',
+          icon: '🌐',
+          color: '#3b82f6',
+          nodeCount: apiNodes.length,
+          linkCount: apiLinks?.length || 0,
+          lastUpdate: new Date().toISOString()
+        });
       }
       
-      // 持久化保存到 localStorage
-      localStorage.setItem('graphMetadataList', JSON.stringify(graphMetadataList.value));
-      console.log('💾 圖譜元數據已保存到 localStorage');
+      console.log(`✅ [Store] 圖譜數據已同步: ${apiNodes.length} 節點, ${apiLinks?.length || 0} 連接`);
       
-      console.log(`📊 圖譜數據已加載: ${dataSet.name}`, {
-        graphId: graphId,
-        nodes: mockNodes.length,
-        links: mockLinks.length,
-        timestamp: lastUpdate.value
-      });
-      
-      return { nodes: mockNodes, links: mockLinks };
+      return { nodes: apiNodes, links: apiLinks || [] };
       
     } catch (err) {
       error.value = err.message || '數據加載失敗';
-      console.error('❌ 圖譜數據加載錯誤:', err);
+      console.error('❌ [Store] 圖譜數據加載錯誤:', err);
+      
+      // 失敗時清空數據
+      nodes.value = [];
+      links.value = [];
+      
       throw err;
     } finally {
       loading.value = false;
@@ -567,64 +314,104 @@ export const useGraphStore = defineStore('graph', () => {
   };
   
   /**
-   * 初始化所有可用圖譜的元數據（不載入實際數據）
+   * 獲取指定節點的鄰居節點（統一 API）
+   * @param {string} entityId - 實體 ID
+   * @returns {Promise<Object>} { nodes, links }
    */
-  const initializeGraphMetadata = () => {
-    // 定義所有可用的圖譜（對應 fetchGraphData 中的 mockDataSets）
-    const allGraphs = [
-      {
-        id: 1,
-        name: '主腦圖譜',
-        description: '當前工作檯的主圖譜',
-        icon: '🌐',
-        color: '#3b82f6',
-        nodeCount: 50,
-        linkCount: 83
-      },
-      {
-        id: 2,
-        name: 'BruV 開發筆記',
-        description: 'AI 與開發技術知識體系',
-        icon: '🧠',
-        color: '#4caf50',
-        nodeCount: 20,
-        linkCount: 25
-      },
-      {
-        id: 'knowledge',
-        name: '圖際共享知識庫',
-        description: '知識庫與文檔系統',
-        icon: '📚',
-        color: '#00bcd4',
-        nodeCount: 30,
-        linkCount: 40
-      },
-      {
-        id: 'diary',
-        name: '私人日記',
-        description: '個人日記與生活記錄',
-        icon: '📔',
-        color: '#e91e63',
-        nodeCount: 10,
-        linkCount: 12
-      }
-    ];
+  const fetchNeighbors = async (entityId) => {
+    if (!entityId) {
+      throw new Error('entityId 不能為空');
+    }
     
-    // 只註冊尚未存在的圖譜
-    allGraphs.forEach(graph => {
-      const exists = graphMetadataList.value.some(g => g.id === graph.id);
-      if (!exists) {
-        graphMetadataList.value.push({
-          ...graph,
-          lastUpdate: new Date().toISOString()
-        });
-        console.log('📋 註冊圖譜元數據:', graph.name);
-      }
-    });
+    loading.value = true;
+    error.value = null;
     
-    // 持久化保存
-    localStorage.setItem('graphMetadataList', JSON.stringify(graphMetadataList.value));
-    console.log('💾 所有圖譜元數據已初始化:', graphMetadataList.value.length, '個圖譜');
+    try {
+      console.log(`🔄 正在獲取節點 ${entityId} 的鄰居...`);
+      
+      const response = await fetch(`/api/graph/entities/${entityId}/neighbors`);
+      
+      if (!response.ok) {
+        throw new Error(`API 請求失敗: ${response.status} ${response.statusText}`);
+      }
+      
+      const data = await response.json();
+      
+      if (!data.success) {
+        throw new Error(data.message || '獲取鄰居節點失敗');
+      }
+      
+      console.log(`✅ 鄰居節點已加載:`, data.data);
+      return data.data;
+      
+    } catch (err) {
+      error.value = err.message || '獲取鄰居節點失敗';
+      console.error('❌ 獲取鄰居節點錯誤:', err);
+      throw err;
+    } finally {
+      loading.value = false;
+    }
+  };
+  
+  /**
+   * Cypher 查詢安全驗證（前端防護層）
+   * 後端已有 BLOCKED_KEYWORDS 白名單，此為 defense-in-depth
+   */
+  const CYPHER_BLOCKED = /\b(CREATE|DELETE|DETACH|SET|REMOVE|MERGE|DROP|ALTER|CALL|COPY|LOAD)\b/i;
+  const MAX_CYPHER_LENGTH = 2000;
+
+  /**
+   * 執行 Cypher 查詢（統一 API）
+   * @param {string} query - Cypher 查詢語句
+   * @param {Object} params - 查詢參數（可選）
+   * @returns {Promise<Object>} { nodes, links }
+   */
+  const executeCypherQuery = async (query, params = {}) => {
+    if (!query || typeof query !== 'string') {
+      throw new Error('query 必須為非空字串');
+    }
+
+    // 前端安全檢查
+    if (query.length > MAX_CYPHER_LENGTH) {
+      throw new Error(`查詢長度超過限制 (${MAX_CYPHER_LENGTH} 字元)`);
+    }
+    if (CYPHER_BLOCKED.test(query)) {
+      throw new Error('安全限制：僅允許讀取查詢 (MATCH/RETURN)，禁止寫入操作');
+    }
+    
+    loading.value = true;
+    error.value = null;
+    
+    try {
+      console.log(`🔄 正在執行 Cypher 查詢...`);
+      console.log('Query:', query);
+      
+      const response = await fetch('/api/graph/query', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ query, params })
+      });
+      
+      if (!response.ok) {
+        throw new Error(`API 請求失敗: ${response.status} ${response.statusText}`);
+      }
+      
+      const data = await response.json();
+      
+      if (!data.success) {
+        throw new Error(data.message || 'Cypher 查詢失敗');
+      }
+      
+      console.log(`✅ Cypher 查詢結果:`, data.data);
+      return data.data;
+      
+    } catch (err) {
+      error.value = err.message || 'Cypher 查詢失敗';
+      console.error('❌ Cypher 查詢錯誤:', err);
+      throw err;
+    } finally {
+      loading.value = false;
+    }
   };
   
   /**
@@ -943,13 +730,14 @@ export const useGraphStore = defineStore('graph', () => {
    * 匯入檔案並創建節點
    * @param {File} file - 要匯入的檔案
    */
-  const importFile = async (file) => {
+  const importFile = async (file, mode = 'single') => {
     try {
-      console.log('📥 開始匯入檔案:', file.name);
+      console.log('📥 開始匯入檔案:', file.name, '模式:', mode);
       
       // 創建 FormData
       const formData = new FormData();
       formData.append('file', file);
+      formData.append('mode', mode); // 添加模式參數
       
       // TODO: 實際調用後端 API
       // const response = await fetch('/api/graph/import/file', {
@@ -959,43 +747,136 @@ export const useGraphStore = defineStore('graph', () => {
       // const data = await response.json();
       
       // 模擬 API 回應
-      const newNode = {
-        id: `file_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-        name: file.name,
-        label: file.name,
-        group: 'file',
-        type: file.type || 'document',
-        fileType: file.name.split('.').pop()?.toLowerCase(),
-        color: '#3b82f6',
-        size: 1.2,
-        timestamp: Date.now(),
-        aiStatus: 'linked',
-        description: `從檔案 ${file.name} 匯入`
-      };
-      
-      // 添加節點到圖譜
-      addNode(newNode);
-      
-      // 添加到匯入檔案列表
-      importedFiles.value.unshift({
-        id: Date.now(),
-        nodeId: newNode.id,
-        name: file.name,
-        ext: file.name.split('.').pop()?.toUpperCase() || 'FILE',
-        status: 'AI 已關聯',
-        timestamp: Date.now()
-      });
-      
-      // 自動選中新節點
-      selectedNode.value = newNode;
-      
-      console.log('✅ 檔案匯入成功:', file.name, '→', newNode.id);
-      
-      return newNode;
+      if (mode === 'multi' && file.name.endsWith('.xlsx')) {
+        // 多節點模式：模擬創建多個節點
+        console.log('📋 多節點模式：模擬解析 Excel 檔案');
+        
+        // 模擬創建 3 個節點作為示例
+        const mockRowCount = 3;
+        for (let i = 1; i <= mockRowCount; i++) {
+          const newNode = {
+            id: `excel_row_${Date.now()}_${i}`,
+            name: `${file.name} - 第 ${i} 列`,
+            label: `Excel 資料列 ${i}`,
+            group: 'resource',
+            type: 'Resource',
+            color: '#10b981',
+            size: 1.0,
+            timestamp: Date.now(),
+            description: `從 ${file.name} 的第 ${i} 列解析`
+          };
+          
+          addNode(newNode);
+          
+          // 添加到匯入檔案列表
+          importedFiles.value.unshift({
+            id: Date.now() + i,
+            nodeId: newNode.id,
+            name: `第 ${i} 列 - ${file.name}`,
+            ext: 'ROW',
+            status: `Excel 第 ${i} 列`,
+            timestamp: Date.now()
+          });
+        }
+        
+        console.log(`✅ Excel 匯入成功: ${file.name} → ${mockRowCount} 個節點`);
+        return { nodeCount: mockRowCount };
+        
+      } else {
+        // 單一節點模式
+        const newNode = {
+          id: `file_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+          name: file.name,
+          label: file.name,
+          group: 'file',
+          type: file.type || 'document',
+          fileType: file.name.split('.').pop()?.toLowerCase(),
+          color: '#3b82f6',
+          size: 1.2,
+          timestamp: Date.now(),
+          aiStatus: 'linked',
+          description: `從檔案 ${file.name} 匯入`
+        };
+        
+        // 添加節點到圖譜
+        addNode(newNode);
+        
+        // 添加到匯入檔案列表
+        importedFiles.value.unshift({
+          id: Date.now(),
+          nodeId: newNode.id,
+          name: file.name,
+          ext: file.name.split('.').pop()?.toUpperCase() || 'FILE',
+          status: 'AI 已關聯',
+          timestamp: Date.now()
+        });
+        
+        // 自動選中新節點
+        selectedNode.value = newNode;
+        
+        console.log('✅ 檔案匯入成功:', file.name, '→', newNode.id);
+        
+        return newNode;
+      }
     } catch (err) {
       console.error('❌ 檔案匯入失敗:', err);
       error.value = '檔案匯入失敗: ' + err.message;
       throw err;
+    }
+  };
+  
+  /**
+   * 批量匯入檔案（統一 API）
+   * @param {Array<File>} files - 檔案陣列
+   * @returns {Promise<Object>} 匯入結果
+   */
+  const importMultipleFiles = async (files) => {
+    if (!Array.isArray(files) || files.length === 0) {
+      throw new Error('檔案陣列不能為空');
+    }
+    
+    loading.value = true;
+    error.value = null;
+    
+    try {
+      console.log(`🔄 正在上傳 ${files.length} 個檔案...`);
+      
+      // 建立 FormData
+      const formData = new FormData();
+      files.forEach(file => {
+        formData.append('files', file);
+      });
+      
+      // 發送請求到後端 API
+      const response = await fetch('/api/graph/import/files', {
+        method: 'POST',
+        body: formData
+      });
+      
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ detail: '未知錯誤' }));
+        throw new Error(errorData.detail || `HTTP ${response.status}`);
+      }
+      
+      const data = await response.json();
+      
+      // 驗證回傳數據
+      if (!Array.isArray(data)) {
+        throw new Error('伺服器回傳數據格式錯誤');
+      }
+      
+      // 調用 addBatchNodes 添加節點
+      const stats = addBatchNodes(data);
+      
+      console.log(`✅ 檔案匯入成功:`, stats);
+      return stats;
+      
+    } catch (err) {
+      error.value = err.message || '檔案匯入失敗';
+      console.error('❌ 檔案上傳失敗:', err);
+      throw err;
+    } finally {
+      loading.value = false;
     }
   };
   
@@ -1017,8 +898,7 @@ export const useGraphStore = defineStore('graph', () => {
       if (graphMetadataList.value.length === 0) {
         console.log('⚙️ 初始化圖譜元數據（使用測試數據）');
         graphMetadataList.value = crossGraphData.metadata;
-        // 持久化保存
-        localStorage.setItem('graphMetadataList', JSON.stringify(graphMetadataList.value));
+        // 圖譜元數據已保存在 KuzuDB
       }
       
       // 如果 aiLinks 為空，則初始化測試 AI Links（僅用於首次加載）
@@ -1165,6 +1045,153 @@ export const useGraphStore = defineStore('graph', () => {
     console.log('🗑️ 已清除所有圖譜元數據');
   };
   
+  /**
+   * 創建新圖譜（調用後端 API）
+   * @param {Object} graphData - 圖譜數據 { name, description, icon, color }
+   * @returns {Promise<Object>} 創建的圖譜元數據
+   */
+  const createGraph = async (graphData) => {
+    if (!graphData.name || !graphData.name.trim()) {
+      throw new Error('圖譜名稱不能為空');
+    }
+    
+    loading.value = true;
+    error.value = null;
+    
+    try {
+      console.log('🔄 [Store] 創建新圖譜:', graphData.name);
+      
+      // ✨ 使用 Manager 創建（自動刷新緩存）
+      const newGraph = await graphDataManager.createGraph(graphData);
+      
+      // 添加到本地圖譜列表
+      graphMetadataList.value.push(newGraph);
+      
+      console.log('✅ [Store] 圖譜創建成功並已同步:', newGraph);
+      
+      return newGraph;
+      
+    } catch (err) {
+      error.value = err.message || '圖譜創建失敗';
+      console.error('❌ [Store] 圖譜創建錯誤:', err);
+      throw err;
+    } finally {
+      loading.value = false;
+    }
+  };
+
+  /**
+   * 創建單一實體節點（調用後端 API + 同步 store）
+   * @param {Object} entity - 實體 { id, name, type, description, properties }
+   * @returns {Promise<Object>} 創建結果
+   */
+  const createEntity = async (entity) => {
+    loading.value = true;
+    error.value = null;
+    try {
+      const response = await fetch('/api/graph/create', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          id: entity.id,
+          name: entity.name,
+          type: entity.type,
+          description: entity.description || '',
+          properties: entity.properties || {},
+          graph_id: String(currentGraphId.value || '1')
+        })
+      });
+      const result = await response.json();
+      if (response.ok && result.success) {
+        // 同步到 store — 新增節點
+        addNode({
+          id: entity.id,
+          name: entity.name,
+          type: entity.type,
+          description: entity.description || '',
+          ...entity
+        });
+        console.log('✅ 實體已創建並同步到 store:', entity.name);
+        return result;
+      } else {
+        throw new Error(result.detail || result.message || '創建實體失敗');
+      }
+    } catch (err) {
+      error.value = err.message;
+      console.error('❌ createEntity 錯誤:', err);
+      throw err;
+    } finally {
+      loading.value = false;
+    }
+  };
+
+  /**
+   * 批量創建實體（調用後端 API + 同步 store）
+   * @param {Array<Object>} entities - 實體陣列
+   * @returns {Promise<Object>} 創建結果
+   */
+  const batchCreateEntities = async (entities) => {
+    loading.value = true;
+    error.value = null;
+    try {
+      const response = await fetch('/api/graph/batch-create', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          entities: entities.map(e => ({
+            ...e,
+            graph_id: String(currentGraphId.value || '1')
+          }))
+        })
+      });
+      if (!response.ok) {
+        const errData = await response.json();
+        throw new Error(errData.detail || '批量創建失敗');
+      }
+      const result = await response.json();
+      // 同步到 store
+      addBatchNodes(entities);
+      console.log('✅ 批量實體已創建並同步到 store:', entities.length, '筆');
+      return result;
+    } catch (err) {
+      error.value = err.message;
+      console.error('❌ batchCreateEntities 錯誤:', err);
+      throw err;
+    } finally {
+      loading.value = false;
+    }
+  };
+
+  /**
+   * 上傳文件到指定圖譜（統一的上傳接口）
+   * @param {File} file - 文件對象
+   * @param {number|string} graphId - 目標圖譜 ID
+   * @param {string} graphMode - 模式 ('existing' | 'new')
+   * @returns {Promise<Object>} 上傳結果
+   */
+  const uploadFileToGraph = async (file, graphId, graphMode = 'existing') => {
+    const formData = new FormData();
+    formData.append('file', file);
+    formData.append('graph_id', graphId);
+    formData.append('graph_mode', graphMode);
+    try {
+      const response = await fetch('/api/system/upload', {
+        method: 'POST',
+        body: formData
+      });
+      const result = await response.json();
+      if (result.success) {
+        // 自動重新加載圖譜數據以同步
+        await fetchGraphData(currentGraphId.value);
+        console.log('✅ 文件上傳成功並已重新同步圖譜');
+      }
+      return result;
+    } catch (err) {
+      console.error('❌ uploadFileToGraph 錯誤:', err);
+      throw err;
+    }
+  };
+  
   // ===== 返回 Store API =====
   return {
     // State
@@ -1177,6 +1204,7 @@ export const useGraphStore = defineStore('graph', () => {
     lastUpdate,
     filterMode,
     importedFiles,
+    currentGraphId,
     
     // 跨圖譜狀態
     graphMetadataList,
@@ -1201,7 +1229,8 @@ export const useGraphStore = defineStore('graph', () => {
     
     // Actions
     fetchGraphData,
-    initializeGraphMetadata,
+    fetchNeighbors,
+    executeCypherQuery,
     selectNode,
     focusNode,
     toggleViewMode,
@@ -1219,6 +1248,7 @@ export const useGraphStore = defineStore('graph', () => {
     deleteNode,
     setFilterMode,
     importFile,
+    importMultipleFiles,
     
     // 跨圖譜 Actions
     loadCrossGraphData,
@@ -1227,6 +1257,13 @@ export const useGraphStore = defineStore('graph', () => {
     getNodeGraph,
     getAILinkStats,
     snapshotWorkspaceGraph,
-    clearGraphMetadata
+    clearGraphMetadata,
+    createGraph,
+    loadGraphMetadataList,
+    
+    // 統一 API Actions（同步 store）
+    createEntity,
+    batchCreateEntities,
+    uploadFileToGraph
   };
 });

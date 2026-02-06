@@ -6,7 +6,7 @@ services:
     image: langgenius/dify-web:0.6.16
     container_name: bruv_dify
     ports:
-      - "82:3000"
+      - "127.0.0.1:82:3000"
     environment:
       - API_URL=http://localhost:5001
       - CONSOLE_API_URL=http://localhost:5001
@@ -27,13 +27,17 @@ services:
     image: langgenius/dify-api:0.6.16
     container_name: bruv_dify_api
     ports:
-      - "5001:5001"
+      - "127.0.0.1:5001:5001"
     environment:
       - MODE=api
       - LOG_LEVEL=INFO
-      - SECRET_KEY=${DIFY_SECRET_KEY:-your_secret_key_here}
+      - SECRET_KEY=${DIFY_SECRET_KEY:?DIFY_SECRET_KEY must be set in .env}
+      - CONSOLE_WEB_URL=http://localhost:82
+      - CONSOLE_API_URL=http://localhost:5001
+      - SERVICE_API_URL=http://localhost:5001
+      - APP_WEB_URL=http://localhost:82
       - DB_USERNAME=postgres
-      - DB_PASSWORD=difyai123456
+      - DB_PASSWORD=${DIFY_DB_PASSWORD:?DIFY_DB_PASSWORD must be set in .env}
       - DB_HOST=dify-db
       - DB_PORT=5432
       - DB_DATABASE=dify
@@ -64,7 +68,7 @@ services:
     container_name: bruv_dify_db
     environment:
       - POSTGRES_USER=postgres
-      - POSTGRES_PASSWORD=difyai123456
+      - POSTGRES_PASSWORD=${DIFY_DB_PASSWORD:?DIFY_DB_PASSWORD must be set in .env}
       - POSTGRES_DB=dify
       - PGDATA=/var/lib/postgresql/data/pgdata
     volumes:
@@ -84,24 +88,34 @@ services:
 
   # RAGFlow 服務
   ragflow:
-    image: infiniflow/ragflow:latest
+    image: infiniflow/ragflow:v0.16.0
     container_name: bruv_ragflow
     ports:
-      - "81:80"
-      - "9380:9380"
-      - "9381:9381"
+      - "127.0.0.1:81:80"
+      - "127.0.0.1:9380:9380"
+      - "127.0.0.1:9381:9381"
     environment:
-      - MYSQL_PASSWORD=infiniflow
+      - MYSQL_PASSWORD=${RAGFLOW_MYSQL_PASSWORD:?RAGFLOW_MYSQL_PASSWORD must be set in .env}
       - MYSQL_HOST=ragflow-mysql
-      - MINIO_PASSWORD=infiniflow
+      - MINIO_PASSWORD=${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD must be set in .env}
       - MINIO_HOST=ragflow-minio
-      - REDIS_PASSWORD=infiniflow
+      - REDIS_PASSWORD=${RAGFLOW_REDIS_PASSWORD:?RAGFLOW_REDIS_PASSWORD must be set in .env}
       - REDIS_HOST=ragflow-redis
       - ES_HOST=es01
       - ELASTICSEARCH_URL=http://es01:9200
       - LANGUAGE=zh-TW
       - LANG=zh_TW.UTF-8
       - LC_ALL=zh_TW.UTF-8
+      # 🔒 完全本地化配置（推薦用於敏感數據）
+      # 取消下面註解以使用本地模型，數據完全不外流
+      # - LLM_MODEL=ollama
+      # - EMBEDDING_MODEL=bge-large-zh-v1.5
+      # - OLLAMA_HOST=http://host.docker.internal:11434
+      # 
+      # ☁️ 使用 OpenAI（數據會發送到外部）
+      # - OPENAI_API_KEY=sk-your-key-here
+      # - LLM_MODEL=gpt-4
+      # - EMBEDDING_MODEL=text-embedding-3-large
     volumes:
       - ragflow_data:/ragflow/data
       - ragflow_logs:/ragflow/logs
@@ -121,10 +135,11 @@ services:
     container_name: es01
     environment:
       - discovery.type=single-node
-      - xpack.security.enabled=false
+      - xpack.security.enabled=true
+      - ELASTIC_PASSWORD=${ELASTIC_PASSWORD:-changeme}
       - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
     ports:
-      - "9200:9200"
+      - "127.0.0.1:9200:9200"
     volumes:
       - es01_data:/usr/share/elasticsearch/data
     networks:
@@ -135,7 +150,7 @@ services:
     image: mysql:8.0
     container_name: bruv_ragflow_mysql
     environment:
-      - MYSQL_ROOT_PASSWORD=infiniflow
+      - MYSQL_ROOT_PASSWORD=${RAGFLOW_MYSQL_PASSWORD:?RAGFLOW_MYSQL_PASSWORD must be set in .env}
       - MYSQL_DATABASE=rag_flow
     volumes:
       - ragflow_mysql_data:/var/lib/mysql
@@ -148,13 +163,13 @@ services:
     container_name: bruv_ragflow_minio
     command: server /data --console-address ":9001"
     environment:
-      - MINIO_ROOT_USER=minioadmin
-      - MINIO_ROOT_PASSWORD=infiniflow
+      - MINIO_ROOT_USER=${MINIO_ROOT_USER:-minioadmin}
+      - MINIO_ROOT_PASSWORD=${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD must be set in .env}
     volumes:
       - ragflow_minio_data:/data
     ports:
-      - "9000:9000"
-      - "9001:9001"
+      - "127.0.0.1:9000:9000"
+      - "127.0.0.1:9001:9001"
     networks:
       - bruv_network
     restart: unless-stopped
@@ -162,7 +177,7 @@ services:
   ragflow-redis:
     image: redis:7-alpine
     container_name: bruv_ragflow_redis
-    command: redis-server --requirepass infiniflow
+    command: redis-server --requirepass ${RAGFLOW_REDIS_PASSWORD:-changeme}
     volumes:
       - ragflow_redis_data:/data
     networks:
