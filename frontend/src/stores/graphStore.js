@@ -2,6 +2,7 @@ import { defineStore } from 'pinia';
 import { ref, computed } from 'vue';
 import crossGraphData from '../data/crossGraphTestData.js';
 import graphDataManager from '../services/GraphDataManager.js';
+import { authFetch } from '../services/apiClient';
 
 /**
  * Graph Store - 圖譜數據管理
@@ -25,6 +26,12 @@ export const useGraphStore = defineStore('graph', () => {
    * @type {import('vue').Ref<Array<Object>>}
    */
   const nodes = ref([]);
+  
+  /**
+   * 節點屬性變更版本計數器（用於觸發圖譜即時更新）
+   * @type {import('vue').Ref<number>}
+   */
+  const nodeVersion = ref(0);
   
   /**
    * 連線數據 (邊)
@@ -99,10 +106,11 @@ export const useGraphStore = defineStore('graph', () => {
   const importedFiles = ref([]);
   
   /**
-   * 當前選中的圖譜 ID
+   * 當前選中的圖譜 ID（從 localStorage 恢復，確保跨頁面一致）
    * @type {import('vue').Ref<number|string>}
    */
-  const currentGraphId = ref(1);
+  const savedGraphId = typeof window !== 'undefined' ? localStorage.getItem('lastGraphId') : null;
+  const currentGraphId = ref(savedGraphId || 1);
   
   // ===== 初始化：加載圖譜列表（使用 Manager）=====
   const loadGraphMetadataList = async (options = {}) => {
@@ -257,8 +265,11 @@ export const useGraphStore = defineStore('graph', () => {
     error.value = null;
     
     try {
-      // 更新當前圖譜 ID
+      // 更新當前圖譜 ID 並持久化
       currentGraphId.value = graphId;
+      if (typeof window !== 'undefined') {
+        localStorage.setItem('lastGraphId', String(graphId));
+      }
       
       console.log(`🔄 [Store] 加載圖譜數據: ${graphId}`);
       
@@ -329,7 +340,7 @@ export const useGraphStore = defineStore('graph', () => {
     try {
       console.log(`🔄 正在獲取節點 ${entityId} 的鄰居...`);
       
-      const response = await fetch(`/api/graph/entities/${entityId}/neighbors`);
+      const response = await authFetch(`/api/graph/entities/${entityId}/neighbors`);
       
       if (!response.ok) {
         throw new Error(`API 請求失敗: ${response.status} ${response.statusText}`);
@@ -386,7 +397,7 @@ export const useGraphStore = defineStore('graph', () => {
       console.log(`🔄 正在執行 Cypher 查詢...`);
       console.log('Query:', query);
       
-      const response = await fetch('/api/graph/query', {
+      const response = await authFetch('/api/graph/query', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ query, params })
@@ -688,10 +699,16 @@ export const useGraphStore = defineStore('graph', () => {
       ...updates
     };
     
+    // 遞增版本計數器，觸發圖譜即時渲染更新
+    nodeVersion.value++;
+    
     // 同步更新選中節點
     if (selectedNode.value?.id === nodeId) {
       selectedNode.value = nodes.value[nodeIndex];
     }
+    
+    // 失效緩存，確保下次載入從後端取得最新數據
+    graphDataManager.invalidateCache(currentGraphId.value);
     
     console.log('✏️ 節點已更新:', nodeId, updates);
   };
@@ -709,6 +726,9 @@ export const useGraphStore = defineStore('graph', () => {
     if (selectedNode.value?.id === nodeId) {
       selectedNode.value = null;
     }
+    
+    // 失效緩存
+    graphDataManager.invalidateCache(currentGraphId.value);
     
     console.log('🗑️ 節點已刪除:', nodeId);
   };
@@ -848,7 +868,7 @@ export const useGraphStore = defineStore('graph', () => {
       });
       
       // 發送請求到後端 API
-      const response = await fetch('/api/graph/import/files', {
+      const response = await authFetch('/api/graph/import/files', {
         method: 'POST',
         body: formData
       });
@@ -1089,7 +1109,7 @@ export const useGraphStore = defineStore('graph', () => {
     loading.value = true;
     error.value = null;
     try {
-      const response = await fetch('/api/graph/create', {
+      const response = await authFetch('/api/graph/create', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -1134,7 +1154,7 @@ export const useGraphStore = defineStore('graph', () => {
     loading.value = true;
     error.value = null;
     try {
-      const response = await fetch('/api/graph/batch-create', {
+      const response = await authFetch('/api/graph/batch-create', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -1175,7 +1195,7 @@ export const useGraphStore = defineStore('graph', () => {
     formData.append('graph_id', graphId);
     formData.append('graph_mode', graphMode);
     try {
-      const response = await fetch('/api/system/upload', {
+      const response = await authFetch('/api/system/upload', {
         method: 'POST',
         body: formData
       });
@@ -1196,6 +1216,7 @@ export const useGraphStore = defineStore('graph', () => {
   return {
     // State
     nodes,
+    nodeVersion,
     links,
     selectedNode,
     viewMode,

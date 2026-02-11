@@ -62,6 +62,17 @@ class GraphMetadataUpdate(BaseModel):
     color: Optional[str] = None
 
 
+class EntityUpdate(BaseModel):
+    """實體更新模型"""
+    name: Optional[str] = None
+    type: Optional[str] = None
+    link: Optional[str] = None
+    description: Optional[str] = None
+    image: Optional[str] = None
+    color: Optional[str] = None
+    size: Optional[int] = None
+
+
 @router.post("/entities")
 async def create_entity(request: Request, entity: EntityCreate):
     """創建實體節點"""
@@ -82,6 +93,84 @@ async def create_entity(request: Request, entity: EntityCreate):
         return {"status": "success", "entity_id": entity.id}
     else:
         raise HTTPException(status_code=500, detail="創建實體失敗")
+
+
+@router.put("/entities/{entity_id}")
+async def update_entity(request: Request, entity_id: str, entity_data: EntityUpdate):
+    """更新實體節點（支持更新名稱、類型及屬性欄位）"""
+    kuzu_manager = get_kuzu_manager(request)
+    
+    if not kuzu_manager:
+        raise HTTPException(status_code=503, detail="圖譜服務未就緒")
+    
+    try:
+        # 構建屬性更新 dict（link, description, image 等存入 properties）
+        properties_update = {}
+        if entity_data.link is not None:
+            properties_update["link"] = entity_data.link
+        if entity_data.description is not None:
+            properties_update["description"] = entity_data.description
+        if entity_data.image is not None:
+            properties_update["image"] = entity_data.image
+        if entity_data.color is not None:
+            properties_update["color"] = entity_data.color
+        if entity_data.size is not None:
+            properties_update["size"] = entity_data.size
+        
+        success = kuzu_manager.update_entity(
+            entity_id,
+            name=entity_data.name,
+            entity_type=entity_data.type,
+            properties=properties_update if properties_update else None
+        )
+        
+        if not success:
+            raise HTTPException(status_code=404, detail=f"實體 {entity_id} 不存在或更新失敗")
+        
+        return {
+            "success": True,
+            "message": f"實體 {entity_id} 已更新",
+            "entity_id": entity_id
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"❌ 更新實體失敗: {e}")
+        raise HTTPException(status_code=500, detail=f"更新實體失敗: {str(e)}")
+
+
+@router.delete("/entities/{entity_id}")
+async def delete_entity(request: Request, entity_id: str):
+    """刪除實體節點（同時刪除所有相關連線）"""
+    kuzu_manager = get_kuzu_manager(request)
+    
+    if not kuzu_manager:
+        raise HTTPException(status_code=503, detail="圖譜服務未就緒")
+    
+    try:
+        # 先確認實體存在
+        entity = kuzu_manager.get_entity(entity_id)
+        if not entity:
+            raise HTTPException(status_code=404, detail=f"實體 {entity_id} 不存在")
+        
+        success = kuzu_manager.delete_entity(entity_id)
+        
+        if not success:
+            raise HTTPException(status_code=500, detail="刪除實體失敗")
+        
+        entity_data = entity.get('e', {})
+        return {
+            "success": True,
+            "message": f"實體「{entity_data.get('name', entity_id)}」及相關連線已刪除",
+            "entity_id": entity_id
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"❌ 刪除實體失敗: {e}")
+        raise HTTPException(status_code=500, detail=f"刪除實體失敗: {str(e)}")
 
 
 @router.post("/relations")

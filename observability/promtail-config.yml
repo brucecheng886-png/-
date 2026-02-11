@@ -1,0 +1,46 @@
+# Promtail Configuration — BruV Enterprise Server
+# 自動採集所有 Docker 容器日誌並推送到 Loki
+
+server:
+  http_listen_port: 9080
+  grpc_listen_port: 0
+
+positions:
+  filename: /tmp/positions.yaml
+
+clients:
+  - url: http://loki:3100/loki/api/v1/push
+
+scrape_configs:
+  # 採集所有 Docker 容器日誌
+  - job_name: docker
+    docker_sd_configs:
+      - host: unix:///var/run/docker.sock
+        refresh_interval: 5s
+        filters:
+          - name: label
+            values: ["com.docker.compose.project"]
+    relabel_configs:
+      # 使用容器名稱作為 label
+      - source_labels: ['__meta_docker_container_name']
+        regex: '/(.*)'
+        target_label: 'container'
+      # 使用 compose service 名稱
+      - source_labels: ['__meta_docker_container_label_com_docker_compose_service']
+        target_label: 'service'
+      # 使用 compose project 名稱
+      - source_labels: ['__meta_docker_container_label_com_docker_compose_project']
+        target_label: 'project'
+    pipeline_stages:
+      # 嘗試解析 JSON 格式日誌 (FastAPI structured logs)
+      - json:
+          expressions:
+            level: level
+            request_id: request_id
+            logger_name: logger
+            message: message
+      # 對非 JSON 日誌使用原始文字
+      - labels:
+          level:
+          request_id:
+          logger_name:

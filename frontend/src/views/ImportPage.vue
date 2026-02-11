@@ -37,7 +37,7 @@
                 <strong>圖譜建立</strong> - Excel 自動解析並創建節點連線
               </li>
               <li class="flex items-center gap-2 mt-3">
-                <span class="text-blue-500">ℹ️</span>
+                <svg class="w-4 h-4 text-blue-500 flex-shrink-0" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clip-rule="evenodd"/></svg>
                 <span>上傳後無需任何操作，系統將自動完成所有處理</span>
               </li>
             </ul>
@@ -193,7 +193,7 @@
                       @click="showCreateGraphDialog = true"
                       class="px-4 py-2 bg-blue-500 hover:bg-blue-600 text-white rounded-lg font-semibold transition-colors text-sm"
                     >
-                      ✏️ 編輯
+                      <svg class="w-4 h-4 inline mr-1" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M11.5 1.5l3 3L5 14H2v-3L11.5 1.5z"/></svg>編輯
                     </button>
                   </div>
                 </div>
@@ -248,7 +248,7 @@
                   <span>啟用後，系統將使用 AI 分析節點內容，自動建議並創建相關連線，提升圖譜結構的完整性</span>
                 </p>
                 <p v-else class="mt-3 text-sm text-gray-400 flex items-start gap-2">
-                  <span>ℹ️</span>
+                  <svg class="w-4 h-4 text-gray-400 flex-shrink-0 mt-0.5" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clip-rule="evenodd"/></svg>
                   <span>關閉 AI 連線功能，僅根據現有數據建立基礎關係</span>
                 </p>
                 
@@ -311,7 +311,7 @@
               
               <!-- 當前處理的文件 -->
               <div v-if="currentProcessingFile" class="flex items-center justify-center gap-2 text-sm text-blue-400">
-                <span class="animate-spin">⚙️</span>
+                <svg class="w-4 h-4 animate-spin" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M11.49 3.17c-.38-1.56-2.6-1.56-2.98 0a1.532 1.532 0 01-2.286.948c-1.372-.836-2.942.734-2.106 2.106.54.886.061 2.042-.947 2.287-1.561.379-1.561 2.6 0 2.978a1.532 1.532 0 01.947 2.287c-.836 1.372.734 2.942 2.106 2.106a1.532 1.532 0 012.287.947c.379 1.561 2.6 1.561 2.978 0a1.533 1.533 0 012.287-.947c1.372.836 2.942-.734 2.106-2.106a1.533 1.533 0 01.947-2.287c1.561-.379 1.561-2.6 0-2.978a1.532 1.532 0 01-.947-2.287c.836-1.372-.734-2.942-2.106-2.106a1.532 1.532 0 01-2.287-.947zM10 13a3 3 0 100-6 3 3 0 000 6z" clip-rule="evenodd"/></svg>
                 <span class="font-semibold">{{ currentProcessingFile }}</span>
               </div>
               
@@ -367,7 +367,7 @@
                     
                     <!-- 當前處理步驟 -->
                     <div class="flex items-center gap-2 text-xs">
-                      <span class="animate-spin text-blue-500">⚙️</span>
+                      <svg class="w-3.5 h-3.5 animate-spin text-blue-500" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M11.49 3.17c-.38-1.56-2.6-1.56-2.98 0a1.532 1.532 0 01-2.286.948c-1.372-.836-2.942.734-2.106 2.106.54.886.061 2.042-.947 2.287-1.561.379-1.561 2.6 0 2.978a1.532 1.532 0 01.947 2.287c-.836 1.372.734 2.942 2.106 2.106a1.532 1.532 0 012.287.947c.379 1.561 2.6 1.561 2.978 0a1.533 1.533 0 012.287-.947c1.372.836 2.942-.734 2.106-2.106a1.533 1.533 0 01.947-2.287c1.561-.379 1.561-2.6 0-2.978a1.532 1.532 0 01-.947-2.287c.836-1.372-.734-2.942-2.106-2.106a1.532 1.532 0 01-2.287-.947zM10 13a3 3 0 100-6 3 3 0 000 6z" clip-rule="evenodd"/></svg>
                       <span class="text-gray-300 font-medium">
                         {{ result.processingStage || '📥 已接收文件，等待處理...' }}
                       </span>
@@ -492,6 +492,7 @@
 import { ref, onMounted } from 'vue';
 import { useGraphStore } from '../stores/graphStore';
 import { ElMessage } from 'element-plus';
+import { authFetch } from '../services/apiClient';
 
 // ===== Store =====
 const graphStore = useGraphStore();
@@ -530,7 +531,7 @@ const newGraphData = ref({
 });
 
 const availableIcons = [
-  '🌐', '🧠', '📚', '💼', '🔬', '🎯', '📊', '🗂️',
+  '🌐', '🧠', '📚', '💼', '🔬', '🎯', '📊', '🗂',
   '💡', '🚀', '🎨', '📝', '🔧', '⚡', '🌟', '📱'
 ];
 
@@ -662,7 +663,7 @@ const uploadFiles = async () => {
 
         processingStage.value = '⏳ 伺服器處理中（解析、分析、建立節點）...';
         
-        const response = await fetch('/api/system/upload', {
+        const response = await authFetch('/api/system/upload', {
           method: 'POST',
           body: formData
         });
@@ -857,7 +858,7 @@ const simulateProcessing = async (resultIndex) => {
 const loadRAGFlowDatasets = async () => {
   try {
     console.log('📚 正在加載 RAGFlow 知識庫列表...');
-    const response = await fetch('/api/ragflow/datasets');
+    const response = await authFetch('/api/ragflow/datasets');
     
     if (response.ok) {
       const data = await response.json();

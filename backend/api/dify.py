@@ -1,5 +1,5 @@
 """
-Dify API 路由
+Dify API 路由 (包含 CircuitBreaker 斷路器保護)
 """
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
@@ -9,6 +9,7 @@ import logging
 import os
 
 from backend.core.config import settings, get_current_api_keys
+from backend.core.circuit_breaker import dify_breaker, CircuitBreakerOpenError
 from backend.services.agent_service import agent_service
 
 logger = logging.getLogger(__name__)
@@ -47,27 +48,35 @@ class WorkflowRequest(BaseModel):
 
 @router.post("/chat")
 async def chat_with_dify(request: DifyRequest):
-    """與 Dify 對話"""
+    """與 Dify 對話 (受 CircuitBreaker 保護)"""
     config = get_dify_config()
     
     try:
-        async with httpx.AsyncClient(timeout=settings.REQUEST_TIMEOUT) as client:
-            response = await client.post(
-                f"{config['api_url']}/chat-messages",
-                headers={
-                    "Authorization": f"Bearer {config['api_key']}",
-                    "Content-Type": "application/json"
-                },
-                json={
-                    "query": request.query,
-                    "user": request.user,
-                    "conversation_id": request.conversation_id,
-                    "inputs": request.inputs,
-                    "response_mode": "blocking"
-                }
-            )
-            response.raise_for_status()
-            return response.json()
+        async with dify_breaker:
+            async with httpx.AsyncClient(timeout=settings.REQUEST_TIMEOUT) as client:
+                response = await client.post(
+                    f"{config['api_url']}/chat-messages",
+                    headers={
+                        "Authorization": f"Bearer {config['api_key']}",
+                        "Content-Type": "application/json"
+                    },
+                    json={
+                        "query": request.query,
+                        "user": request.user,
+                        "conversation_id": request.conversation_id,
+                        "inputs": request.inputs,
+                        "response_mode": "blocking"
+                    }
+                )
+                response.raise_for_status()
+                return response.json()
+    
+    except CircuitBreakerOpenError as e:
+        logger.warning(f"🔴 Dify 斷路器已打開: {e}")
+        raise HTTPException(
+            status_code=503,
+            detail=f"Dify 服務暫時不可用 (斷路器已打開，{e.remaining_seconds:.0f}秒後重試)"
+        )
     
     except httpx.ConnectError as e:
         logger.error(f"Dify 連線失敗: {e}")
@@ -107,25 +116,28 @@ async def chat_with_dify(request: DifyRequest):
 
 @router.post("/workflow/run")
 async def run_workflow(request: WorkflowRequest):
-    """執行 Dify Workflow"""
+    """執行 Dify Workflow (受 CircuitBreaker 保護)"""
     config = get_dify_config()
     
     try:
-        async with httpx.AsyncClient(timeout=settings.REQUEST_TIMEOUT) as client:
-            response = await client.post(
-                f"{config['api_url']}/workflows/run",
-                headers={
-                    "Authorization": f"Bearer {config['api_key']}",
-                    "Content-Type": "application/json"
-                },
-                json={
-                    "inputs": request.inputs,
-                    "user": request.user,
-                    "response_mode": "blocking"
-                }
-            )
-            response.raise_for_status()
-            return response.json()
+        async with dify_breaker:
+            async with httpx.AsyncClient(timeout=settings.REQUEST_TIMEOUT) as client:
+                response = await client.post(
+                    f"{config['api_url']}/workflows/run",
+                    headers={
+                        "Authorization": f"Bearer {config['api_key']}",
+                        "Content-Type": "application/json"
+                    },
+                    json={
+                        "inputs": request.inputs,
+                        "user": request.user,
+                        "response_mode": "blocking"
+                    }
+                )
+                response.raise_for_status()
+                return response.json()
+    except CircuitBreakerOpenError as e:
+        raise HTTPException(status_code=503, detail=f"Dify 服務暫時不可用: {e}")
     except httpx.HTTPError as e:
         logger.error(f"Dify Workflow 錯誤: {e}")
         raise HTTPException(status_code=500, detail=f"Workflow 執行失敗: {str(e)}")

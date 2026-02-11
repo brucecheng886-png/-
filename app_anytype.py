@@ -20,11 +20,17 @@ import httpx
 from backend.api import dify_router, ragflow_router, graph_router, graph_import_router, system_router
 from backend.api.tasks import router as tasks_router
 from backend.api.media_library import router as media_library_router
-from backend.core.kuzu_manager import KuzuDBManager, MockKuzuManager
+from backend.core.kuzu_manager import KuzuDBManager, MockKuzuManager, AsyncKuzuWrapper
 from backend.core.config import settings, get_current_api_keys
 from backend.core.auth import APIAuthMiddleware, initialize_auth_token, verify_token
 from backend.services.watcher import WatcherService
 from backend.services.task_queue import task_queue
+from backend.core.logging import (
+    setup_structured_logging,
+    RequestTracingMiddleware,
+    request_id_var,
+)
+from backend.core.telemetry import setup_opentelemetry
 from backend.rag_client import RAGFlowClient
 
 # ==================== Pydantic 模型 ====================
@@ -49,10 +55,13 @@ class BatchEntityCreate(BaseModel):
     """批量創建實體請求模型"""
     entities: list[EntityCreate]
 
-# 日誌配置
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+# 結構化日誌配置
+# 生產模式: JSON 格式 (json_format=True)
+# 開發模式: 人類可讀 (json_format=False)
+_is_debug = os.environ.get("DEBUG", "false").lower() == "true"
+setup_structured_logging(
+    level=os.environ.get("LOG_LEVEL", "DEBUG" if _is_debug else "INFO"),
+    json_format=not _is_debug,
 )
 logger = logging.getLogger(__name__)
 
@@ -74,11 +83,12 @@ async def lifespan(app: FastAPI):
         limits=httpx.Limits(max_connections=50, max_keepalive_connections=10),
     )
 
-    # -- 初始化 KuzuDB --
+    # -- 初始化 KuzuDB (with AsyncKuzuWrapper for concurrency safety) --
     kuzu_manager = None
     try:
-        kuzu_manager = KuzuDBManager(settings.KUZU_DB_PATH)
-        logger.info("KuzuDB 初始化成功（生產模式）")
+        raw_manager = KuzuDBManager(settings.KUZU_DB_PATH)
+        kuzu_manager = AsyncKuzuWrapper(raw_manager)
+        logger.info("KuzuDB 初始化成功（生產模式 + AsyncKuzuWrapper 併發安全）")
     except Exception as e:
         logger.warning(f"KuzuDB 初始化失敗: {e}")
         try:
@@ -102,11 +112,7 @@ async def lifespan(app: FastAPI):
         else:
             os.makedirs(monitor_path, exist_ok=True)
 
-            ragflow_base = api_keys['RAGFLOW_API_URL']
-            if '/api/v1' in ragflow_base:
-                ragflow_base = ragflow_base.replace('/api/v1', '/v1')
-            elif not ragflow_base.endswith('/v1'):
-                ragflow_base = ragflow_base.rstrip('/') + '/v1'
+            ragflow_base = api_keys['RAGFLOW_API_URL']  # 直接使用 config URL (e.g. http://localhost:9380/api/v1)
 
             rag_client = RAGFlowClient(api_key=rag_api_key, base_url=ragflow_base)
             watcher_service = WatcherService(
@@ -154,12 +160,19 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# OpenTelemetry 自動儀器化 (在 app 建立後)
+# 設定 OTEL_ENABLED=true 以啟用分散式追蹤
+if os.environ.get("OTEL_ENABLED", "false").lower() == "true":
+    setup_opentelemetry(app=app)
+
 # CORS 配置 - 僅允許已知的前端來源
 _cors_origins = [
     "http://localhost:8000",
     "http://127.0.0.1:8000",
     "http://localhost:8001",
     "http://127.0.0.1:8001",
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
 ]
 # 可透過環境變數新增額外來源（逗號分隔）
 _extra_origins = os.environ.get("CORS_ORIGINS", "")
@@ -174,9 +187,20 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Request ID 追蹤中間件 — 為每個 HTTP 請求注入 X-Request-ID
+app.add_middleware(RequestTracingMiddleware)
+
 # API 認證中間件（地端化伺服器安全防護）
 # 設定 BRUV_AUTH_ENABLED=false 環境變數可停用認證（僅供開發）
 auth_enabled = os.environ.get("BRUV_AUTH_ENABLED", "true").lower() != "false"
+if settings.BRUV_AUTH_ENABLED is False:
+    auth_enabled = False
+
+# 確保 .env 中的 BRUV_API_TOKEN 可被 auth 模組讀取
+# (Pydantic BaseSettings 讀取 .env 但不注入 os.environ)
+if settings.BRUV_API_TOKEN and not os.environ.get("BRUV_API_TOKEN"):
+    os.environ["BRUV_API_TOKEN"] = settings.BRUV_API_TOKEN
+
 app.add_middleware(APIAuthMiddleware, enabled=auth_enabled)
 
 if auth_enabled:
@@ -431,13 +455,18 @@ async def get_graph_data(request: Request, graph_id: str = "1"):
                 # 統計節點類型
                 node_type_count[node_type] = node_type_count.get(node_type, 0) + 1
                 
-                # 構建節點對象
+                # 構建節點對象（將 properties 中的常用欄位提升到頂層）
                 node = {
                     "id": node_id,
                     "name": node_name,
                     "type": node_type,
                     "group": group,
                     "val": 10,  # 預設大小
+                    "link": properties.get("link", ""),
+                    "description": properties.get("description", ""),
+                    "image": properties.get("image", ""),
+                    "color": properties.get("color", ""),
+                    "size": properties.get("size", 10),
                     "properties": properties
                 }
                 

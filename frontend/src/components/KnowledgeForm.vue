@@ -115,6 +115,7 @@
 import { ref, reactive, onMounted } from 'vue';
 import { ElMessage } from 'element-plus';
 import { useGraphStore } from '../stores/graphStore';
+import { authFetch } from '../services/apiClient';
 import { 
   Check, 
   Refresh, 
@@ -162,7 +163,7 @@ const rules = {
 // 檢查 API 健康狀態
 const checkApiHealth = async () => {
   try {
-    const response = await fetch(`${API_BASE_URL}/api/health`, {
+    const response = await authFetch(`${API_BASE_URL}/api/health`, {
       method: 'GET',
       headers: { 'Content-Type': 'application/json' }
     });

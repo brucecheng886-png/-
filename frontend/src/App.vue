@@ -1,54 +1,64 @@
 <template>
   <div class="app-container bg-nexus-bg">
-    <!-- 漢堡選單按鈕 -->
-    <button
-      @click="layoutStore.toggleSidebarCollapse"
-      class="hamburger-btn fixed left-4 top-4 z-[100] flex flex-col items-center justify-center w-12 h-12 rounded-xl bg-nexus-surface/90 hover:bg-nexus-elevated border border-white/10 transition-all duration-300"
-      :title="layoutStore.isSidebarCollapsed ? '展開側邊欄' : '收起側邊欄'"
-    >
-      <span class="hamburger-line bg-white"></span>
-      <span class="hamburger-line my-1.5 bg-white"></span>
-      <span class="hamburger-line bg-white"></span>
-    </button>
+    <!-- 頂部導航列 (全寬) -->
+    <header class="top-bar">
+      <!-- 漢堡選單按鈕 -->
+      <button
+        @click="layoutStore.toggleSidebarCollapse"
+        class="hamburger-btn flex flex-col items-center justify-center w-10 h-10 rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 transition-all duration-200 mr-3 flex-shrink-0"
+        :title="layoutStore.isSidebarCollapsed ? '展開側邊欄' : '收起側邊欄'"
+      >
+        <span class="hamburger-line bg-white"></span>
+        <span class="hamburger-line my-1 bg-white"></span>
+        <span class="hamburger-line bg-white"></span>
+      </button>
 
-    <!-- 側邊欄組件 -->
-    <Sidebar />
+      <NexusBreadcrumb />
 
-    <!-- 主內容區 -->
-    <main 
-      class="main-content w-full transition-all duration-300"
-      :style="{ marginLeft: layoutStore.isSidebarCollapsed ? '0' : '280px' }"
-    >
-      <!-- 頂部導航列 -->
-      <header class="top-bar">
-        <NexusBreadcrumb />
+      <div class="top-bar-actions">
+        <CollaborationBar />
 
-        <div class="top-bar-actions">
-          <CollaborationBar />
+        <div class="w-px h-5 bg-white/10"></div>
 
-          <div class="w-px h-5 bg-white/10"></div>
+        <!-- 通知鈴鐺 -->
+        <button class="w-9 h-9 flex items-center justify-center rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 transition-all cursor-pointer relative" title="通知">
+          <svg class="w-4 h-4 text-gray-300" viewBox="0 0 20 20" fill="currentColor">
+            <path d="M10 2a6 6 0 00-6 6v3.586l-.707.707A1 1 0 004 14h12a1 1 0 00.707-1.707L16 11.586V8a6 6 0 00-6-6zM10 18a3 3 0 01-3-3h6a3 3 0 01-3 3z"/>
+          </svg>
+        </button>
 
-          <button 
-            class="ai-copilot-btn" 
-            @click="layoutStore.toggleAssistant"
-            :class="{ 'active': layoutStore.showAssistant }"
-            title="呼叫 AI 助手"
-          >
-            <span class="ai-icon">✨</span>
-            <span class="ai-label">AI 助手</span>
-          </button>
-        </div>
-      </header>
-
-      <!-- 路由視圖容器 -->
-      <div class="router-view-container w-full">
-        <router-view v-slot="{ Component }">
-          <transition name="fade" mode="out-in">
-            <component :is="Component" />
-          </transition>
-        </router-view>
+        <button 
+          class="ai-copilot-btn" 
+          @click="layoutStore.toggleAssistant"
+          :class="{ 'active': layoutStore.showAssistant }"
+          title="呼叫 AI 助手"
+        >
+          <span class="ai-icon">✨</span>
+          <span class="ai-label">AI 助手</span>
+        </button>
       </div>
-    </main>
+    </header>
+
+    <!-- 下方內容區 -->
+    <div class="app-body">
+      <!-- 側邊欄組件 -->
+      <Sidebar />
+
+      <!-- 主內容區 -->
+      <main 
+        class="main-content w-full transition-all duration-300"
+        :style="{ marginLeft: layoutStore.isSidebarCollapsed ? '0' : '280px' }"
+      >
+        <!-- 路由視圖容器 -->
+        <div class="router-view-container w-full">
+          <router-view v-slot="{ Component }">
+            <transition name="fade" mode="out-in">
+              <component :is="Component" />
+            </transition>
+          </router-view>
+        </div>
+      </main>
+    </div>
 
     <!-- AI 懸浮助手 -->
     <AICopilot 
@@ -89,25 +99,30 @@ onMounted(() => {
 <style scoped>
 .app-container {
   display: flex;
+  flex-direction: column;
   width: 100%;
   height: 100vh;
   overflow: hidden;
 }
 
+.app-body {
+  display: flex;
+  flex: 1;
+  overflow: hidden;
+  position: relative;
+}
+
 .hamburger-btn {
-  backdrop-filter: blur(10px);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
   cursor: pointer;
 }
 .hamburger-btn:hover {
   transform: scale(1.05);
-  box-shadow: 0 0 20px rgba(59, 130, 246, 0.3);
 }
 .hamburger-btn:active { transform: scale(0.95); }
 
 .hamburger-line {
-  width: 24px;
-  height: 2.5px;
+  width: 18px;
+  height: 2px;
   border-radius: 2px;
 }
 
@@ -116,20 +131,22 @@ onMounted(() => {
   flex-direction: column;
   overflow: hidden;
   position: relative;
-  height: 100vh;
+  flex: 1;
 }
 
 .top-bar {
   height: 56px;
-  background: rgba(26, 29, 58, 0.8);
+  min-height: 56px;
+  background: rgba(26, 29, 58, 0.95);
   backdrop-filter: blur(10px);
   border-bottom: 1px solid rgba(255, 255, 255, 0.05);
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0 32px;
+  padding: 0 24px;
   position: relative;
-  z-index: 90;
+  z-index: 100;
+  width: 100%;
 }
 
 .top-bar-actions { display: flex; gap: 12px; }
@@ -137,14 +154,13 @@ onMounted(() => {
 .ai-copilot-btn {
   display: flex; align-items: center; gap: 8px;
   padding: 8px 18px;
-  background: linear-gradient(135deg, #3b82f6, #8b5cf6);
-  border: none; border-radius: 10px;
-  color: white; font-size: 14px; font-weight: 600;
+  background: #2563eb;
+  border: 1px solid #3b82f6; border-radius: 10px;
+  color: #ffffff; font-size: 14px; font-weight: 600;
   cursor: pointer; transition: all 0.3s ease;
-  box-shadow: 0 0 20px rgba(59, 130, 246, 0.3);
 }
-.ai-copilot-btn:hover { transform: translateY(-2px); box-shadow: 0 0 30px rgba(59, 130, 246, 0.5); }
-.ai-copilot-btn.active { box-shadow: 0 0 30px rgba(59, 130, 246, 0.6), 0 0 60px rgba(139, 92, 246, 0.3); }
+.ai-copilot-btn:hover { background: #1d4ed8; transform: translateY(-1px); }
+.ai-copilot-btn.active { background: #1e40af; box-shadow: 0 0 20px rgba(59, 130, 246, 0.5); border-color: #60a5fa; }
 
 .ai-icon { font-size: 18px; }
 .ai-label { font-size: 13px; letter-spacing: 0.02em; }

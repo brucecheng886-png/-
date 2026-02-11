@@ -33,7 +33,7 @@
                 <strong>自動監控</strong> - 上傳後自動觸發監控服務處理
               </li>
               <li class="flex items-center gap-2 mt-3">
-                <span class="text-blue-500">ℹ️</span>
+                <svg class="w-4 h-4 text-blue-500 flex-shrink-0" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clip-rule="evenodd"/></svg>
                 <span>檔案將儲存至 <code class="px-2 py-1 bg-gray-700 rounded">C:/BruV_Data/Auto_Import</code></span>
               </li>
             </ul>
@@ -209,6 +209,8 @@
 </template>
 
 <script>
+import { authFetch } from '../services/apiClient';
+
 export default {
   name: 'FileImport',
   data() {
@@ -267,7 +269,7 @@ export default {
             const formData = new FormData();
             formData.append('file', file);
 
-            const response = await fetch('/api/system/upload', {
+            const response = await authFetch('/api/system/upload', {
               method: 'POST',
               body: formData
             });

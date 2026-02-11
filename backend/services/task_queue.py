@@ -2,22 +2,29 @@
 后台任务队列管理器
 支持文件处理任务在用户离开页面后继续运行
 任务元数据持久化到 SQLite，防止重啟後丟失
+
+架構說明：
+  - TaskBackend (Protocol) — 抽象介面，定義任務後端必須實作的方法
+  - TaskQueue — 門面 (Facade)，根據 TASK_BACKEND 環境變數選擇後端
+  - 現階段使用 SQLite 單機後端，Phase 4 可切換為 Celery/Redis 叢集後端
+  - 切換方式: .env 中設定 TASK_BACKEND=celery + CELERY_BROKER_URL=redis://...
 """
 import asyncio
 import logging
+import os
 import uuid
 import json
 import sqlite3
 from datetime import datetime
 from enum import Enum
 from pathlib import Path
-from typing import Dict, Optional, Callable, Any
+from typing import Dict, Optional, Callable, Any, List, Protocol, runtime_checkable
 from dataclasses import dataclass, field
 
 logger = logging.getLogger(__name__)
 
 # 持久化路徑
-_DATA_DIR = Path(__import__('os').environ.get(
+_DATA_DIR = Path(os.environ.get(
     "BRUV_DATA_DIR",
     str(Path.home() / "BruV_Data")
 ))
@@ -25,6 +32,83 @@ _TASK_DB_PATH = _DATA_DIR / "task_queue.db"
 
 # 最大歷史記錄數（超過時自動清理已完成/失敗的舊任務）
 MAX_TASK_HISTORY = 500
+
+
+# ==================== 抽象介面 (Protocol) ====================
+
+@runtime_checkable
+class TaskBackend(Protocol):
+    """
+    任務佇列後端抽象介面
+
+    Phase 1 (現在): SQLite 單機後端 — TaskQueue 直接實作此介面
+    Phase 4 (叢集): CeleryTaskBackend / RedisTaskBackend
+    遵循 OCP (開放封閉原則) — 擴展新後端不需修改現有程式碼
+
+    使用範例:
+        # Phase 1: 預設 SQLite
+        queue = create_task_queue()
+
+        # Phase 4: 切換為 Celery (只改 .env)
+        # TASK_BACKEND=celery
+        # CELERY_BROKER_URL=redis://redis:6379/2
+        queue = create_task_queue()
+    """
+
+    def create_task(self, task_type: str, **kwargs) -> str:
+        """建立新任務，回傳任務 ID"""
+        ...
+
+    def get_task(self, task_id: str) -> Optional[Dict[str, Any]]:
+        """查詢單個任務"""
+        ...
+
+    def get_all_tasks(self) -> Dict[str, Any]:
+        """查詢所有任務"""
+        ...
+
+    def update_task_status(self, task_id: str, status: 'TaskStatus', **kwargs) -> None:
+        """更新任務狀態"""
+        ...
+
+    def update_task_progress(self, task_id: str, processed_items: int, **kwargs) -> None:
+        """更新任務進度"""
+        ...
+
+    def set_task_result(self, task_id: str, result: Dict[str, Any]) -> None:
+        """設定任務結果"""
+        ...
+
+    async def start_worker(self) -> None:
+        """啟動後台工作者"""
+        ...
+
+    async def stop_worker(self) -> None:
+        """停止後台工作者"""
+        ...
+
+
+def create_task_queue(backend_type: str = None) -> 'TaskQueue':
+    """
+    工廠函式 — 根據配置建立 TaskQueue
+
+    Args:
+        backend_type: "sqlite" (預設) 或 "celery" (Phase 4)
+
+    Returns:
+        TaskQueue 實例
+    """
+    if backend_type is None:
+        backend_type = os.environ.get("TASK_BACKEND", "sqlite")
+
+    if backend_type == "celery":
+        # Phase 4: Celery 後端 (尚未實作，預留介面)
+        logger.warning("Celery 後端尚未實作，回退到 SQLite 後端")
+        # from backend.services.celery_backend import CeleryTaskBackend
+        # broker = os.environ.get("CELERY_BROKER_URL", "redis://localhost:6379/2")
+        # return CeleryTaskBackend(broker)
+
+    return TaskQueue()
 
 
 class TaskStatus(str, Enum):

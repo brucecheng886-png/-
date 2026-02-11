@@ -12,6 +12,7 @@ import shutil
 from pathlib import Path
 from datetime import datetime
 from backend.core.config import load_config_from_file, save_config_to_file, get_current_api_keys, settings
+from backend.core.circuit_breaker import dify_breaker, ragflow_breaker
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -150,8 +151,8 @@ async def get_config():
         "config": {
             "dify_key": "app-xxxxxxxx",
             "ragflow_key": "ragflow-xxxxxxxx",
-            "dify_api_url": "http://localhost:80/v1",
-            "ragflow_api_url": "http://localhost:81/api/v1"
+            "dify_api_url": "http://localhost:5001/v1",
+            "ragflow_api_url": "http://localhost:9380/api/v1"
         }
     }
     """
@@ -185,8 +186,8 @@ async def update_config(request: ConfigUpdateRequest):
     {
         "dify_key": "app-xxxxxxxxxxxxxxxx",
         "ragflow_key": "ragflow-xxxxxxxxxxxxxxxx",
-        "dify_api_url": "http://localhost:80/v1",
-        "ragflow_api_url": "http://localhost:81/api/v1"
+        "dify_api_url": "http://localhost:5001/v1",
+        "ragflow_api_url": "http://localhost:9380/api/v1"
     }
     
     返回格式:
@@ -292,13 +293,13 @@ async def test_connection():
         "success": true,
         "dify": {
             "status": "ok" | "error",
-            "url": "http://localhost:80/v1",
+            "url": "http://localhost:5001/v1",
             "message": "連接成功" | "錯誤訊息",
             "api_key_configured": true
         },
         "ragflow": {
             "status": "ok" | "error",
-            "url": "http://localhost:81/api/v1",
+            "url": "http://localhost:9380/api/v1",
             "message": "連接成功" | "錯誤訊息",
             "api_key_configured": true
         }
@@ -483,16 +484,11 @@ async def upload_file(
                 if not api_keys['RAGFLOW_API_KEY']:
                     logger.warning("⚠️ RAGFlow API Key 未配置，跳過 RAGFlow 上傳")
                 else:
-                    # 修正 base_url，確保最終為 http://localhost:81/api/v1/document/upload
-                    # 只去除最後的 /v1，保留 /api
+                    # 使用配置中的 RAGFlow API URL
                     ragflow_api_url = api_keys['RAGFLOW_API_URL']
-                    if ragflow_api_url.endswith('/v1'):
-                        base_url = ragflow_api_url[:-3]  # 去除 /v1
-                    else:
-                        base_url = ragflow_api_url
                     rag_client = RAGFlowClient(
                         api_key=api_keys['RAGFLOW_API_KEY'],
-                        base_url=base_url
+                        base_url=ragflow_api_url
                     )
                     
                     # 上傳到 RAGFlow
@@ -544,3 +540,60 @@ async def upload_file(
     except Exception as e:
         logger.error(f"❌ 檔案上傳失敗: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"檔案上傳失敗: {str(e)}")
+
+
+# ==================== 斷路器狀態 API ====================
+
+@router.get("/circuit-breakers")
+async def get_circuit_breaker_status():
+    """
+    取得所有斷路器狀態
+
+    Returns:
+        各下游服務斷路器的當前狀態、失敗次數、剩餘恢復時間
+    """
+    return {
+        "success": True,
+        "data": {
+            "dify": dify_breaker.get_status(),
+            "ragflow": ragflow_breaker.get_status(),
+        }
+    }
+
+
+# ==================== DLQ (Dead Letter Queue) API ====================
+
+@router.get("/saga-dlq")
+async def get_saga_dlq():
+    """
+    取得 Saga 死信佇列中的未解決項目
+
+    用途：管理員排查 RAGFlow ↔ KuzuDB 不一致問題
+    """
+    try:
+        from backend.services.watcher import dlq
+        items = dlq.list_unresolved(limit=50)
+        return {
+            "success": True,
+            "data": items,
+            "total": len(items)
+        }
+    except Exception as e:
+        logger.error(f"DLQ 查詢失敗: {e}")
+        raise HTTPException(status_code=500, detail=f"DLQ 查詢失敗: {str(e)}")
+
+
+@router.post("/saga-dlq/{dlq_id}/resolve")
+async def resolve_dlq_item(dlq_id: str):
+    """標記 DLQ 項目為已解決"""
+    try:
+        from backend.services.watcher import dlq
+        success = dlq.mark_resolved(dlq_id)
+        if success:
+            return {"success": True, "message": f"DLQ 項目 {dlq_id} 已標記為已解決"}
+        raise HTTPException(status_code=404, detail="DLQ 項目不存在")
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"DLQ 標記失敗: {e}")
+        raise HTTPException(status_code=500, detail=str(e))

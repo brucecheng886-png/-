@@ -5,7 +5,6 @@
       to="/nexus" 
       class="breadcrumb-item flex items-center gap-1.5 px-2 py-1 rounded-md hover:bg-white/5 transition-all group"
     >
-      <span class="text-base group-hover:scale-110 transition-transform">🏠</span>
       <span class="text-text-secondary group-hover:text-white transition-colors">Nexus</span>
     </router-link>
 
@@ -22,7 +21,6 @@
             : 'text-text-secondary hover:bg-white/5 hover:text-white cursor-pointer'
         ]"
       >
-        <span v-if="crumb.icon" class="text-base">{{ crumb.icon }}</span>
         <span>{{ crumb.label }}</span>
       </component>
     </template>
@@ -44,6 +42,20 @@
         <span class="text-neon-purple text-xs font-medium truncate max-w-[120px]">{{ selectedNodeName }}</span>
       </span>
     </template>
+
+    <!-- 狀態標記 -->
+    <div class="flex items-center gap-2 ml-3">
+      <span class="flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-emerald-500/10 border border-emerald-500/20">
+        <svg class="w-3 h-3 text-emerald-400" viewBox="0 0 16 16" fill="currentColor">
+          <path d="M3 3a2 2 0 012-2h6a2 2 0 012 2v10a2 2 0 01-2 2H5a2 2 0 01-2-2V3zm3 1a1 1 0 000 2h4a1 1 0 100-2H6zm0 3a1 1 0 000 2h4a1 1 0 100-2H6z"/>
+        </svg>
+        <span class="text-emerald-400 text-[11px] font-semibold">KuzuDB</span>
+      </span>
+      <span class="flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-orange-500/10 border border-orange-500/20">
+        <span class="text-[11px]">✨</span>
+        <span class="text-orange-400 text-[11px] font-semibold">AI Ready</span>
+      </span>
+    </div>
   </nav>
 </template>
 
@@ -57,18 +69,18 @@ const graphStore = useGraphStore();
 
 // 路由 → 麵包屑映射
 const routeBreadcrumbMap = {
-  '/nexus':        { label: '知識中樞', icon: '🌌', parent: null },
-  '/graph-page':   { label: '圖譜工作台', icon: '🌐', parent: '/nexus' },
-  '/import':       { label: '資料導入', icon: '📥', parent: '/graph-page' },
-  '/file-import':  { label: '檔案上傳', icon: '📤', parent: '/graph-page' },
-  '/cross-graph':  { label: '跨圖譜連接', icon: '🔗', parent: '/nexus' },
-  '/graph-3d':     { label: '3D 圖譜', icon: '🧊', parent: '/graph-page' },
-  '/batch-repair': { label: '批次修復', icon: '🔧', parent: '/nexus' },
-  '/settings':     { label: '系統設定', icon: '⚙️', parent: null },
-  '/monitor':      { label: '電腦資訊', icon: '💻', parent: null },
-  '/create':       { label: '建立實體', icon: '➕', parent: '/graph-page' },
-  '/graph':        { label: '2D 圖譜 (舊)', icon: '🕸️', parent: '/nexus' },
-  '/timeline':     { label: '時間軸', icon: '⏳', parent: '/graph-page' },
+  '/nexus':        { label: '主頁', parent: null },
+  '/graph-page':   { label: '圖譜工作台', parent: '/nexus' },
+  '/import':       { label: '資料導入', parent: '/graph-page' },
+  '/file-import':  { label: '檔案上傳', parent: '/graph-page' },
+  '/cross-graph':  { label: '跨圖譜連接', parent: '/nexus' },
+  '/graph-3d':     { label: '3D 圖譜', parent: '/graph-page' },
+  '/batch-repair': { label: '批次修復', parent: '/nexus' },
+  '/settings':     { label: '系統設定', parent: null },
+  '/monitor':      { label: '電腦資訊', parent: null },
+  '/create':       { label: '建立實體', parent: '/graph-page' },
+  '/graph':        { label: '2D 圖譜 (舊)', parent: '/nexus' },
+  '/timeline':     { label: '時間軸', parent: '/graph-page' },
 };
 
 // 構建麵包屑陣列

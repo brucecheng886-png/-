@@ -6,7 +6,7 @@
       class="zoom-btn" 
       title="放大"
     >
-      <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+      <svg width="20" height="20" viewBox="0 0 16 16" fill="none">
         <path d="M8 3v10M3 8h10" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
       </svg>
     </button>
@@ -22,13 +22,10 @@
       class="zoom-btn" 
       title="縮小"
     >
-      <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+      <svg width="20" height="20" viewBox="0 0 16 16" fill="none">
         <path d="M3 8h10" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
       </svg>
     </button>
-
-    <!-- 分隔線 -->
-    <div class="zoom-sep"></div>
 
     <!-- 適配全覽 -->
     <button 
@@ -36,7 +33,7 @@
       class="zoom-btn" 
       title="畫面適配"
     >
-      <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+      <svg width="20" height="20" viewBox="0 0 16 16" fill="none">
         <path d="M2 6V3a1 1 0 011-1h3M10 2h3a1 1 0 011 1v3M14 10v3a1 1 0 01-1 1h-3M6 14H3a1 1 0 01-1-1v-3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
       </svg>
     </button>
@@ -47,21 +44,20 @@
       class="zoom-btn" 
       title="重置視圖"
     >
-      <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+      <svg width="20" height="20" viewBox="0 0 16 16" fill="none">
         <path d="M2 8a6 6 0 0110.47-4M14 2v4h-4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
         <path d="M14 8a6 6 0 01-10.47 4M2 14v-4h4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
       </svg>
     </button>
 
     <!-- 佈局切換 -->
-    <div class="zoom-sep"></div>
     <button 
       @click="$emit('toggle-layout')" 
       class="zoom-btn"
       :class="{ 'active': is3D }"
       :title="is3D ? '切回 2D' : '切到 3D'"
     >
-      <span class="text-[11px] font-bold">{{ is3D ? '3D' : '2D' }}</span>
+      <span class="text-[13px] font-bold">{{ is3D ? '3D' : '2D' }}</span>
     </button>
   </div>
 </template>
@@ -81,8 +77,8 @@ defineEmits(['zoom-in', 'zoom-out', 'zoom-fit', 'zoom-reset', 'toggle-layout']);
   flex-direction: column;
   align-items: center;
   gap: 2px;
-  padding: 6px;
-  border-radius: 12px;
+  padding: 8px;
+  border-radius: 14px;
   background: rgba(10, 14, 39, 0.85);
   backdrop-filter: blur(12px);
   border: 1px solid rgba(255, 255, 255, 0.08);
@@ -93,9 +89,9 @@ defineEmits(['zoom-in', 'zoom-out', 'zoom-fit', 'zoom-reset', 'toggle-layout']);
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 32px;
-  height: 32px;
-  border-radius: 8px;
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
   color: rgba(229, 229, 229, 0.7);
   background: transparent;
   border: none;
@@ -118,7 +114,7 @@ defineEmits(['zoom-in', 'zoom-out', 'zoom-fit', 'zoom-reset', 'toggle-layout']);
 }
 
 .zoom-level {
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 600;
   color: rgba(229, 229, 229, 0.5);
   font-family: 'JetBrains Mono', monospace;
@@ -126,10 +122,5 @@ defineEmits(['zoom-in', 'zoom-out', 'zoom-fit', 'zoom-reset', 'toggle-layout']);
   user-select: none;
 }
 
-.zoom-sep {
-  width: 20px;
-  height: 1px;
-  background: rgba(255, 255, 255, 0.08);
-  margin: 2px 0;
-}
+
 </style>

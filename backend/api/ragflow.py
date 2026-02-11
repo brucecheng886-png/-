@@ -1,5 +1,5 @@
 """
-RAGFlow API 路由
+RAGFlow API 路由 (包含 CircuitBreaker 斷路器保護)
 """
 from fastapi import APIRouter, HTTPException, UploadFile, File
 from pydantic import BaseModel
@@ -9,6 +9,7 @@ import logging
 import os
 
 from backend.core.config import settings, get_current_api_keys
+from backend.core.circuit_breaker import ragflow_breaker, CircuitBreakerOpenError
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -38,25 +39,32 @@ class DocumentUpload(BaseModel):
 
 @router.post("/query")
 async def query_ragflow(request: RAGFlowQuery):
-    """查詢 RAGFlow"""
+    """查詢 RAGFlow (受 CircuitBreaker 保護)"""
     try:
         config = get_ragflow_config()
         
-        async with httpx.AsyncClient(timeout=settings.REQUEST_TIMEOUT) as client:
-            response = await client.post(
-                f"{config['api_url']}/retrieval",
-                headers={
-                    "Authorization": f"Bearer {config['api_key']}",
-                    "Content-Type": "application/json"
-                },
-                json={
-                    "question": request.question,
-                    "dataset_ids": request.dataset_ids,
-                    "top_k": request.top_k
-                }
-            )
-            response.raise_for_status()
-            return response.json()
+        async with ragflow_breaker:
+            async with httpx.AsyncClient(timeout=settings.REQUEST_TIMEOUT) as client:
+                response = await client.post(
+                    f"{config['api_url']}/retrieval",
+                    headers={
+                        "Authorization": f"Bearer {config['api_key']}",
+                        "Content-Type": "application/json"
+                    },
+                    json={
+                        "question": request.question,
+                        "dataset_ids": request.dataset_ids,
+                        "top_k": request.top_k
+                    }
+                )
+                response.raise_for_status()
+                return response.json()
+    except CircuitBreakerOpenError as e:
+        logger.warning(f"🔴 RAGFlow 斷路器已打開: {e}")
+        raise HTTPException(
+            status_code=503,
+            detail=f"RAGFlow 服務暫時不可用 (斷路器已打開，{e.remaining_seconds:.0f}秒後重試)"
+        )
     except httpx.HTTPError as e:
         logger.error(f"RAGFlow API 錯誤: {e}")
         raise HTTPException(status_code=500, detail=f"RAGFlow 查詢失敗: {str(e)}")
@@ -64,17 +72,20 @@ async def query_ragflow(request: RAGFlowQuery):
 
 @router.get("/datasets")
 async def list_datasets():
-    """獲取數據集列表"""
+    """獲取數據集列表 (受 CircuitBreaker 保護)"""
     try:
         config = get_ragflow_config()
         
-        async with httpx.AsyncClient(timeout=settings.REQUEST_TIMEOUT) as client:
-            response = await client.get(
-                f"{config['api_url']}/datasets",
-                headers={"Authorization": f"Bearer {config['api_key']}"}
-            )
-            response.raise_for_status()
-            return response.json()
+        async with ragflow_breaker:
+            async with httpx.AsyncClient(timeout=settings.REQUEST_TIMEOUT) as client:
+                response = await client.get(
+                    f"{config['api_url']}/datasets",
+                    headers={"Authorization": f"Bearer {config['api_key']}"}
+                )
+                response.raise_for_status()
+                return response.json()
+    except CircuitBreakerOpenError as e:
+        raise HTTPException(status_code=503, detail=f"RAGFlow 服務暫時不可用: {e}")
     except httpx.HTTPError as e:
         logger.error(f"獲取數據集失敗: {e}")
         raise HTTPException(status_code=500, detail=f"獲取數據集失敗: {str(e)}")

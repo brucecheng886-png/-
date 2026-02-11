@@ -93,6 +93,7 @@
 
 <script setup>
 import { ref, reactive, nextTick, watch } from 'vue';
+import { authFetch } from '../services/apiClient';
 
 // Props
 const props = defineProps({
@@ -202,7 +203,7 @@ const sendMessage = async () => {
   
   try {
     // 調用 Agent API
-    const response = await fetch(`${API_BASE_URL}/api/dify/agent/chat`, {
+    const response = await authFetch(`${API_BASE_URL}/api/dify/agent/chat`, {
       method: 'POST',
       headers: { 
         'Content-Type': 'application/json',

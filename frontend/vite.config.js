@@ -9,6 +9,12 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 export default defineConfig({
   plugins: [vue()],
   
+  // 禁止清空控制台，方便查看錯誤
+  clearScreen: false,
+  
+  // 日誌級別
+  logLevel: 'info',
+  
   resolve: {
     alias: {
       '@': path.resolve(__dirname, './src')
@@ -19,6 +25,20 @@ export default defineConfig({
     port: 5173,
     host: true,
     strictPort: false,
+    
+    // HMR 配置 - 防止更新程式碼時前端終止
+    hmr: {
+      overlay: true,  // 錯誤時顯示疊加層，而不是崩潰
+      clientPort: 5173
+    },
+    
+    // Watch 選項 - Windows 檔案監視優化
+    watch: {
+      usePolling: false,  // 使用原生檔案監視（更高效）
+      interval: 100,      // 輪詢間隔
+      // 忽略不必要的目錄，減少監視負擔
+      ignored: ['**/node_modules/**', '**/.git/**', '**/dist/**']
+    },
     
     // 配置代理：將 /api 請求轉發到後端 FastAPI
     proxy: {

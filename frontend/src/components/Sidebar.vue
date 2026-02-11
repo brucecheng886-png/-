@@ -1,14 +1,20 @@
 <template>
   <aside 
-    class="fixed left-0 top-0 h-screen z-40 overflow-hidden"
-    :style="{ width: layoutStore.isSidebarCollapsed ? '0' : '280px', transition: 'width 0.3s ease' }"
+    class="fixed left-0 top-[56px] z-40 overflow-hidden"
+    :style="{ width: layoutStore.isSidebarCollapsed ? '0' : '280px', height: 'calc(100vh - 56px)', transition: 'width 0.3s ease' }"
   >
     <div class="h-full w-[280px] flex flex-col border-r border-white/5 px-4 py-6 bg-nexus-bg/95 backdrop-blur-md">
       <!-- Logo 區域 -->
-      <div class="text-center pb-6 border-b border-white/10 mb-5">
-        <div class="text-5xl mb-3 animate-float">✦</div>
-        <h1 class="m-0 text-3xl font-bold bg-gradient-to-r from-neon-blue to-neon-purple bg-clip-text text-transparent tracking-tight">BruV</h1>
-        <p class="mt-1 text-xs text-text-tertiary uppercase tracking-[0.2em]">Nexus Platform</p>
+      <div class="flex items-center gap-3 px-2 pb-5 border-b border-white/10 mb-5">
+        <div class="w-9 h-9 rounded-lg bg-gradient-to-br from-blue-500 to-blue-700 flex items-center justify-center flex-shrink-0 shadow-lg shadow-blue-500/20">
+          <svg class="w-5 h-5 text-white" viewBox="0 0 20 20" fill="currentColor">
+            <path d="M10 2L2 7v6l8 5 8-5V7l-8-5zM10 4.5L15 7.5v5L10 15.5 5 12.5v-5L10 4.5z"/>
+          </svg>
+        </div>
+        <div>
+          <h1 class="m-0 text-sm font-bold text-white tracking-tight leading-tight">BruV AI NEXUS</h1>
+          <p class="mt-0.5 text-[10px] text-text-tertiary uppercase tracking-[0.12em]">KNOWLEDGE PLATFORM</p>
+        </div>
       </div>
 
       <!-- 導航選單 -->
@@ -16,29 +22,36 @@
         <!-- 知識圖譜分組 -->
         <div class="mb-5">
           <div class="flex items-center gap-2 px-3 py-2 mb-1">
-            <span class="text-sm">🧠</span>
             <span class="text-xs font-semibold text-text-tertiary uppercase tracking-wider">Knowledge</span>
           </div>
           
           <router-link to="/nexus" class="nav-item" active-class="nav-item-active">
-            <span class="nav-icon">🌌</span>
-            <span class="nav-label">知識中樞</span>
+            <svg class="nav-icon-svg" viewBox="0 0 20 20" fill="currentColor">
+              <path d="M10.707 2.293a1 1 0 00-1.414 0l-7 7a1 1 0 001.414 1.414L4 10.414V17a1 1 0 001 1h2a1 1 0 001-1v-2a1 1 0 011-1h2a1 1 0 011 1v2a1 1 0 001 1h2a1 1 0 001-1v-6.586l.293.293a1 1 0 001.414-1.414l-7-7z"/>
+            </svg>
+            <span class="nav-label">主頁</span>
           </router-link>
           
           <div class="nav-group">
             <div class="nav-item nav-item-expandable" :class="{ 'expanded': expandedMenus.has('graph-page') }" @click="toggleSubmenu('graph-page')">
-              <span class="nav-icon">🌐</span>
+              <svg class="nav-icon-svg" viewBox="0 0 20 20" fill="currentColor">
+                <path d="M3 4a1 1 0 011-1h12a1 1 0 011 1v2a1 1 0 01-1 1H4a1 1 0 01-1-1V4zM3 10a1 1 0 011-1h6a1 1 0 011 1v6a1 1 0 01-1 1H4a1 1 0 01-1-1v-6zM14 9a1 1 0 00-1 1v6a1 1 0 001 1h2a1 1 0 001-1v-6a1 1 0 00-1-1h-2z"/>
+              </svg>
               <span class="nav-label">圖譜工作台</span>
               <span class="expand-arrow" :class="{ 'rotated': expandedMenus.has('graph-page') }">▶</span>
             </div>
             <transition name="submenu">
               <div v-show="expandedMenus.has('graph-page')" class="submenu">
                 <router-link to="/graph-page" class="nav-item nav-subitem" active-class="nav-item-active">
-                  <span class="nav-icon">📊</span>
+                  <svg class="nav-icon-svg" viewBox="0 0 20 20" fill="currentColor">
+                    <path d="M5 3a2 2 0 00-2 2v2a2 2 0 002 2h2a2 2 0 002-2V5a2 2 0 00-2-2H5zM5 11a2 2 0 00-2 2v2a2 2 0 002 2h2a2 2 0 002-2v-2a2 2 0 00-2-2H5zM11 5a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V5zM14 11a1 1 0 011 1v1h1a1 1 0 110 2h-1v1a1 1 0 11-2 0v-1h-1a1 1 0 110-2h1v-1a1 1 0 011-1z"/>
+                  </svg>
                   <span class="nav-label">圖譜視圖</span>
                 </router-link>
                 <router-link to="/import" class="nav-item nav-subitem" active-class="nav-item-active">
-                  <span class="nav-icon">📥</span>
+                  <svg class="nav-icon-svg" viewBox="0 0 20 20" fill="currentColor">
+                    <path fill-rule="evenodd" d="M3 17a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zM6.293 6.707a1 1 0 010-1.414l3-3a1 1 0 011.414 0l3 3a1 1 0 01-1.414 1.414L11 5.414V13a1 1 0 11-2 0V5.414L7.707 6.707a1 1 0 01-1.414 0z" clip-rule="evenodd"/>
+                  </svg>
                   <span class="nav-label">檔案匯入</span>
                 </router-link>
               </div>
@@ -46,12 +59,16 @@
           </div>
           
           <router-link to="/timeline" class="nav-item" active-class="nav-item-active">
-            <span class="nav-icon">⏳</span>
+            <svg class="nav-icon-svg" viewBox="0 0 20 20" fill="currentColor">
+              <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm1-12a1 1 0 10-2 0v4a1 1 0 00.293.707l2.828 2.829a1 1 0 101.415-1.415L11 9.586V6z" clip-rule="evenodd"/>
+            </svg>
             <span class="nav-label">時間軸</span>
           </router-link>
 
           <router-link to="/cross-graph" class="nav-item" active-class="nav-item-active">
-            <span class="nav-icon">🔗</span>
+            <svg class="nav-icon-svg" viewBox="0 0 20 20" fill="currentColor">
+              <path fill-rule="evenodd" d="M12.586 4.586a2 2 0 112.828 2.828l-3 3a2 2 0 01-2.828 0 1 1 0 00-1.414 1.414 4 4 0 005.656 0l3-3a4 4 0 00-5.656-5.656l-1.5 1.5a1 1 0 101.414 1.414l1.5-1.5zm-5 5a2 2 0 012.828 0 1 1 0 101.414-1.414 4 4 0 00-5.656 0l-3 3a4 4 0 105.656 5.656l1.5-1.5a1 1 0 10-1.414-1.414l-1.5 1.5a2 2 0 11-2.828-2.828l3-3z" clip-rule="evenodd"/>
+            </svg>
             <span class="nav-label">跨圖譜連接</span>
           </router-link>
         </div>
@@ -59,12 +76,19 @@
         <!-- 系統分組 -->
         <div>
           <div class="flex items-center gap-2 px-3 py-2 mb-1">
-            <span class="text-sm">⚙️</span>
             <span class="text-xs font-semibold text-text-tertiary uppercase tracking-wider">System</span>
           </div>
-          <router-link v-for="route in systemRoutes" :key="route.path" :to="route.path" class="nav-item" active-class="nav-item-active">
-            <span class="nav-icon">{{ route.meta.icon }}</span>
-            <span class="nav-label">{{ route.meta.title }}</span>
+          <router-link to="/settings" class="nav-item" active-class="nav-item-active">
+            <svg class="nav-icon-svg" viewBox="0 0 20 20" fill="currentColor">
+              <path fill-rule="evenodd" d="M11.49 3.17c-.38-1.56-2.6-1.56-2.98 0a1.532 1.532 0 01-2.286.948c-1.372-.836-2.942.734-2.106 2.106.54.886.061 2.042-.947 2.287-1.561.379-1.561 2.6 0 2.978a1.532 1.532 0 01.947 2.287c-.836 1.372.734 2.942 2.106 2.106a1.532 1.532 0 012.287.947c.379 1.561 2.6 1.561 2.978 0a1.533 1.533 0 012.287-.947c1.372.836 2.942-.734 2.106-2.106a1.533 1.533 0 01.947-2.287c1.561-.379 1.561-2.6 0-2.978a1.532 1.532 0 01-.947-2.287c.836-1.372-.734-2.942-2.106-2.106a1.532 1.532 0 01-2.287-.947zM10 13a3 3 0 100-6 3 3 0 000 6z" clip-rule="evenodd"/>
+            </svg>
+            <span class="nav-label">系統設定</span>
+          </router-link>
+          <router-link to="/monitor" class="nav-item" active-class="nav-item-active">
+            <svg class="nav-icon-svg" viewBox="0 0 20 20" fill="currentColor">
+              <path fill-rule="evenodd" d="M3 5a2 2 0 012-2h10a2 2 0 012 2v8a2 2 0 01-2 2h-2.22l.123.489.804.804A1 1 0 0113 18H7a1 1 0 01-.707-1.707l.804-.804L7.22 15H5a2 2 0 01-2-2V5zm5.771 7H5V5h10v7H8.771z" clip-rule="evenodd"/>
+            </svg>
+            <span class="nav-label">電腦資訊</span>
           </router-link>
         </div>
       </nav>
@@ -99,20 +123,22 @@ const toggleSubmenu = (menuKey) => {
   }
 };
 
-const systemRoutes = computed(() => {
-  const systemPaths = ['/monitor', '/settings'];
-  return router.getRoutes().filter(r => 
-    r.meta && r.meta.title && systemPaths.includes(r.path)
-  );
-});
+// System routes are now hard-coded in template with SVG icons
 </script>
 
 <style scoped>
-@keyframes float {
-  0%, 100% { transform: translateY(0); }
-  50% { transform: translateY(-8px); }
+.nav-icon-svg {
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+  opacity: 1;
+  transition: opacity 0.2s;
 }
-.animate-float { animation: float 3s ease-in-out infinite; }
+
+.nav-item:hover .nav-icon-svg,
+.nav-item-active .nav-icon-svg {
+  opacity: 1;
+}
 
 .nav-item {
   display: flex;
@@ -123,7 +149,7 @@ const systemRoutes = computed(() => {
   text-decoration: none;
   font-size: 15px;
   font-weight: 500;
-  color: rgba(255, 255, 255, 0.7);
+  color: rgba(255, 255, 255, 0.95);
   transition: all 0.3s ease;
   position: relative;
   overflow: hidden;
@@ -137,7 +163,7 @@ const systemRoutes = computed(() => {
   margin-left: auto;
   font-size: 10px;
   transition: transform 0.3s ease;
-  opacity: 0.5;
+  opacity: 0.85;
 }
 .expand-arrow.rotated { transform: rotate(90deg); }
 

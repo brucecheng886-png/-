@@ -1,7 +1,9 @@
 """
 KuzuDB 知識圖譜管理器
 """
+import asyncio
 import kuzu
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import List, Dict, Any, Optional
 import logging
@@ -172,6 +174,98 @@ class KuzuDBManager:
             parameters={"id": entity_id}
         )
         return result[0] if result else None
+    
+    def update_entity(self, entity_id: str, name: Optional[str] = None, entity_type: Optional[str] = None, 
+                      properties: Optional[Dict] = None) -> bool:
+        """更新實體節點
+        
+        Args:
+            entity_id: 節點 ID
+            name: 新名稱（可選）
+            entity_type: 新類型（可選）
+            properties: 新屬性 dict（會與現有屬性合併）
+        
+        Returns:
+            bool: 成功返回 True
+        """
+        try:
+            # 先檢查實體是否存在
+            existing = self.get_entity(entity_id)
+            if not existing:
+                logger.error(f"❌ 實體不存在: {entity_id}")
+                return False
+            
+            # 構建動態 SET 子句
+            set_parts = []
+            params = {"id": entity_id}
+            
+            if name is not None:
+                set_parts.append("e.name = $name")
+                params["name"] = name
+            
+            if entity_type is not None:
+                set_parts.append("e.type = $type")
+                params["type"] = entity_type
+            
+            if properties is not None:
+                # 合併現有屬性
+                import json
+                existing_entity = existing.get('e', {})
+                existing_props_str = existing_entity.get('properties', '{}')
+                try:
+                    if isinstance(existing_props_str, str):
+                        existing_props = json.loads(existing_props_str.replace("'", '"'))
+                    else:
+                        existing_props = existing_props_str or {}
+                except (json.JSONDecodeError, AttributeError):
+                    existing_props = {}
+                
+                # 合併屬性
+                merged_props = {**existing_props, **properties}
+                set_parts.append("e.properties = $props")
+                params["props"] = str(merged_props)
+            
+            if not set_parts:
+                return True  # 沒有要更新的欄位
+            
+            query = f"MATCH (e:Entity {{id: $id}}) SET {', '.join(set_parts)}"
+            self.conn.execute(query, parameters=params)
+            
+            logger.info(f"✅ 實體已更新: {entity_id}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"❌ 更新實體失敗: {e}")
+            return False
+    
+    def delete_entity(self, entity_id: str) -> bool:
+        """刪除實體節點（同時刪除所有相關連線）
+        
+        Args:
+            entity_id: 節點 ID
+        
+        Returns:
+            bool: 成功返回 True
+        """
+        try:
+            # 先刪除所有關聯的連線
+            self.conn.execute(
+                "MATCH (e:Entity {id: $id})-[r:Relation]-() DELETE r",
+                parameters={"id": entity_id}
+            )
+            
+            # 刪除節點本身
+            self.conn.execute(
+                "MATCH (e:Entity {id: $id}) DELETE e",
+                parameters={"id": entity_id}
+            )
+            
+            logger.info(f"🗑️ 實體已刪除: {entity_id}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"❌ 刪除實體失敗: {e}")
+            return False
     
     def search_entities(self, keyword: str, entity_type: str = None) -> List[Dict]:
         """搜索實體"""
@@ -563,3 +657,244 @@ class MockKuzuManager:
     def close(self):
         """關閉連接（Mock 無需操作）"""
         logger.info("✅ [Mock] MockKuzuManager 已關閉")
+
+
+class AsyncKuzuWrapper:
+    """
+    為 KuzuDBManager 加入 async 安全層
+
+    設計原則：
+    1. 寫入操作序列化 — asyncio.Lock 確保同一時間只有一個寫入
+    2. 讀取操作可並行 — 透過 Semaphore 限制並發數
+    3. 同步呼叫隔離 — run_in_executor 避免阻塞事件迴圈
+
+    使用方式：
+        wrapper = AsyncKuzuWrapper(kuzu_manager)
+        result = await wrapper.safe_write("MERGE ...", params)
+        result = await wrapper.safe_read("MATCH ...", params)
+        # 同步方法依然可用 (向後相容)
+        wrapper.add_entity(...)
+    """
+
+    def __init__(self, manager: KuzuDBManager, max_workers: int = 4):
+        self._manager = manager
+        self._write_lock = asyncio.Lock()
+        self._read_semaphore = asyncio.Semaphore(max_workers)
+        self._executor = ThreadPoolExecutor(
+            max_workers=max_workers,
+            thread_name_prefix="kuzu"
+        )
+        logger.info(f"✅ AsyncKuzuWrapper 初始化完成 (max_workers={max_workers})")
+
+    # ---------- 內部同步輔助方法 (在 executor 中執行) ----------
+
+    def _sync_execute(self, cypher: str, parameters: dict):
+        """在執行緒池中執行的同步寫入"""
+        self._manager.conn.execute(cypher, parameters=parameters)
+
+    def _sync_query(self, cypher: str, parameters: dict) -> list:
+        """在執行緒池中執行的同步查詢"""
+        result = self._manager.conn.execute(cypher, parameters=parameters)
+        return [dict(row) for row in result.get_as_df().to_dict('records')]
+
+    # ---------- Async 安全方法 ----------
+
+    async def safe_write(self, cypher: str, parameters: dict = None) -> bool:
+        """序列化寫入 — 所有寫入操作在 Lock 保護下排隊執行"""
+        async with self._write_lock:
+            loop = asyncio.get_event_loop()
+            try:
+                await loop.run_in_executor(
+                    self._executor,
+                    self._sync_execute,
+                    cypher,
+                    parameters or {}
+                )
+                return True
+            except Exception as e:
+                logger.error(f"❌ [AsyncKuzu] 寫入失敗: {e}")
+                return False
+
+    async def safe_read(self, cypher: str, parameters: dict = None) -> list:
+        """並行讀取 — Semaphore 限制並發數，避免阻塞事件迴圈"""
+        async with self._read_semaphore:
+            loop = asyncio.get_event_loop()
+            try:
+                return await loop.run_in_executor(
+                    self._executor,
+                    self._sync_query,
+                    cypher,
+                    parameters or {}
+                )
+            except Exception as e:
+                logger.error(f"❌ [AsyncKuzu] 讀取失敗: {e}")
+                return []
+
+    async def safe_add_entity(self, entity_id: str, name: str, entity_type: str,
+                               properties: Dict = None, graph_id: str = "1") -> bool:
+        """Async 安全版本的 add_entity"""
+        async with self._write_lock:
+            loop = asyncio.get_event_loop()
+            return await loop.run_in_executor(
+                self._executor,
+                self._manager.add_entity,
+                entity_id, name, entity_type, properties, graph_id
+            )
+
+    async def safe_add_relation(self, source_id: str, target_id: str,
+                                 relation_type: str = "related_to",
+                                 properties: Dict = None) -> bool:
+        """Async 安全版本的 add_relation"""
+        async with self._write_lock:
+            loop = asyncio.get_event_loop()
+            return await loop.run_in_executor(
+                self._executor,
+                self._manager.add_relation,
+                source_id, target_id, relation_type, properties
+            )
+
+    async def safe_delete_entity(self, entity_id: str) -> bool:
+        """Async 安全版本的 delete_entity"""
+        async with self._write_lock:
+            loop = asyncio.get_event_loop()
+            return await loop.run_in_executor(
+                self._executor,
+                self._manager.delete_entity,
+                entity_id
+            )
+
+    async def safe_update_entity(self, entity_id: str, name: Optional[str] = None,
+                                  entity_type: Optional[str] = None,
+                                  properties: Optional[Dict] = None) -> bool:
+        """Async 安全版本的 update_entity"""
+        async with self._write_lock:
+            loop = asyncio.get_event_loop()
+            return await loop.run_in_executor(
+                self._executor,
+                self._manager.update_entity,
+                entity_id, name, entity_type, properties
+            )
+
+    async def safe_query(self, cypher_query: str, parameters: Dict = None) -> List[Dict[str, Any]]:
+        """Async 安全版本的 query (讀取)"""
+        async with self._read_semaphore:
+            loop = asyncio.get_event_loop()
+            return await loop.run_in_executor(
+                self._executor,
+                self._manager.query,
+                cypher_query, parameters
+            )
+
+    async def safe_search_entities(self, keyword: str, entity_type: str = None) -> List[Dict]:
+        """Async 安全版本的 search_entities"""
+        async with self._read_semaphore:
+            loop = asyncio.get_event_loop()
+            return await loop.run_in_executor(
+                self._executor,
+                self._manager.search_entities,
+                keyword, entity_type
+            )
+
+    async def safe_get_neighbors(self, entity_id: str, depth: int = 1) -> List[Dict]:
+        """Async 安全版本的 get_neighbors"""
+        async with self._read_semaphore:
+            loop = asyncio.get_event_loop()
+            return await loop.run_in_executor(
+                self._executor,
+                self._manager.get_neighbors,
+                entity_id, depth
+            )
+
+    # ---------- 圖譜元數據 async 安全方法 ----------
+
+    async def safe_create_graph_metadata(self, graph_id: str, name: str,
+                                          description: str = "", icon: str = "🌐",
+                                          color: str = "#3b82f6") -> bool:
+        async with self._write_lock:
+            loop = asyncio.get_event_loop()
+            return await loop.run_in_executor(
+                self._executor,
+                self._manager.create_graph_metadata,
+                graph_id, name, description, icon, color
+            )
+
+    async def safe_get_graph_metadata(self, graph_id: str) -> Optional[Dict]:
+        async with self._read_semaphore:
+            loop = asyncio.get_event_loop()
+            return await loop.run_in_executor(
+                self._executor,
+                self._manager.get_graph_metadata,
+                graph_id
+            )
+
+    async def safe_list_graph_metadata(self) -> List[Dict]:
+        async with self._read_semaphore:
+            loop = asyncio.get_event_loop()
+            return await loop.run_in_executor(
+                self._executor,
+                self._manager.list_graph_metadata
+            )
+
+    async def safe_update_graph_stats(self, graph_id: str) -> bool:
+        async with self._write_lock:
+            loop = asyncio.get_event_loop()
+            return await loop.run_in_executor(
+                self._executor,
+                self._manager.update_graph_stats,
+                graph_id
+            )
+
+    # ---------- 同步代理方法 (向後相容) ----------
+
+    def add_entity(self, *args, **kwargs):
+        """同步代理 — 向後相容，但無併發保護"""
+        return self._manager.add_entity(*args, **kwargs)
+
+    def add_relation(self, *args, **kwargs):
+        return self._manager.add_relation(*args, **kwargs)
+
+    def query(self, *args, **kwargs):
+        return self._manager.query(*args, **kwargs)
+
+    def get_entity(self, *args, **kwargs):
+        return self._manager.get_entity(*args, **kwargs)
+
+    def update_entity(self, *args, **kwargs):
+        return self._manager.update_entity(*args, **kwargs)
+
+    def delete_entity(self, *args, **kwargs):
+        return self._manager.delete_entity(*args, **kwargs)
+
+    def search_entities(self, *args, **kwargs):
+        return self._manager.search_entities(*args, **kwargs)
+
+    def get_neighbors(self, *args, **kwargs):
+        return self._manager.get_neighbors(*args, **kwargs)
+
+    def create_graph_metadata(self, *args, **kwargs):
+        return self._manager.create_graph_metadata(*args, **kwargs)
+
+    def get_graph_metadata(self, *args, **kwargs):
+        return self._manager.get_graph_metadata(*args, **kwargs)
+
+    def list_graph_metadata(self, *args, **kwargs):
+        return self._manager.list_graph_metadata(*args, **kwargs)
+
+    def update_graph_metadata(self, *args, **kwargs):
+        return self._manager.update_graph_metadata(*args, **kwargs)
+
+    def delete_graph_metadata(self, *args, **kwargs):
+        return self._manager.delete_graph_metadata(*args, **kwargs)
+
+    def update_graph_stats(self, *args, **kwargs):
+        return self._manager.update_graph_stats(*args, **kwargs)
+
+    def close(self):
+        """關閉連接與執行緒池"""
+        self._executor.shutdown(wait=False)
+        self._manager.close()
+        logger.info("✅ AsyncKuzuWrapper 已關閉")
+
+    @property
+    def db_path(self):
+        return self._manager.db_path

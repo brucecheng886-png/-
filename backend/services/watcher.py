@@ -1,6 +1,7 @@
 """
 AI 檔案監控服務
 監控指定目錄，自動上傳新檔案至 RAGFlow 並同步至知識圖譜
+支援補償機制 (Compensation) 確保跨系統資料一致性
 """
 import os
 import time
@@ -8,18 +9,123 @@ import logging
 import hashlib
 import uuid
 import asyncio
+import json
+import sqlite3
 from pathlib import Path
 from typing import Optional, Set, Union
+from datetime import datetime
 import pandas as pd
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler, FileSystemEvent
 
 from backend.rag_client import RAGFlowClient
-from backend.core.kuzu_manager import KuzuDBManager, MockKuzuManager
+from backend.core.kuzu_manager import KuzuDBManager, MockKuzuManager, AsyncKuzuWrapper
 from backend.services.task_queue import task_queue, TaskStatus
 
 # 設置日誌
 logger = logging.getLogger(__name__)
+
+# DLQ (Dead Letter Queue) 路徑
+_DATA_DIR = Path(os.environ.get("BRUV_DATA_DIR", str(Path.home() / "BruV_Data")))
+_DLQ_DB_PATH = _DATA_DIR / "saga_dlq.db"
+
+# 最大重試次數與退避基數
+MAX_RETRY_ATTEMPTS = 3
+RETRY_BACKOFF_BASE = 2  # seconds
+
+
+class DeadLetterQueue:
+    """
+    死信佇列 — 記錄補償失敗或處理失敗的操作，
+    供管理員透過 /api/system/saga-dlq 端點手動重試或確認。
+    """
+
+    def __init__(self, db_path: Path = _DLQ_DB_PATH):
+        self._db_path = db_path
+        db_path.parent.mkdir(parents=True, exist_ok=True)
+        self._init_db()
+
+    def _get_conn(self) -> sqlite3.Connection:
+        conn = sqlite3.connect(str(self._db_path), timeout=5)
+        conn.row_factory = sqlite3.Row
+        return conn
+
+    def _init_db(self):
+        with self._get_conn() as conn:
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS dlq (
+                    id TEXT PRIMARY KEY,
+                    file_path TEXT,
+                    file_name TEXT,
+                    graph_id TEXT,
+                    failed_step TEXT,
+                    error_message TEXT,
+                    ragflow_doc_id TEXT,
+                    kuzu_entity_id TEXT,
+                    saga_steps TEXT,
+                    created_at TEXT,
+                    resolved BOOLEAN DEFAULT 0,
+                    resolved_at TEXT
+                )
+            """)
+
+    def record(self, file_path: Path, failed_step: str, error: str,
+               ragflow_doc_id: str = None, kuzu_entity_id: str = None,
+               graph_id: str = "1", saga_steps: dict = None):
+        """記錄到 DLQ"""
+        try:
+            with self._get_conn() as conn:
+                conn.execute("""
+                    INSERT OR REPLACE INTO dlq
+                    (id, file_path, file_name, graph_id, failed_step,
+                     error_message, ragflow_doc_id, kuzu_entity_id,
+                     saga_steps, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (
+                    str(uuid.uuid4()),
+                    str(file_path),
+                    file_path.name if isinstance(file_path, Path) else str(file_path),
+                    graph_id,
+                    failed_step,
+                    error,
+                    ragflow_doc_id,
+                    kuzu_entity_id,
+                    json.dumps(saga_steps or {}, ensure_ascii=False),
+                    datetime.now().isoformat(),
+                ))
+            logger.warning(f"📥 已記錄到 DLQ: {file_path} (step={failed_step})")
+        except Exception as e:
+            logger.error(f"❌ DLQ 寫入失敗: {e}")
+
+    def list_unresolved(self, limit: int = 50) -> list:
+        """列出未解決的 DLQ 項目"""
+        try:
+            with self._get_conn() as conn:
+                rows = conn.execute(
+                    "SELECT * FROM dlq WHERE resolved = 0 ORDER BY created_at DESC LIMIT ?",
+                    (limit,)
+                ).fetchall()
+                return [dict(row) for row in rows]
+        except Exception as e:
+            logger.error(f"❌ DLQ 查詢失敗: {e}")
+            return []
+
+    def mark_resolved(self, dlq_id: str) -> bool:
+        """標記為已解決"""
+        try:
+            with self._get_conn() as conn:
+                conn.execute(
+                    "UPDATE dlq SET resolved = 1, resolved_at = ? WHERE id = ?",
+                    (datetime.now().isoformat(), dlq_id)
+                )
+            return True
+        except Exception as e:
+            logger.error(f"❌ DLQ 標記失敗: {e}")
+            return False
+
+
+# 全域 DLQ 實例
+dlq = DeadLetterQueue()
 
 
 class AIFileEventHandler(FileSystemEventHandler):
@@ -31,7 +137,7 @@ class AIFileEventHandler(FileSystemEventHandler):
     def __init__(
         self, 
         rag_client: RAGFlowClient, 
-        kuzu_manager: Optional[Union[KuzuDBManager, MockKuzuManager]],
+        kuzu_manager: Optional[Union[KuzuDBManager, MockKuzuManager, AsyncKuzuWrapper]],
         dataset_id: str
     ):
         """
@@ -39,7 +145,7 @@ class AIFileEventHandler(FileSystemEventHandler):
         
         Args:
             rag_client: RAGFlow 客戶端實例
-            kuzu_manager: KuzuDB 管理器實例（支持 KuzuDBManager、MockKuzuManager 或 None）
+            kuzu_manager: KuzuDB 管理器實例（支持 KuzuDBManager、MockKuzuManager、AsyncKuzuWrapper 或 None）
             dataset_id: RAGFlow 知識庫 ID
         """
         super().__init__()
@@ -95,10 +201,20 @@ class AIFileEventHandler(FileSystemEventHandler):
     def _process_file(self, file_path: Path) -> None:
         """
         處理檔案：上傳至 RAGFlow 並更新知識圖譜
+        引入 Saga 補償機制，確保 RAGFlow ↔ KuzuDB 的跨系統一致性。
+        
+        Saga 流程：
+          Step A: 上傳至 RAGFlow (with retry + exponential backoff)
+          Step B: 寫入 KuzuDB 主節點 (失敗時補償 Step A)
+          Step C: Excel 深度解析 (可選，失敗不補償)
         
         Args:
             file_path: 檔案路徑
         """
+        saga_steps = {}
+        ragflow_doc_id = None
+        kuzu_entity_id = None
+
         try:
             # 讀取圖譜元數據
             metadata_file = file_path.with_suffix(file_path.suffix + '.meta.json')
@@ -106,7 +222,6 @@ class AIFileEventHandler(FileSystemEventHandler):
             
             if metadata_file.exists():
                 try:
-                    import json
                     with open(metadata_file, 'r', encoding='utf-8') as f:
                         metadata = json.load(f)
                         graph_id = metadata.get('graph_id', "1")
@@ -114,29 +229,119 @@ class AIFileEventHandler(FileSystemEventHandler):
                 except Exception as e:
                     logger.warning(f"⚠️  讀取元數據失敗，使用預設圖譜: {e}")
             
-            # 動作 A: 上傳檔案至 RAGFlow
+            # ── Step A: 上傳檔案至 RAGFlow (with retry) ──
             logger.info(f"📤 正在上傳檔案至 RAGFlow: {file_path.name}")
+            upload_result = None
+
+            for attempt in range(MAX_RETRY_ATTEMPTS):
+                try:
+                    upload_result = self.rag_client.upload_file(
+                        dataset_id=self.dataset_id,
+                        file_path=str(file_path)
+                    )
+                    ragflow_doc_id = self._extract_ragflow_doc_id(upload_result)
+                    saga_steps["ragflow_upload"] = {
+                        "status": "COMPLETED",
+                        "doc_id": ragflow_doc_id,
+                        "attempt": attempt + 1
+                    }
+                    logger.info(f"✅ RAGFlow 上傳成功 (attempt {attempt + 1}): {file_path.name}")
+                    break
+                except Exception as upload_err:
+                    if attempt < MAX_RETRY_ATTEMPTS - 1:
+                        backoff = RETRY_BACKOFF_BASE ** attempt
+                        logger.warning(
+                            f"⚠️  RAGFlow 上傳重試 {attempt + 1}/{MAX_RETRY_ATTEMPTS} "
+                            f"(backoff {backoff}s): {upload_err}"
+                        )
+                        time.sleep(backoff)  # watchdog 回呼在獨立線程
+                    else:
+                        saga_steps["ragflow_upload"] = {
+                            "status": "FAILED",
+                            "error": str(upload_err),
+                            "attempts": MAX_RETRY_ATTEMPTS
+                        }
+                        logger.error(f"❌ RAGFlow 上傳最終失敗: {file_path.name} - {upload_err}")
+                        dlq.record(file_path, "ragflow_upload", str(upload_err),
+                                   graph_id=graph_id, saga_steps=saga_steps)
+                        return  # 上傳失敗 → 不進行後續步驟
             
-            upload_result = self.rag_client.upload_file(
-                dataset_id=self.dataset_id,
-                file_path=str(file_path)
-            )
-            
-            logger.info(f"✅ 檔案上傳成功: {file_path.name}")
             logger.debug(f"上傳回應: {upload_result}")
             
-            # 動作 B: 寫入知識圖譜（使用圖譜 ID）
-            # 先創建檔案主節點
-            file_node_id = self._add_to_graph(file_path, upload_result, graph_id)
+            # ── Step B: 寫入知識圖譜（使用圖譜 ID）──
+            kuzu_entity_id = self._add_to_graph(file_path, upload_result, graph_id)
+
+            if kuzu_entity_id:
+                saga_steps["kuzu_write"] = {
+                    "status": "COMPLETED",
+                    "entity_id": kuzu_entity_id
+                }
+            else:
+                saga_steps["kuzu_write"] = {"status": "FAILED"}
+                # ── 補償 Step A: 刪除已上傳的 RAGFlow 文件 ──
+                if ragflow_doc_id:
+                    try:
+                        self.rag_client.delete_document(
+                            dataset_id=self.dataset_id,
+                            document_id=ragflow_doc_id
+                        )
+                        logger.info(
+                            f"🔄 補償完成: 已撤銷 RAGFlow 上傳 {ragflow_doc_id} "
+                            f"(因 KuzuDB 寫入失敗)"
+                        )
+                        saga_steps["compensation_ragflow_delete"] = {"status": "COMPLETED"}
+                    except Exception as comp_err:
+                        logger.error(f"❌ 補償失敗 (刪除 RAGFlow 文件): {comp_err}")
+                        saga_steps["compensation_ragflow_delete"] = {
+                            "status": "FAILED",
+                            "error": str(comp_err)
+                        }
+                        dlq.record(file_path, "compensation_ragflow_delete",
+                                   str(comp_err), ragflow_doc_id=ragflow_doc_id,
+                                   graph_id=graph_id, saga_steps=saga_steps)
+                else:
+                    logger.warning("ragflow_doc_id 為空，跳過 RAGFlow 補償")
+                return  # KuzuDB 寫入失敗 → 結束
             
-            # 如果是 Excel 檔案，進行深度解析
-            if file_path.suffix.lower() == '.xlsx' and file_node_id:
-                self._parse_excel_and_link(file_path, file_node_id, graph_id)
+            # ── Step C: Excel 深度解析 (可選，失敗不需補償) ──
+            if file_path.suffix.lower() == '.xlsx' and kuzu_entity_id:
+                try:
+                    self._parse_excel_and_link(file_path, kuzu_entity_id, graph_id)
+                    saga_steps["excel_parse"] = {"status": "COMPLETED"}
+                except Exception as excel_err:
+                    saga_steps["excel_parse"] = {
+                        "status": "FAILED",
+                        "error": str(excel_err)
+                    }
+                    logger.error(
+                        f"⚠️  Excel 解析失敗 (不影響主流程): {excel_err}",
+                        exc_info=True
+                    )
+
+            logger.info(f"✅ Saga 完成: {file_path.name} | steps={list(saga_steps.keys())}")
             
         except FileNotFoundError as e:
             logger.error(f"❌ 檔案不存在: {file_path} - {e}")
         except Exception as e:
-            logger.error(f"❌ 處理檔案失敗: {file_path.name} - {type(e).__name__}: {e}", exc_info=True)
+            logger.error(
+                f"❌ Saga 失敗: {file_path.name} - {type(e).__name__}: {e}",
+                exc_info=True
+            )
+            dlq.record(file_path, "saga_exception", str(e),
+                       ragflow_doc_id=ragflow_doc_id,
+                       kuzu_entity_id=kuzu_entity_id,
+                       saga_steps=saga_steps)
+    
+    def _extract_ragflow_doc_id(self, upload_result: dict) -> Optional[str]:
+        """從 RAGFlow 上傳結果中提取 document ID"""
+        if not upload_result:
+            return None
+        data = upload_result.get('data')
+        if isinstance(data, dict):
+            return data.get('id')
+        elif isinstance(data, list) and data:
+            return data[0].get('id')
+        return None
     
     def _add_to_graph(self, file_path: Path, upload_result: dict, graph_id: str = "1") -> Optional[str]:
         """
@@ -360,7 +565,7 @@ class WatcherService:
     def __init__(
         self,
         rag_client: RAGFlowClient,
-        kuzu_manager: Optional[Union[KuzuDBManager, MockKuzuManager]],
+        kuzu_manager: Optional[Union[KuzuDBManager, MockKuzuManager, AsyncKuzuWrapper]],
         dataset_id: str
     ):
         """
@@ -368,7 +573,7 @@ class WatcherService:
         
         Args:
             rag_client: RAGFlow 客戶端實例
-            kuzu_manager: KuzuDB 管理器實例（支持 KuzuDBManager、MockKuzuManager 或 None）
+            kuzu_manager: KuzuDB 管理器實例（支持 KuzuDBManager、MockKuzuManager、AsyncKuzuWrapper 或 None）
             dataset_id: RAGFlow 知識庫 ID
         """
         self.rag_client = rag_client

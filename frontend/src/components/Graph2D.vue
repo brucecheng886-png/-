@@ -37,6 +37,75 @@ let animationId = null;
 let isUpdating = ref(false);
 let updateQueue = null;
 
+// ===== 星系圖片系統 =====
+const clusterImageMap = ref({}); // { typeName: imageUrl }
+const clusterImageCache = new Map(); // typeName -> HTMLImageElement (已載入)
+
+// 從 localStorage 載入使用者自訂的星系圖片設定
+const loadClusterImageConfig = () => {
+  try {
+    const saved = localStorage.getItem('clusterImageConfig');
+    if (saved) clusterImageMap.value = JSON.parse(saved);
+  } catch (e) { /* ignore */ }
+};
+
+// 儲存設定
+const saveClusterImageConfig = () => {
+  localStorage.setItem('clusterImageConfig', JSON.stringify(clusterImageMap.value));
+};
+
+// 預載入圖片並快取
+const preloadClusterImage = (type, url) => {
+  if (!url) { clusterImageCache.delete(type); return; }
+  if (clusterImageCache.has(type) && clusterImageCache.get(type).__src === url) return;
+  const img = new Image();
+  img.crossOrigin = 'anonymous';
+  img.__src = url;
+  img.onload = () => {
+    clusterImageCache.set(type, img);
+    if (graphInstance) graphInstance.nodeCanvasObject(graphInstance.nodeCanvasObject());
+  };
+  img.onerror = () => { clusterImageCache.delete(type); };
+  img.src = url;
+};
+
+// 設定某個類型的星系圖片
+const setClusterImage = (type, url) => {
+  if (url) {
+    clusterImageMap.value[type] = url;
+    preloadClusterImage(type, url);
+  } else {
+    delete clusterImageMap.value[type];
+    clusterImageCache.delete(type);
+  }
+  saveClusterImageConfig();
+  if (graphInstance) graphInstance.nodeCanvasObject(graphInstance.nodeCanvasObject());
+};
+
+// 取得所有叢集類型
+const getClusterTypes = () => {
+  if (!graphInstance) return [];
+  const nodes = graphInstance.graphData().nodes;
+  const typeCount = {};
+  nodes.forEach(n => {
+    const t = n.type || 'unknown';
+    typeCount[t] = (typeCount[t] || 0) + 1;
+  });
+  return Object.entries(typeCount)
+    .filter(([, count]) => count >= 3)
+    .map(([type, count]) => ({
+      type,
+      count,
+      image: clusterImageMap.value[type] || null,
+      color: nodes.find(n => n.type === type)?.color || '#448aff'
+    }));
+};
+
+// 監聽 clusterImageMap 變化，預載入所有圖片
+watch(clusterImageMap, (newMap) => {
+  Object.entries(newMap).forEach(([type, url]) => preloadClusterImage(type, url));
+}, { deep: true, immediate: false });
+
 // 主題相關計算屬性
 const backgroundColor = computed(() => {
   return '#0a0e27';
@@ -112,6 +181,34 @@ watch(
   }
 );
 
+// ===== Watch: 監聽節點屬性變更，即時同步圖譜渲染 =====
+watch(
+  () => graphStore.nodeVersion,
+  () => {
+    if (!graphInstance) return;
+    const internalNodes = graphInstance.graphData().nodes;
+    const storeNodes = graphStore.nodes;
+    
+    // 將 store 中變更的屬性同步到 force-graph 內部節點（保留物理位置 x/y/vx/vy）
+    for (const storeNode of storeNodes) {
+      const target = internalNodes.find(n => n.id === storeNode.id);
+      if (!target) continue;
+      // 同步所有視覺相關屬性
+      target.name = storeNode.name;
+      target.description = storeNode.description;
+      target.image = storeNode.image;
+      target.link = storeNode.link;
+      target.color = storeNode.color;
+      target.size = storeNode.size;
+      target.type = storeNode.type;
+    }
+    
+    // 觸發 force-graph 重新渲染（不重置物理模擬）
+    graphInstance.nodeColor(graphInstance.nodeColor());
+    console.log('🔄 圖譜已即時同步節點屬性變更');
+  }
+);
+
 // ===== Methods =====
 const initGraph = async () => {
   if (!containerRef.value) return;
@@ -134,7 +231,12 @@ const initGraph = async () => {
     .backgroundColor(backgroundColor.value)
     .nodeLabel('name')
     .nodeColor(node => node.color || '#448aff')
-    .nodeVal(node => node.size || 10)
+    .nodeVal(node => {
+      // 🔧 點擊偵測範圍應與視覺大小一致，避免超大節點的點擊範圍過大
+      const rawSize = Math.sqrt(node.size || 10) * 1.5;
+      const cappedSize = Math.min(rawSize, 15);
+      return cappedSize * cappedSize; // nodeVal 需要的是面積值（半徑平方）
+    })
     .nodeVisibility(node => {
       // 密度過濾：隱藏連線數低於門檻的節點
       if (props.densityThreshold > 0) {
@@ -165,30 +267,136 @@ const initGraph = async () => {
 
       ctx.globalAlpha = fadeAlpha;
 
-      // === 語義聚合叢集氣泡（僅縮放 < 0.7 時繪製）===
-      if (props.clusterEnabled && globalScale < 0.7 && node.__clusterCenter) {
-        // 這個節點是叢集中心
-        const r = node.__clusterRadius || 40;
-        ctx.beginPath();
-        ctx.arc(node.x, node.y, r, 0, 2 * Math.PI);
-        ctx.fillStyle = (node.color || '#448aff') + '15';
-        ctx.fill();
-        ctx.strokeStyle = (node.color || '#448aff') + '30';
-        ctx.lineWidth = 1.5 / globalScale;
-        ctx.setLineDash([4 / globalScale, 4 / globalScale]);
-        ctx.stroke();
-        ctx.setLineDash([]);
-        // 叢集標籤
+      // === 語義聚合叢集 — 星球效果（縮放 < 0.8 時繪製）===
+      if (props.clusterEnabled && globalScale < 0.8 && node.__clusterCenter) {
+        const cx = node.__clusterCx ?? node.x;
+        const cy = node.__clusterCy ?? node.y;
+        // 🔧 使用完整半徑確保覆蓋所有節點
+        const baseR = node.__clusterRadius || 40;
+        const r = baseR; // 保持原始半徑，不縮放
+        const clrBase = node.__clusterColor || node.color || '#448aff';
+        const nodeType = node.type || 'unknown';
+        
+        // 整體透明度：< 0.4 時全顯，0.4~0.8 線性淡出
+        const clusterAlpha = globalScale < 0.4 ? 1.0 : Math.max(0, 1.0 - (globalScale - 0.4) / 0.4);
+        if (clusterAlpha <= 0) { ctx.globalAlpha = fadeAlpha; } else {
+        ctx.save();
+        ctx.globalAlpha = fadeAlpha * clusterAlpha;
+        
+        const cachedImg = clusterImageCache.get(nodeType);
+        
+        if (cachedImg && cachedImg.complete && cachedImg.naturalWidth > 0) {
+          // ===== 自訂圖片模式 =====
+          
+          // 🎯 移除大範圍外層光暈，直接繪製星球
+          // 圓形裁切，繪製圖片
+          ctx.beginPath();
+          ctx.arc(cx, cy, r, 0, 2 * Math.PI);
+          ctx.clip();
+          ctx.drawImage(cachedImg, cx - r, cy - r, r * 2, r * 2);
+          
+          // 邊緣暗化（立體感）
+          const edgeGrad = ctx.createRadialGradient(cx, cy, r * 0.4, cx, cy, r);
+          edgeGrad.addColorStop(0, 'rgba(0,0,0,0)');
+          edgeGrad.addColorStop(0.75, 'rgba(0,0,0,0.05)');
+          edgeGrad.addColorStop(1, 'rgba(0,0,0,0.3)');
+          ctx.fillStyle = edgeGrad;
+          ctx.fill();
+          
+          // 高光
+          const hlGrad = ctx.createRadialGradient(
+            cx - r * 0.3, cy - r * 0.3, 0,
+            cx - r * 0.3, cy - r * 0.3, r * 0.55
+          );
+          hlGrad.addColorStop(0, 'rgba(255,255,255,0.2)');
+          hlGrad.addColorStop(0.5, 'rgba(255,255,255,0.04)');
+          hlGrad.addColorStop(1, 'rgba(255,255,255,0)');
+          ctx.fillStyle = hlGrad;
+          ctx.fillRect(cx - r, cy - r, r * 2, r * 2);
+          
+          // 恢復裁切後畫光環
+          ctx.restore();
+          ctx.save();
+          ctx.globalAlpha = fadeAlpha * clusterAlpha;
+          
+          // 外圈光環（緊貼星球邊緣，無擴散）
+          ctx.beginPath();
+          ctx.arc(cx, cy, r, 0, 2 * Math.PI);
+          ctx.strokeStyle = clrBase + '60';
+          ctx.lineWidth = 2 / globalScale;
+          ctx.stroke();
+          
+        } else {
+          // ===== 預設程式化星球 =====
+          
+          // 🎯 移除大範圍外層光暈，直接繪製星球主體
+          
+          // ① 星球主體
+          const bodyGrad = ctx.createRadialGradient(
+            cx - r * 0.25, cy - r * 0.25, r * 0.05,
+            cx, cy, r
+          );
+          bodyGrad.addColorStop(0, '#a8d4ff');
+          bodyGrad.addColorStop(0.15, clrBase + 'ee');
+          bodyGrad.addColorStop(0.5, clrBase + 'cc');
+          bodyGrad.addColorStop(0.8, clrBase + '88');
+          bodyGrad.addColorStop(1, clrBase + '50');
+          ctx.beginPath();
+          ctx.arc(cx, cy, r, 0, 2 * Math.PI);
+          ctx.fillStyle = bodyGrad;
+          ctx.fill();
+          
+          // ② 邊緣暗化
+          const edgeGrad = ctx.createRadialGradient(cx, cy, r * 0.5, cx, cy, r);
+          edgeGrad.addColorStop(0, 'rgba(0,0,0,0)');
+          edgeGrad.addColorStop(0.7, 'rgba(0,0,0,0.1)');
+          edgeGrad.addColorStop(1, 'rgba(0,0,0,0.35)');
+          ctx.beginPath();
+          ctx.arc(cx, cy, r, 0, 2 * Math.PI);
+          ctx.fillStyle = edgeGrad;
+          ctx.fill();
+          
+          // ③ 高光月牙
+          const hlGrad = ctx.createRadialGradient(
+            cx - r * 0.3, cy - r * 0.3, 0,
+            cx - r * 0.3, cy - r * 0.3, r * 0.5
+          );
+          hlGrad.addColorStop(0, 'rgba(255,255,255,0.35)');
+          hlGrad.addColorStop(0.4, 'rgba(255,255,255,0.08)');
+          hlGrad.addColorStop(1, 'rgba(255,255,255,0)');
+          ctx.beginPath();
+          ctx.arc(cx, cy, r, 0, 2 * Math.PI);
+          ctx.fillStyle = hlGrad;
+          ctx.fill();
+          
+          // ④ 外圈光環（緊貼星球邊緣）
+          ctx.beginPath();
+          ctx.arc(cx, cy, r, 0, 2 * Math.PI);
+          ctx.strokeStyle = clrBase + '60';
+          ctx.lineWidth = 2 / globalScale;
+          ctx.stroke();
+        }
+        
+        // ⑤ 叢集標籤
         const clusterFont = 14 / globalScale;
         ctx.font = `bold ${clusterFont}px 'Inter', sans-serif`;
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
-        ctx.fillStyle = (node.color || '#448aff') + 'aa';
-        ctx.fillText(node.__clusterLabel || node.type, node.x, node.y - r - 6 / globalScale);
+        ctx.shadowColor = 'rgba(0,0,0,0.6)';
+        ctx.shadowBlur = 6 / globalScale;
+        ctx.fillStyle = '#ffffff';
+        ctx.fillText(node.__clusterLabel || node.type, cx, cy - r - 10 / globalScale);
+        ctx.shadowColor = 'transparent';
+        ctx.shadowBlur = 0;
+        
+        ctx.restore();
+      }
       }
 
       // 自定義節點渲染 (圓形 + 外框 + 動畫效果)
-      const label = node.name;
+      const rawLabel = node.name || '';
+      const maxLen = 15;
+      const label = rawLabel.length > maxLen ? rawLabel.slice(0, maxLen) + '...' : rawLabel;
       // 🔧 根據縮放倍數分段調整字體大小
       let fontSize;
       if (globalScale <= 1.5) {
@@ -205,8 +413,12 @@ const initGraph = async () => {
       const textWidth = ctx.measureText(label).width;
       const bckgDimensions = [textWidth, fontSize].map(n => n + fontSize * 0.4);
       
-      // 🎯 選中節點放大效果
-      const baseNodeSize = Math.sqrt(node.size || 10) * 1.5;
+      // 🎯 選中節點放大效果（低縮放時放大節點確保可見）
+      const zoomBoost = globalScale < 0.5 ? 2.5 / Math.max(globalScale, 0.15) : globalScale < 1.0 ? 1.2 / globalScale : 1;
+      // 🔧 限制節點大小：避免某些 size 值過大的節點變成巨型圓圈
+      const rawSize = Math.sqrt(node.size || 10) * 1.5;
+      const cappedSize = Math.min(rawSize, 15); // 最大基礎半徑 15px
+      const baseNodeSize = cappedSize * Math.min(zoomBoost, 3); // zoomBoost 也限制在 3 倍內
       const nodeSize = isSelected ? baseNodeSize * 1.8 : baseNodeSize;
       
       // 🌟 選中節點添加脈衝光暈
@@ -364,12 +576,21 @@ const initGraph = async () => {
     })
     .onNodeClick(handleNodeClick)
     .onNodeHover(handleNodeHover)
-    .d3Force('charge', d3.forceManyBody().strength(-800))
-    .d3Force('link', d3.forceLink().distance(200))
-    .d3Force('collide', d3.forceCollide().radius(node => Math.sqrt(node.size || 10) * 3 + 20).strength(0.7))
+    .onEngineTick(() => {
+      // 每次物理模擬 tick 都重新計算叢集質心和半徑
+      if (props.clusterEnabled) computeClusterCenters();
+    })
+    .d3Force('charge', null)  // 🔧 停用斥力，使用固定圓形布局
+    .d3Force('link', d3.forceLink().distance(150).strength(0.1))  // 🔧 弱連接力，保持結構但不干擾圓形
+    .d3Force('collide', d3.forceCollide().radius(25).strength(0.5))  // 🔧 防止節點重疊
+    .d3Force('radial', d3.forceRadial(node => {
+      // 🎯 圓形布局：中心節點在原點，其他節點在圓周上
+      const isCentralNode = graphStore.getNodeLinks(node.id).length > 10; // 連接數多的是中心
+      return isCentralNode ? 0 : 280; // 中心半徑0，外圍半徑280
+    }, 0, 0).strength(0.8))  // 🔧 強力徑向布局
     .d3VelocityDecay(0.3)
-    .warmupTicks(100)  // 效能優化: 預跑 100 次物理模擬
-    .cooldownTicks(300);  // 效能優化: 300 tick 後自動停止
+    .warmupTicks(100)
+    .cooldownTicks(200);
   
   // 初始化叢集標記
   computeClusterCenters();
@@ -481,27 +702,61 @@ watch(
 // 語義叢集計算：按 type 分組，找出各組質量中心
 const computeClusterCenters = () => {
   if (!props.clusterEnabled) return;
+  
+  // 取得 force-graph 實際使用的節點（非 store 的 proxy 節點）
+  const graphNodes = graphInstance ? graphInstance.graphData().nodes : graphStore.nodes;
+  
   const typeGroups = {};
-  graphStore.nodes.forEach(n => {
+  graphNodes.forEach(n => {
     const t = n.type || 'unknown';
     if (!typeGroups[t]) typeGroups[t] = [];
     typeGroups[t].push(n);
   });
   // 先清除舊標記
-  graphStore.nodes.forEach(n => { n.__clusterCenter = false; });
+  graphNodes.forEach(n => { n.__clusterCenter = false; });
   
   Object.entries(typeGroups).forEach(([type, members]) => {
     if (members.length < 3) return; // 太少不分群
-    // 找中心：取連線數最多的節點
-    let center = members[0];
-    let maxLinks = 0;
+    
+    // 計算幾何質心
+    let cx = 0, cy = 0, validCount = 0;
     members.forEach(m => {
-      const lc = graphStore.getNodeLinks(m.id).length;
-      if (lc > maxLinks) { maxLinks = lc; center = m; }
+      if (m.x !== undefined && m.y !== undefined) {
+        cx += m.x;
+        cy += m.y;
+        validCount++;
+      }
     });
-    center.__clusterCenter = true;
-    center.__clusterRadius = Math.max(30, Math.sqrt(members.length) * 25);
-    center.__clusterLabel = `${type} (${members.length})`;
+    if (validCount === 0) return;
+    cx /= validCount;
+    cy /= validCount;
+    
+    // 找離質心最近的節點作為標記載體
+    let carrier = members[0];
+    let minDist = Infinity;
+    members.forEach(m => {
+      if (m.x === undefined) return;
+      const dist = Math.hypot(m.x - cx, m.y - cy);
+      if (dist < minDist) { minDist = dist; carrier = m; }
+    });
+    
+    // 計算包圍半徑：使用最大距離來完全覆蓋所有節點
+    let maxDist = 0;
+    members.forEach(m => {
+      if (m.x === undefined) return;
+      const dist = Math.hypot(m.x - cx, m.y - cy);
+      if (dist > maxDist) maxDist = dist;
+    });
+    const padding = 30; // 🔧 增加 padding 確保完全覆蓋
+    const MAX_CLUSTER_RADIUS = 300; // 🔧 提高上限允許覆蓋更多節點
+    const MIN_CLUSTER_RADIUS = 40;
+    
+    carrier.__clusterCenter = true;
+    carrier.__clusterCx = cx;
+    carrier.__clusterCy = cy;
+    carrier.__clusterRadius = Math.min(MAX_CLUSTER_RADIUS, Math.max(MIN_CLUSTER_RADIUS, maxDist + padding));
+    carrier.__clusterLabel = `${type} (${members.length})`;
+    carrier.__clusterColor = carrier.color || '#448aff';
   });
 };
 
@@ -557,7 +812,10 @@ defineExpose({
   zoomIn,
   zoomOut,
   getZoom,
-  zoomToFit
+  zoomToFit,
+  setClusterImage,
+  getClusterTypes,
+  clusterImageMap
 });
 
 // ===== Lifecycle =====
@@ -572,6 +830,10 @@ const handleResize = debounce(() => {
 }, 200);
 
 onMounted(async () => {
+  loadClusterImageConfig();
+  // 預載入所有已設定的圖片
+  Object.entries(clusterImageMap.value).forEach(([type, url]) => preloadClusterImage(type, url));
+  
   await nextTick();
   await initGraph();
   
@@ -600,38 +862,6 @@ onUnmounted(() => {
     class="graph-2d-container"
   >
     <div ref="containerRef" class="graph-canvas"></div>
-    
-    <!-- 節點詳情卡片 -->
-    <transition name="slide-up">
-      <div v-if="graphStore.selectedNode" class="node-detail-card">
-        <div class="card-header">
-          <div class="node-type" :style="{ color: graphStore.selectedNode.color }">
-            {{ graphStore.selectedNode.type }}
-          </div>
-          <button class="close-btn" @click="graphStore.clearSelection()">✕</button>
-        </div>
-        <h3 class="node-name">{{ graphStore.selectedNode.name }}</h3>
-        <p class="node-description">{{ graphStore.selectedNode.description }}</p>
-        
-        <!-- 額外資訊 -->
-        <div class="node-meta">
-          <div class="meta-item" v-if="graphStore.selectedNode.status">
-            <span class="meta-label">狀態:</span>
-            <span class="meta-value">{{ graphStore.selectedNode.status }}</span>
-          </div>
-          <div class="meta-item" v-if="graphStore.selectedNode.date">
-            <span class="meta-label">日期:</span>
-            <span class="meta-value">{{ graphStore.selectedNode.date }}</span>
-          </div>
-        </div>
-        
-        <!-- 連線統計 -->
-        <div class="connections-info">
-          <span class="connections-label">🔗 連線數量:</span>
-          <span class="connections-count">{{ graphStore.getNodeLinks(graphStore.selectedNode.id).length }}</span>
-        </div>
-      </div>
-    </transition>
   </div>
 </template>
 
@@ -654,141 +884,5 @@ onUnmounted(() => {
   cursor: grabbing;
 }
 
-/* ===== 節點詳情卡片 ===== */
-.node-detail-card {
-  position: absolute;
-  bottom: 24px;
-  left: 24px;
-  width: 320px;
-  background: rgba(17, 17, 17, 0.95);
-  backdrop-filter: blur(20px);
-  border: 1px solid var(--border-primary);
-  border-radius: 16px;
-  padding: 20px;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.8);
-  z-index: 1000;
-}
 
-.card-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 12px;
-}
-
-.node-type {
-  font-size: 11px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.1em;
-  opacity: 0.9;
-}
-
-.close-btn {
-  width: 24px;
-  height: 24px;
-  background: transparent;
-  border: 1px solid var(--border-primary);
-  border-radius: 6px;
-  color: var(--text-secondary);
-  font-size: 16px;
-  cursor: pointer;
-  transition: all 0.2s ease;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 0;
-}
-
-.close-btn:hover {
-  background: var(--bg-hover);
-  border-color: var(--border-focus);
-  color: var(--text-primary);
-}
-
-.node-name {
-  font-size: 20px;
-  font-weight: 600;
-  color: var(--text-primary);
-  margin: 0 0 12px 0;
-  line-height: 1.3;
-}
-
-.node-description {
-  font-size: 13px;
-  color: var(--text-secondary);
-  line-height: 1.6;
-  margin: 0 0 16px 0;
-}
-
-.node-meta {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  padding-top: 12px;
-  border-top: 1px solid var(--border-subtle);
-  margin-bottom: 12px;
-}
-
-.meta-item {
-  display: flex;
-  gap: 8px;
-  font-size: 12px;
-}
-
-.meta-label {
-  color: var(--text-tertiary);
-  font-weight: 500;
-}
-
-.meta-value {
-  color: var(--text-primary);
-  font-weight: 600;
-}
-
-.connections-info {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 10px 12px;
-  background: var(--bg-elevated);
-  border-radius: 8px;
-  font-size: 12px;
-}
-
-.connections-label {
-  color: var(--text-secondary);
-}
-
-.connections-count {
-  color: var(--primary-blue);
-  font-weight: 600;
-  font-family: 'Consolas', monospace;
-}
-
-/* ===== 動畫 ===== */
-.slide-up-enter-active,
-.slide-up-leave-active {
-  transition: all 0.3s ease;
-}
-
-.slide-up-enter-from {
-  transform: translateY(20px);
-  opacity: 0;
-}
-
-.slide-up-leave-to {
-  transform: translateY(20px);
-  opacity: 0;
-}
-
-/* ===== 響應式 ===== */
-@media (max-width: 768px) {
-  .node-detail-card {
-    left: 12px;
-    right: 12px;
-    width: auto;
-    bottom: 12px;
-  }
-}
 </style>

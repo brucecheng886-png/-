@@ -3,7 +3,7 @@
     <!-- 頁面標題 -->
     <div class="page-header">
       <h1 class="page-title">
-        <span class="title-icon">⚙️</span>
+        <span class="title-icon"><svg class="w-6 h-6 inline-block align-middle" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M11.49 3.17c-.38-1.56-2.6-1.56-2.98 0a1.532 1.532 0 01-2.286.948c-1.372-.836-2.942.734-2.106 2.106.54.886.061 2.042-.947 2.287-1.561.379-1.561 2.6 0 2.978a1.532 1.532 0 01.947 2.287c-.836 1.372.734 2.942 2.106 2.106a1.532 1.532 0 012.287.947c.379 1.561 2.6 1.561 2.978 0a1.533 1.533 0 012.287-.947c1.372.836 2.942-.734 2.106-2.106a1.533 1.533 0 01.947-2.287c1.561-.379 1.561-2.6 0-2.978a1.532 1.532 0 01-.947-2.287c.836-1.372-.734-2.942-2.106-2.106a1.532 1.532 0 01-2.287-.947zM10 13a3 3 0 100-6 3 3 0 000 6z" clip-rule="evenodd"/></svg></span>
         系統設定
       </h1>
       <p class="page-subtitle">管理 API Keys 和系統配置</p>
@@ -43,11 +43,11 @@
             v-model="config.dify_api_url"
             type="text"
             class="form-input"
-            placeholder="http://localhost:80/v1"
+            placeholder="http://localhost:5001/v1"
             @input="hasChanges = true"
           />
           <p class="form-hint">
-            Dify 服務的 API 端點（例如：http://localhost:80/v1 或 http://172.19.0.2:3000/v1）
+            Dify 服務的 API 端點（例如：http://localhost:5001/v1）
           </p>
         </div>
 
@@ -71,11 +71,12 @@
               @click="showDifyKey = !showDifyKey"
               :title="showDifyKey ? '隱藏' : '顯示'"
             >
-              {{ showDifyKey ? '👁️' : '👁️‍🗨️' }}
+              <svg v-if="showDifyKey" class="w-4 h-4" viewBox="0 0 20 20" fill="currentColor"><path d="M10 12a2 2 0 100-4 2 2 0 000 4z"/><path fill-rule="evenodd" d="M.458 10C1.732 5.943 5.522 3 10 3s8.268 2.943 9.542 7c-1.274 4.057-5.064 7-9.542 7S1.732 14.057.458 10zM14 10a4 4 0 11-8 0 4 4 0 018 0z" clip-rule="evenodd"/></svg>
+              <svg v-else class="w-4 h-4" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M3.707 2.293a1 1 0 00-1.414 1.414l14 14a1 1 0 001.414-1.414l-1.473-1.473A10.014 10.014 0 0019.542 10C18.268 5.943 14.478 3 10 3a9.958 9.958 0 00-4.512 1.074L3.707 2.293zm4.261 4.26l1.514 1.515a2.003 2.003 0 012.45 2.45l1.514 1.514a4 4 0 00-5.478-5.478z" clip-rule="evenodd"/><path d="M12.454 16.697L9.75 13.992a4 4 0 01-3.742-3.741L2.335 6.578A9.98 9.98 0 00.458 10c1.274 4.057 5.065 7 9.542 7 .847 0 1.669-.105 2.454-.303z"/></svg>
             </button>
           </div>
           <p class="form-hint">
-            從 Dify Web UI (http://localhost:80) 創建應用後獲取
+            從 Dify Web UI (http://localhost:82) 創建應用後獲取
           </p>
         </div>
       </div>
@@ -109,11 +110,11 @@
             v-model="config.ragflow_api_url"
             type="text"
             class="form-input"
-            placeholder="http://localhost:81/api/v1"
+            placeholder="http://localhost:9380/api/v1"
             @input="hasChanges = true"
           />
           <p class="form-hint">
-            RAGFlow 服務的 API 端點（例如：http://localhost:81/api/v1 或自訂 URL）
+            RAGFlow 服務的 API 端點（例如：http://localhost:9380/api/v1）
           </p>
         </div>
 
@@ -137,11 +138,12 @@
               @click="showRagflowKey = !showRagflowKey"
               :title="showRagflowKey ? '隱藏' : '顯示'"
             >
-              {{ showRagflowKey ? '👁️' : '👁️‍🗨️' }}
+              <svg v-if="showRagflowKey" class="w-4 h-4" viewBox="0 0 20 20" fill="currentColor"><path d="M10 12a2 2 0 100-4 2 2 0 000 4z"/><path fill-rule="evenodd" d="M.458 10C1.732 5.943 5.522 3 10 3s8.268 2.943 9.542 7c-1.274 4.057-5.064 7-9.542 7S1.732 14.057.458 10zM14 10a4 4 0 11-8 0 4 4 0 018 0z" clip-rule="evenodd"/></svg>
+              <svg v-else class="w-4 h-4" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M3.707 2.293a1 1 0 00-1.414 1.414l14 14a1 1 0 001.414-1.414l-1.473-1.473A10.014 10.014 0 0019.542 10C18.268 5.943 14.478 3 10 3a9.958 9.958 0 00-4.512 1.074L3.707 2.293zm4.261 4.26l1.514 1.515a2.003 2.003 0 012.45 2.45l1.514 1.514a4 4 0 00-5.478-5.478z" clip-rule="evenodd"/><path d="M12.454 16.697L9.75 13.992a4 4 0 01-3.742-3.741L2.335 6.578A9.98 9.98 0 00.458 10c1.274 4.057 5.065 7 9.542 7 .847 0 1.669-.105 2.454-.303z"/></svg>
             </button>
           </div>
           <p class="form-hint">
-            從 RAGFlow Web UI (http://localhost:81) 設定頁面獲取
+            從 RAGFlow Web UI (http://localhost:81) 設定頁 → API Token 獲取
           </p>
         </div>
       </div>
@@ -189,7 +191,7 @@
               class="status-badge" 
               :class="testResult.dify.status"
             >
-              {{ testResult.dify.status === 'ok' ? '✅ 正常' : testResult.dify.status === 'warning' ? '⚠️ 警告' : '❌ 錯誤' }}
+              {{ testResult.dify.status === 'ok' ? '✅ 正常' : testResult.dify.status === 'warning' ? '⚠ 警告' : '❌ 錯誤' }}
             </span>
           </div>
           <div class="service-details">
@@ -208,7 +210,7 @@
               class="status-badge" 
               :class="testResult.ragflow.status"
             >
-              {{ testResult.ragflow.status === 'ok' ? '✅ 正常' : testResult.ragflow.status === 'warning' ? '⚠️ 警告' : '❌ 錯誤' }}
+              {{ testResult.ragflow.status === 'ok' ? '✅ 正常' : testResult.ragflow.status === 'warning' ? '⚠ 警告' : '❌ 錯誤' }}
             </span>
           </div>
           <div class="service-details">
@@ -246,6 +248,7 @@
 
 <script setup>
 import { ref, onMounted } from 'vue';
+import { authFetch } from '../services/apiClient';
 
 // API 基礎路徑
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
@@ -290,7 +293,7 @@ const showToast = (type, message) => {
 const loadConfig = async () => {
   loading.value = true;
   try {
-    const response = await fetch(`${API_BASE_URL}/api/system/config`);
+    const response = await authFetch(`${API_BASE_URL}/api/system/config`);
     
     if (!response.ok) {
       throw new Error(`HTTP ${response.status}: ${response.statusText}`);
@@ -348,7 +351,7 @@ const saveConfig = async () => {
     
     console.log('準備發送的配置:', payload);
     
-    const response = await fetch(`${API_BASE_URL}/api/system/config`, {
+    const response = await authFetch(`${API_BASE_URL}/api/system/config`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json'
@@ -387,7 +390,7 @@ const testConnection = async () => {
   testResult.value = null;
   
   try {
-    const response = await fetch(`${API_BASE_URL}/api/system/test-connection`, {
+    const response = await authFetch(`${API_BASE_URL}/api/system/test-connection`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json'

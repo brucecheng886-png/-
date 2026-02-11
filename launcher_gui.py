@@ -13,7 +13,8 @@ import webbrowser
 from pathlib import Path
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-    QPushButton, QTextEdit, QLabel, QFrame, QComboBox
+    QPushButton, QTextEdit, QLabel, QFrame, QComboBox,
+    QDialog, QLineEdit, QMessageBox
 )
 from PySide6.QtCore import (
     Qt, QThread, Signal, QUrl, QTimer, QProcess
@@ -21,6 +22,321 @@ from PySide6.QtCore import (
 from PySide6.QtGui import (
     QFont, QColor, QPalette, QDesktopServices, QTextCursor
 )
+
+# ============================================
+# TokenManagerDialog - API Token 管理對話框（密碼保護）
+# ============================================
+_LAUNCHER_ACCESS_PASSWORD = "Bb20060117"
+
+
+class TokenManagerDialog(QDialog):
+    """API Token 管理對話框 — 需輸入管理員密碼才能查看/修改 Token"""
+
+    def __init__(self, project_root: Path, detected_token: str = None, parent=None):
+        super().__init__(parent)
+        self.project_root = project_root
+        self.env_file = project_root / ".env"
+        self._detected_token = detected_token
+        self._authenticated = False
+
+        self.setWindowTitle("🔑 API Token 管理")
+        self.setFixedSize(480, 200)
+        self.setWindowFlags(self.windowFlags() | Qt.WindowStaysOnTopHint)
+        self.setStyleSheet("QDialog { background: #191919; }")
+
+        self.main_layout = QVBoxLayout(self)
+        self.main_layout.setSpacing(10)
+        self.main_layout.setContentsMargins(24, 20, 24, 20)
+
+        self._build_login_page()
+
+    # ──────────────────────────────────────────
+    # 第 1 頁：密碼驗證
+    # ──────────────────────────────────────────
+    def _build_login_page(self):
+        """建立密碼輸入畫面"""
+        self._clear_layout()
+
+        title = QLabel("🔐 管理員驗證")
+        title.setFont(QFont("Arial", 14, QFont.Bold))
+        title.setAlignment(Qt.AlignCenter)
+        title.setStyleSheet("color: #e5e5e5;")
+        self.main_layout.addWidget(title)
+
+        hint = QLabel("請輸入管理員密碼以查看 / 管理 API Token")
+        hint.setFont(QFont("Arial", 9))
+        hint.setAlignment(Qt.AlignCenter)
+        hint.setStyleSheet("color: #888;")
+        self.main_layout.addWidget(hint)
+
+        self.main_layout.addSpacing(5)
+
+        self.pwd_input = QLineEdit()
+        self.pwd_input.setPlaceholderText("輸入密碼…")
+        self.pwd_input.setEchoMode(QLineEdit.Password)
+        self.pwd_input.setFont(QFont("Consolas", 13))
+        self.pwd_input.setMinimumHeight(40)
+        self.pwd_input.setAlignment(Qt.AlignCenter)
+        self.pwd_input.setStyleSheet(
+            "QLineEdit { background: #1a1a2e; color: #e5e5e5; border: 2px solid #444;"
+            " border-radius: 6px; padding: 6px; }"
+            "QLineEdit:focus { border-color: #335eea; }"
+        )
+        self.pwd_input.returnPressed.connect(self._verify_password)
+        self.main_layout.addWidget(self.pwd_input)
+
+        self.main_layout.addSpacing(5)
+
+        btn_row = QHBoxLayout()
+        btn_row.setSpacing(10)
+
+        verify_btn = QPushButton("🔓 解鎖")
+        verify_btn.setFixedHeight(38)
+        verify_btn.setFont(QFont("Arial", 11, QFont.Bold))
+        verify_btn.setStyleSheet(
+            "QPushButton { background: #335eea; color: white; border-radius: 6px; }"
+            "QPushButton:hover { background: #2651dd; }"
+        )
+        verify_btn.clicked.connect(self._verify_password)
+        btn_row.addWidget(verify_btn)
+
+        cancel_btn = QPushButton("取消")
+        cancel_btn.setFixedHeight(38)
+        cancel_btn.setFont(QFont("Arial", 11))
+        cancel_btn.setStyleSheet(
+            "QPushButton { background: #333; color: #ccc; border-radius: 6px; border: 1px solid #555; }"
+            "QPushButton:hover { background: #444; }"
+        )
+        cancel_btn.clicked.connect(self.reject)
+        btn_row.addWidget(cancel_btn)
+
+        self.main_layout.addLayout(btn_row)
+
+    def _verify_password(self):
+        """驗證管理員密碼"""
+        if self.pwd_input.text() == _LAUNCHER_ACCESS_PASSWORD:
+            self._authenticated = True
+            self._build_token_page()
+        else:
+            QMessageBox.warning(self, "❌ 密碼錯誤", "管理員密碼不正確，請重試。")
+            self.pwd_input.clear()
+            self.pwd_input.setFocus()
+
+    # ──────────────────────────────────────────
+    # 第 2 頁：Token 管理
+    # ──────────────────────────────────────────
+    def _build_token_page(self):
+        """驗證成功後顯示 Token 管理介面"""
+        self._clear_layout()
+        self.setFixedSize(520, 420)
+
+        title = QLabel("🔑 API Token 管理")
+        title.setFont(QFont("Arial", 14, QFont.Bold))
+        title.setAlignment(Qt.AlignCenter)
+        title.setStyleSheet("color: #e5e5e5;")
+        self.main_layout.addWidget(title)
+
+        # === 狀態 ===
+        current_token = self._read_env_token()
+        display_token = current_token or self._detected_token or ""
+        status_text = "✅ 已設定自訂 Token" if current_token else (
+            "🆕 首次生成（自動）" if self._detected_token else "⚠️ 尚未設定"
+        )
+        self.status_label = QLabel(status_text)
+        self.status_label.setFont(QFont("Arial", 10))
+        self.status_label.setAlignment(Qt.AlignCenter)
+        self.status_label.setStyleSheet(
+            f"color: {'#4ade80' if current_token else '#ffaa00'}; padding: 4px;"
+        )
+        self.main_layout.addWidget(self.status_label)
+
+        # === 目前 Token ===
+        cur_label = QLabel("目前 Token：")
+        cur_label.setFont(QFont("Consolas", 9))
+        cur_label.setStyleSheet("color: #aaa;")
+        self.main_layout.addWidget(cur_label)
+
+        self.current_display = QLineEdit(display_token if display_token else "（未設定 — 請在下方輸入）")
+        self.current_display.setReadOnly(True)
+        self.current_display.setFont(QFont("Consolas", 12))
+        self.current_display.setMinimumHeight(38)
+        self.current_display.setAlignment(Qt.AlignCenter)
+        self.current_display.setStyleSheet(
+            "QLineEdit { background: #1a1a2e; color: #4ade80; border: 2px solid #333;"
+            " border-radius: 6px; padding: 6px; selection-background-color: #335eea; }"
+        )
+        if display_token:
+            self.current_display.selectAll()
+        self.main_layout.addWidget(self.current_display)
+
+        # === 複製 ===
+        copy_btn = QPushButton("📋 複製 Token")
+        copy_btn.setFixedHeight(30)
+        copy_btn.setFont(QFont("Arial", 9))
+        copy_btn.setStyleSheet(
+            "QPushButton { background: #2a2a3e; color: #aaa; border: 1px solid #444; border-radius: 4px; }"
+            "QPushButton:hover { background: #335eea; color: white; }"
+        )
+        copy_btn.clicked.connect(self._copy_token)
+        copy_btn.setEnabled(bool(display_token))
+        self.copy_btn = copy_btn
+        self.main_layout.addWidget(copy_btn)
+
+        self.main_layout.addSpacing(5)
+
+        sep = QFrame()
+        sep.setFrameShape(QFrame.HLine)
+        sep.setStyleSheet("color: #333;")
+        self.main_layout.addWidget(sep)
+
+        # === 設定新 Token ===
+        new_label = QLabel("設定新的 Token（密碼）：")
+        new_label.setFont(QFont("Consolas", 9))
+        new_label.setStyleSheet("color: #aaa;")
+        self.main_layout.addWidget(new_label)
+
+        self.new_token_input = QLineEdit()
+        self.new_token_input.setPlaceholderText("輸入自訂密碼（至少 8 個字元）")
+        self.new_token_input.setFont(QFont("Consolas", 12))
+        self.new_token_input.setMinimumHeight(38)
+        self.new_token_input.setStyleSheet(
+            "QLineEdit { background: #1a1a2e; color: #e5e5e5; border: 2px solid #444;"
+            " border-radius: 6px; padding: 6px; }"
+            "QLineEdit:focus { border-color: #335eea; }"
+        )
+        self.main_layout.addWidget(self.new_token_input)
+
+        # === 按鈕列 ===
+        btn_layout = QHBoxLayout()
+        btn_layout.setSpacing(10)
+
+        save_btn = QPushButton("💾 儲存並套用")
+        save_btn.setFixedHeight(38)
+        save_btn.setFont(QFont("Arial", 11, QFont.Bold))
+        save_btn.setStyleSheet(
+            "QPushButton { background: #335eea; color: white; border-radius: 6px; }"
+            "QPushButton:hover { background: #2651dd; }"
+        )
+        save_btn.clicked.connect(self._save_token)
+        btn_layout.addWidget(save_btn)
+
+        close_btn = QPushButton("關閉")
+        close_btn.setFixedHeight(38)
+        close_btn.setFont(QFont("Arial", 11))
+        close_btn.setStyleSheet(
+            "QPushButton { background: #333; color: #ccc; border-radius: 6px; border: 1px solid #555; }"
+            "QPushButton:hover { background: #444; }"
+        )
+        close_btn.clicked.connect(self.accept)
+        btn_layout.addWidget(close_btn)
+
+        self.main_layout.addLayout(btn_layout)
+
+    # ──────────────────────────────────────────
+    # 工具方法
+    # ──────────────────────────────────────────
+    def _clear_layout(self):
+        """清空 layout 中所有 widget / sub-layout"""
+        while self.main_layout.count():
+            item = self.main_layout.takeAt(0)
+            w = item.widget()
+            if w:
+                w.deleteLater()
+            sub = item.layout()
+            if sub:
+                while sub.count():
+                    child = sub.takeAt(0)
+                    cw = child.widget()
+                    if cw:
+                        cw.deleteLater()
+
+    def _read_env_token(self) -> str:
+        """從 .env 讀取 BRUV_API_TOKEN"""
+        if not self.env_file.exists():
+            return ""
+        try:
+            for line in self.env_file.read_text(encoding='utf-8').splitlines():
+                stripped = line.strip()
+                if stripped.startswith('#') or '=' not in stripped:
+                    continue
+                key, _, val = stripped.partition('=')
+                if key.strip() == 'BRUV_API_TOKEN':
+                    return val.strip().strip('"').strip("'")
+        except Exception:
+            pass
+        return ""
+
+    def _write_env_token(self, token: str):
+        """寫入 BRUV_API_TOKEN 到 .env（保留其他設定）"""
+        lines = []
+        token_written = False
+
+        if self.env_file.exists():
+            for line in self.env_file.read_text(encoding='utf-8').splitlines():
+                stripped = line.strip()
+                if stripped.startswith('#') and 'BRUV_API_TOKEN' in stripped:
+                    lines.append(line)
+                    continue
+                key = stripped.partition('=')[0].strip()
+                if key == 'BRUV_API_TOKEN':
+                    lines.append(f'BRUV_API_TOKEN={token}')
+                    token_written = True
+                else:
+                    lines.append(line)
+        else:
+            example = self.project_root / ".env.example"
+            if example.exists():
+                for line in example.read_text(encoding='utf-8').splitlines():
+                    stripped = line.strip()
+                    if stripped == '# BRUV_API_TOKEN=your_custom_token_here':
+                        lines.append(f'BRUV_API_TOKEN={token}')
+                        token_written = True
+                    else:
+                        lines.append(line)
+            else:
+                lines.append('# BruV API Token')
+
+        if not token_written:
+            lines.append(f'BRUV_API_TOKEN={token}')
+
+        self.env_file.write_text('\n'.join(lines) + '\n', encoding='utf-8')
+
+    def _copy_token(self):
+        text = self.current_display.text()
+        if text and not text.startswith('（'):
+            QApplication.clipboard().setText(text)
+            QMessageBox.information(self, "已複製", "API Token 已複製到剪貼簿！")
+
+    def _save_token(self):
+        new_token = self.new_token_input.text().strip()
+        if not new_token:
+            QMessageBox.warning(self, "錯誤", "請輸入 Token（密碼）")
+            return
+        if len(new_token) < 8:
+            QMessageBox.warning(self, "錯誤", "Token 至少需要 8 個字元")
+            return
+
+        try:
+            self._write_env_token(new_token)
+
+            self.current_display.setText(new_token)
+            self.current_display.selectAll()
+            self.copy_btn.setEnabled(True)
+            self.status_label.setText("✅ 已設定自訂 Token")
+            self.status_label.setStyleSheet("color: #4ade80; padding: 4px;")
+            self.new_token_input.clear()
+
+            os.environ['BRUV_API_TOKEN'] = new_token
+
+            QMessageBox.information(
+                self, "✅ 儲存成功",
+                "Token 已寫入 .env 檔案。\n\n"
+                "⚠️ 請重啟後端服務以套用新 Token。\n\n"
+                "前端登入時使用此 Token 作為密碼。"
+            )
+        except Exception as e:
+            QMessageBox.critical(self, "錯誤", f"儲存失敗：{e}")
+
 
 # ============================================
 # ProcessWorker - 非同步執行子進程
@@ -385,7 +701,9 @@ class LauncherWorker(QThread):
                 'app_anytype:app',
                 '--host', '0.0.0.0',
                 '--port', '8000',
-                '--reload'
+                '--reload',
+                '--reload-dir', 'backend',
+                '--reload-include', 'app_anytype.py',
             ],
             cwd=self.project_root,
             env=env,
@@ -667,6 +985,7 @@ class BruVLauncherGUI(QMainWindow):
         self.is_system_running = False  # 系統運行狀態旗標
         self.current_language = "zh_TW"  # 預設語言
         self.is_dark_mode = True  # 預設深色模式
+        self._detected_token = None  # 偵測到的 API Token
         
         # 定義主題色票
         self.themes = {
@@ -904,6 +1223,16 @@ class BruVLauncherGUI(QMainWindow):
         layout.addWidget(self.backend_status)
         layout.addWidget(self.frontend_status)
         layout.addWidget(self.docker_status)
+
+        layout.addSpacing(10)
+
+        # API Token 按鈕
+        self.token_btn = QPushButton("🔑 API Token")
+        self.token_btn.setObjectName("linkBtn")
+        self.token_btn.setFixedHeight(36)
+        self.token_btn.setFont(QFont("Consolas", 9))
+        self.token_btn.clicked.connect(self.show_token_dialog)
+        layout.addWidget(self.token_btn)
 
         layout.addStretch()
 
@@ -1289,7 +1618,16 @@ class BruVLauncherGUI(QMainWindow):
             self.console_text.append(f"\n[日誌已清理，保留最新 4000 行]\n")
         
         self.console_text.append(message)
-        
+
+        # 偵測 API Token 並彈出對話框
+        if '已自動生成 API Token' in message:
+            self._token_next_line = True
+        elif getattr(self, '_token_next_line', False) and message.strip() and not message.startswith('='):
+            token = message.strip()
+            self._token_next_line = False
+            self._detected_token = token
+            QTimer.singleShot(500, lambda: self._show_token_popup(token))
+
         # 自動滾動到底部
         cursor = self.console_text.textCursor()
         cursor.movePosition(QTextCursor.MoveOperation.End)
@@ -1448,6 +1786,16 @@ class BruVLauncherGUI(QMainWindow):
     def clear_console(self):
         """清空控制台"""
         self.console_text.clear()
+
+    def _show_token_popup(self, token):
+        """彈出 API Token 管理對話框"""
+        dialog = TokenManagerDialog(self.project_root, detected_token=token, parent=self)
+        dialog.exec()
+
+    def show_token_dialog(self):
+        """手動開啟 API Token 管理"""
+        dialog = TokenManagerDialog(self.project_root, detected_token=self._detected_token, parent=self)
+        dialog.exec()
 
     def close_application(self):
         """關閉應用程式"""

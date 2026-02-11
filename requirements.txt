@@ -24,3 +24,10 @@ watchdog==6.0.0
 
 # 物件儲存
 minio==7.2.20
+
+# === OpenTelemetry 分散式追蹤 (可選 — 設定 OTEL_ENABLED=true 啟用) ===
+opentelemetry-api>=1.20.0
+opentelemetry-sdk>=1.20.0
+opentelemetry-instrumentation-fastapi>=0.41b0
+opentelemetry-instrumentation-httpx>=0.41b0
+# opentelemetry-exporter-otlp>=1.20.0  # 生產環境 OTLP 匯出器，需搭配 Jaeger/Tempo
