@@ -214,7 +214,7 @@ const generateGraphData = (nodeCount = 50) => {
       name: `${nodeType.icon} ${nodeType.type} ${i + 1}`,
       type: nodeType.type,
       color: nodeType.color,
-      val: Math.random() * 20 + 5, // 節點大小
+      val: 10, // 統一節點大小
       connections: 0
     });
   }
@@ -265,7 +265,7 @@ const initGraph = async () => {
     .graphData(graphData.value)
     .nodeLabel('name')
     .nodeColor(node => node.color || '#448aff')
-    .nodeVal(node => node.size || 10)
+    .nodeVal(() => 10)  // 統一節點大小
     
     // 🎨 根據連接類型設置顏色
     .linkColor(link => {
@@ -321,7 +321,7 @@ const initGraph = async () => {
     .nodeThreeObject(node => {
       // 🎨 真實光照球體：物理基礎渲染（PBR）
       
-      const nodeSize = (node.size || 10) / 2;
+      const nodeSize = 5;  // 統一球體半徑
       
       // 1. 創建高精度球體幾何體
       const geometry = new THREE.SphereGeometry(nodeSize, 64, 64); // 提高到64分段，更平滑

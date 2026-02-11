@@ -466,7 +466,7 @@ async def get_graph_data(request: Request, graph_id: str = "1"):
                     "description": properties.get("description", ""),
                     "image": properties.get("image", ""),
                     "color": properties.get("color", ""),
-                    "size": properties.get("size", 10),
+                    "size": 10,  # 統一節點大小
                     "properties": properties
                 }
                 
