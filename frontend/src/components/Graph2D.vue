@@ -231,12 +231,7 @@ const initGraph = async () => {
     .backgroundColor(backgroundColor.value)
     .nodeLabel('name')
     .nodeColor(node => node.color || '#448aff')
-    .nodeVal(node => {
-      // 🔧 點擊偵測範圍應與視覺大小一致，避免超大節點的點擊範圍過大
-      const rawSize = Math.sqrt(node.size || 10) * 1.5;
-      const cappedSize = Math.min(rawSize, 15);
-      return cappedSize * cappedSize; // nodeVal 需要的是面積值（半徑平方）
-    })
+    .nodeVal(() => 25)  // 統一節點大小
     .nodeVisibility(node => {
       // 密度過濾：隱藏連線數低於門檻的節點
       if (props.densityThreshold > 0) {
@@ -415,9 +410,8 @@ const initGraph = async () => {
       
       // 🎯 選中節點放大效果（低縮放時放大節點確保可見）
       const zoomBoost = globalScale < 0.5 ? 2.5 / Math.max(globalScale, 0.15) : globalScale < 1.0 ? 1.2 / globalScale : 1;
-      // 🔧 限制節點大小：避免某些 size 值過大的節點變成巨型圓圈
-      const rawSize = Math.sqrt(node.size || 10) * 1.5;
-      const cappedSize = Math.min(rawSize, 15); // 最大基礎半徑 15px
+      // 🔧 統一節點大小
+      const cappedSize = 5; // 固定基礎半徑
       const baseNodeSize = cappedSize * Math.min(zoomBoost, 3); // zoomBoost 也限制在 3 倍內
       const nodeSize = isSelected ? baseNodeSize * 1.8 : baseNodeSize;
       
