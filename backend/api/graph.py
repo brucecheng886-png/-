@@ -62,6 +62,14 @@ class GraphMetadataUpdate(BaseModel):
     color: Optional[str] = None
 
 
+def _clean_graph_metadata(graph: dict) -> dict:
+    """移除 KuzuDB 內部欄位（_id, _label），避免序列化問題"""
+    if graph:
+        graph.pop('_id', None)
+        graph.pop('_label', None)
+    return graph
+
+
 class EntityUpdate(BaseModel):
     """實體更新模型"""
     name: Optional[str] = None
@@ -243,6 +251,8 @@ async def list_graphs_legacy(request: Request):
         # 使用真實的圖譜元數據
         if kuzu_manager:
             graphs = kuzu_manager.list_graph_metadata()
+            # 清理 KuzuDB 內部欄位
+            graphs = [_clean_graph_metadata(g) for g in graphs]
             if graphs:
                 # 補充節點/連結統計（使用參數化查詢）
                 for g in graphs:
@@ -342,11 +352,13 @@ async def create_graph(request: Request, graph_data: GraphMetadataCreate):
         return {
             "success": True,
             "message": f"圖譜「{graph_data.name}」創建成功",
-            "graph": graph
+            "graph": _clean_graph_metadata(graph)
         }
         
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"❌ 創建圖譜失敗: {e}")
+        logger.error(f"❌ 創建圖譜失敗: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"創建圖譜失敗: {str(e)}")
 
 
@@ -360,6 +372,8 @@ async def list_graphs(request: Request):
     
     try:
         graphs = kuzu_manager.list_graph_metadata()
+        # 清理 KuzuDB 內部欄位
+        graphs = [_clean_graph_metadata(g) for g in graphs]
         
         return {
             "success": True,
@@ -368,7 +382,7 @@ async def list_graphs(request: Request):
         }
         
     except Exception as e:
-        logger.error(f"❌ 獲取圖譜列表失敗: {e}")
+        logger.error(f"❌ 獲取圖譜列表失敗: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"獲取圖譜列表失敗: {str(e)}")
 
 
@@ -388,13 +402,13 @@ async def get_graph(request: Request, graph_id: str):
         
         return {
             "success": True,
-            "graph": graph
+            "graph": _clean_graph_metadata(graph)
         }
         
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"❌ 獲取圖譜失敗: {e}")
+        logger.error(f"❌ 獲取圖譜失敗: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"獲取圖譜失敗: {str(e)}")
 
 
@@ -437,13 +451,13 @@ async def update_graph(request: Request, graph_id: str, graph_data: GraphMetadat
         return {
             "success": True,
             "message": f"圖譜更新成功",
-            "graph": graph
+            "graph": _clean_graph_metadata(graph)
         }
         
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"❌ 更新圖譜失敗: {e}")
+        logger.error(f"❌ 更新圖譜失敗: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"更新圖譜失敗: {str(e)}")
 
 

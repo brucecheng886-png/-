@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Optional
 from fastapi import Request, HTTPException
 from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.responses import JSONResponse
 
 logger = logging.getLogger(__name__)
 
@@ -154,15 +155,15 @@ class APIAuthMiddleware(BaseHTTPMiddleware):
         token = self._extract_token(request)
         
         if not token:
-            raise HTTPException(
+            return JSONResponse(
                 status_code=401,
-                detail="未提供認證 Token。請在 Header 中加入 Authorization: Bearer <token>"
+                content={"detail": "未提供認證 Token。請在 Header 中加入 Authorization: Bearer <token>"}
             )
         
         if not verify_token(token):
-            raise HTTPException(
+            return JSONResponse(
                 status_code=401,
-                detail="認證 Token 無效"
+                content={"detail": "認證 Token 無效"}
             )
         
         return await call_next(request)
