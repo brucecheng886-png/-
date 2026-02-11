@@ -428,6 +428,7 @@ async def upload_file(
     """
     try:
         ai_enabled = enable_ai_link.lower() == "true"
+        ragflow_doc_ids = []
         logger.info(f"收到文件上傳請求: {file.filename}, graph_mode={graph_mode}, graph_id={graph_id}")
         
         # 檔案大小限制檢查
@@ -491,12 +492,31 @@ async def upload_file(
                         base_url=ragflow_api_url
                     )
                     
-                    # 上傳到 RAGFlow
-                    ragflow_result = rag_client.upload_file(
+                    # 非同步上傳到 RAGFlow（避免阻塞事件迴圈）
+                    ragflow_result = await rag_client.async_upload_file(
                         dataset_id=ragflow_dataset_id,
                         file_path=str(file_path)
                     )
                     logger.info(f"✅ RAGFlow 上傳成功: {ragflow_result}")
+                    
+                    # 自動觸發文檔解析（chunking + embedding）
+                    uploaded_docs = ragflow_result.get("data", [])
+                    if uploaded_docs:
+                        doc_ids = [d["id"] for d in uploaded_docs if "id" in d]
+                        if doc_ids:
+                            import httpx
+                            async with httpx.AsyncClient(timeout=60) as parse_client:
+                                parse_resp = await parse_client.post(
+                                    f"{ragflow_api_url}/datasets/{ragflow_dataset_id}/chunks",
+                                    headers={
+                                        "Authorization": f"Bearer {api_keys['RAGFLOW_API_KEY']}",
+                                        "Content-Type": "application/json"
+                                    },
+                                    json={"document_ids": doc_ids}
+                                )
+                                parse_resp.raise_for_status()
+                                logger.info(f"✅ 已觸發 RAGFlow 文檔解析: {doc_ids}")
+                                ragflow_doc_ids = doc_ids
             except Exception as e:
                 logger.warning(f"⚠️ RAGFlow 上傳失敗（繼續處理）: {e}")
         
@@ -509,7 +529,8 @@ async def upload_file(
             "upload_time": datetime.now().isoformat(),
             "ai_enabled": ai_enabled,
             "ragflow_dataset_id": ragflow_dataset_id if ai_enabled else None,
-            "ragflow_result": ragflow_result
+            "ragflow_result": ragflow_result,
+            "ragflow_doc_ids": ragflow_doc_ids if ai_enabled else None
         }
         
         import json
@@ -534,7 +555,9 @@ async def upload_file(
             "size": os.path.getsize(file_path),
             "upload_time": datetime.now().isoformat(),
             "ai_enabled": ai_enabled,
-            "ragflow_processed": ragflow_result is not None
+            "ragflow_processed": ragflow_result is not None,
+            "ragflow_dataset_id": ragflow_dataset_id if ai_enabled else None,
+            "ragflow_doc_ids": ragflow_doc_ids if ai_enabled else []
         }
         
     except Exception as e:
@@ -597,3 +620,66 @@ async def resolve_dlq_item(dlq_id: str):
     except Exception as e:
         logger.error(f"DLQ 標記失敗: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ==================== 系統維護 API ====================
+
+@router.post("/maintenance/cleanup")
+async def system_cleanup(retention_days: int = 7):
+    """
+    清理過期的 SagaLog 與 TaskQueue 記錄
+
+    - SagaLog: 刪除狀態為 completed / compensation_complete 且超過 retention_days 的記錄
+    - TaskQueue: 刪除狀態為 completed / failed 且超過 retention_days 的記錄
+    - DLQ: 保留不動，需人工確認後手動解決
+
+    Args:
+        retention_days: 保留天數，預設 7 天
+    """
+    import sqlite3
+    from datetime import datetime, timedelta
+
+    cutoff = (datetime.now() - timedelta(days=retention_days)).isoformat()
+    results = {"saga_deleted": 0, "task_deleted": 0, "retention_days": retention_days, "cutoff": cutoff}
+
+    # ── 清理 SagaLog ──
+    try:
+        from backend.services.saga import _SAGA_DB_PATH
+        if _SAGA_DB_PATH.exists():
+            conn = sqlite3.connect(str(_SAGA_DB_PATH), timeout=5)
+            cursor = conn.execute(
+                "DELETE FROM saga_logs WHERE status IN ('completed', 'compensation_complete') "
+                "AND created_at < ?",
+                (cutoff,)
+            )
+            results["saga_deleted"] = cursor.rowcount
+            conn.commit()
+            conn.close()
+            logger.info(f"🧹 已清理 {results['saga_deleted']} 筆過期 SagaLog")
+    except Exception as e:
+        logger.error(f"SagaLog 清理失敗: {e}")
+        results["saga_error"] = str(e)
+
+    # ── 清理 TaskQueue ──
+    try:
+        from backend.services.task_queue import _TASK_DB_PATH
+        if _TASK_DB_PATH.exists():
+            conn = sqlite3.connect(str(_TASK_DB_PATH), timeout=5)
+            cursor = conn.execute(
+                "DELETE FROM tasks WHERE status IN ('completed', 'failed') "
+                "AND completed_at < ?",
+                (cutoff,)
+            )
+            results["task_deleted"] = cursor.rowcount
+            conn.commit()
+            conn.close()
+            logger.info(f"🧹 已清理 {results['task_deleted']} 筆過期 TaskQueue 記錄")
+    except Exception as e:
+        logger.error(f"TaskQueue 清理失敗: {e}")
+        results["task_error"] = str(e)
+
+    return {
+        "success": True,
+        "message": f"清理完成: SagaLog {results['saga_deleted']} 筆, TaskQueue {results['task_deleted']} 筆 (DLQ 保留不動)",
+        "data": results
+    }

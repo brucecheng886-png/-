@@ -91,8 +91,8 @@ services:
     image: infiniflow/ragflow:v0.16.0
     container_name: bruv_ragflow
     ports:
-      - "127.0.0.1:81:80"
-      - "0.0.0.0:443:443"
+      - "81:80"
+      - "443:443"
       - "127.0.0.1:9380:9380"
       - "127.0.0.1:9381:9381"
     environment:
@@ -170,8 +170,8 @@ services:
     volumes:
       - ragflow_minio_data:/data
     ports:
-      - "127.0.0.1:9000:9000"
-      - "127.0.0.1:9001:9001"
+      - "9000:9000"
+      - "9001:9001"
     networks:
       - bruv_network
     restart: unless-stopped

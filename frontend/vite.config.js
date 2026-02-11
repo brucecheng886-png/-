@@ -66,17 +66,12 @@ export default defineConfig({
     outDir: 'dist',
     assetsDir: 'assets',
     sourcemap: false,
-    minify: 'terser',
+    minify: 'esbuild',
     chunkSizeWarningLimit: 1500,
     rollupOptions: {
       output: {
-        manualChunks: {
-          'vue-vendor': ['vue', 'vue-router'],
-          'element-plus': ['element-plus'],
-          'g6': ['@antv/g6'],
-          'xlsx': ['xlsx'],
-          'markdown': ['markdown-it']
-        }
+        // manualChunks 暫時停用 — 大型依賴 (g6, three.js) 可能導致 rollup stack overflow
+        // 使用 Vite 自動 code splitting 即可
       }
     }
   },

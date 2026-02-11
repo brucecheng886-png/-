@@ -679,16 +679,25 @@ const uploadFiles = async () => {
         uploadResults.value.push({
           ...result,
           filename: file.name,
-          processingProgress: '30%',
-          processingStage: '📥 已接收文件，開始後台處理...',
-          stage1Done: false,
+          processingProgress: result.ragflow_processed ? '30%' : '50%',
+          processingStage: result.ragflow_processed 
+            ? '📥 已送入 RAGFlow，等待解析...' 
+            : '📥 已接收文件，開始後台處理...',
+          stage1Done: true,
           stage2Done: false,
           stage3Done: false
         });
         
-        // 啟動後台進度模擬（實際應從後端輪詢）
-        if (result.success) {
-          simulateProcessing(uploadResults.value.length - 1);
+        // 啟動真實進度追蹤（如果有 RAGFlow 文檔 ID）
+        if (result.success && result.ragflow_processed && result.ragflow_doc_ids?.length > 0) {
+          pollRAGFlowProgress(
+            uploadResults.value.length - 1,
+            result.ragflow_dataset_id,
+            result.ragflow_doc_ids[0]
+          );
+        } else if (result.success) {
+          // 無 RAGFlow — 本地處理完成
+          simulateLocalProcessing(uploadResults.value.length - 1);
         }
 
       } catch (error) {
@@ -824,30 +833,100 @@ const closeCreateGraphDialog = () => {
 };
 
 /**
- * 模擬後台處理進度（未來可替換為實際 API 輪詢）
+ * 真實 RAGFlow 進度追蹤 — 輪詢文檔解析狀態
  */
-const simulateProcessing = async (resultIndex) => {
-  // 階段 1: 文件解析 (0-40%)
-  await new Promise(resolve => setTimeout(resolve, 2000));
+const pollRAGFlowProgress = async (resultIndex, datasetId, documentId) => {
+  const maxAttempts = 120; // 最多輪詢 120 次（每 3 秒一次 = 6 分鐘）
+  let attempts = 0;
+  
+  // 階段 1: 已上傳
   if (uploadResults.value[resultIndex]) {
-    uploadResults.value[resultIndex].processingProgress = '40%';
+    uploadResults.value[resultIndex].processingProgress = '30%';
+    uploadResults.value[resultIndex].processingStage = '📄 RAGFlow 接收文件中...';
+    uploadResults.value[resultIndex].stage1Done = true;
+  }
+  
+  while (attempts < maxAttempts) {
+    await new Promise(resolve => setTimeout(resolve, 3000)); // 每 3 秒輪詢
+    attempts++;
+    
+    if (!uploadResults.value[resultIndex]) break;
+    
+    try {
+      const response = await authFetch(
+        `/api/ragflow/documents/${datasetId}/status/${documentId}`
+      );
+      const statusData = await response.json();
+      
+      if (statusData.code !== 0) {
+        console.warn('⚠️ RAGFlow 狀態查詢失敗:', statusData);
+        continue;
+      }
+      
+      const doc = statusData.data;
+      const progress = doc.progress || 0;
+      const runStatus = doc.run; // UNSTART, RUNNING, DONE, FAIL, CANCEL
+      
+      // 更新進度 (30% ~ 95% 映射)
+      const displayProgress = Math.round(30 + progress * 65);
+      uploadResults.value[resultIndex].processingProgress = `${displayProgress}%`;
+      
+      if (runStatus === 'RUNNING' || runStatus === '1') {
+        uploadResults.value[resultIndex].processingStage = `🧠 RAGFlow 解析中 (${Math.round(progress * 100)}%)...`;
+        uploadResults.value[resultIndex].stage2Done = false;
+      } else if (runStatus === 'DONE' || runStatus === '3') {
+        // 解析完成
+        uploadResults.value[resultIndex].processingProgress = '100%';
+        uploadResults.value[resultIndex].processingStage = `✅ RAGFlow 解析完成！(${doc.chunk_count} 個分塊)`;
+        uploadResults.value[resultIndex].stage2Done = true;
+        uploadResults.value[resultIndex].stage3Done = true;
+        console.log(`✅ 文檔 ${doc.name} 解析完成: ${doc.chunk_count} chunks, ${doc.token_count} tokens`);
+        break;
+      } else if (runStatus === 'FAIL' || runStatus === '4') {
+        uploadResults.value[resultIndex].processingProgress = '100%';
+        uploadResults.value[resultIndex].processingStage = '❌ RAGFlow 解析失敗';
+        uploadResults.value[resultIndex].stage2Done = true;
+        uploadResults.value[resultIndex].stage3Done = false;
+        console.error('❌ RAGFlow 解析失敗:', doc.progress_msg);
+        break;
+      } else if (runStatus === 'CANCEL' || runStatus === '2') {
+        uploadResults.value[resultIndex].processingStage = '⏹️ 解析已取消';
+        break;
+      }
+      // UNSTART — 繼續等待
+    } catch (error) {
+      console.warn('⚠️ 輪詢 RAGFlow 狀態失敗:', error);
+      // 不中斷，繼續輪詢
+    }
+  }
+  
+  if (attempts >= maxAttempts && uploadResults.value[resultIndex]) {
+    uploadResults.value[resultIndex].processingStage = '⏰ 解析超時，請到 RAGFlow 控制台查看';
+  }
+};
+
+/**
+ * 本地處理進度模擬（未啟用 RAGFlow 時使用）
+ */
+const simulateLocalProcessing = async (resultIndex) => {
+  await new Promise(resolve => setTimeout(resolve, 1500));
+  if (uploadResults.value[resultIndex]) {
+    uploadResults.value[resultIndex].processingProgress = '60%';
     uploadResults.value[resultIndex].processingStage = '📄 正在解析文件內容...';
     uploadResults.value[resultIndex].stage1Done = true;
   }
   
-  // 階段 2: RAGFlow 分析 (40-70%)
-  await new Promise(resolve => setTimeout(resolve, 3000));
+  await new Promise(resolve => setTimeout(resolve, 2000));
   if (uploadResults.value[resultIndex]) {
-    uploadResults.value[resultIndex].processingProgress = '70%';
-    uploadResults.value[resultIndex].processingStage = '🧠 RAGFlow 語義分析中...';
+    uploadResults.value[resultIndex].processingProgress = '90%';
+    uploadResults.value[resultIndex].processingStage = '🔗 建立圖譜節點...';
     uploadResults.value[resultIndex].stage2Done = true;
   }
   
-  // 階段 3: 圖譜構建 (70-100%)
-  await new Promise(resolve => setTimeout(resolve, 2000));
+  await new Promise(resolve => setTimeout(resolve, 1000));
   if (uploadResults.value[resultIndex]) {
     uploadResults.value[resultIndex].processingProgress = '100%';
-    uploadResults.value[resultIndex].processingStage = '✅ 圖譜節點創建完成！';
+    uploadResults.value[resultIndex].processingStage = '✅ 本地處理完成！';
     uploadResults.value[resultIndex].stage3Done = true;
   }
 };

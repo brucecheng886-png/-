@@ -142,7 +142,7 @@ async def upload_document(
 
 @router.get("/documents/{dataset_id}")
 async def list_documents(dataset_id: str):
-    """列出數據集中的文檔"""
+    """列出數據集中的文檔（含解析狀態）"""
     config = get_ragflow_config()
     
     try:
@@ -156,3 +156,78 @@ async def list_documents(dataset_id: str):
     except httpx.HTTPError as e:
         logger.error(f"獲取文檔列表失敗: {e}")
         raise HTTPException(status_code=500, detail=f"獲取文檔列表失敗: {str(e)}")
+
+
+class ParseRequest(BaseModel):
+    document_ids: list[str]
+
+
+@router.post("/documents/{dataset_id}/parse")
+async def parse_documents(dataset_id: str, body: ParseRequest):
+    """
+    觸發 RAGFlow 文檔解析（chunking + embedding）
+    上傳文檔後必須呼叫此端點才會開始處理
+    """
+    config = get_ragflow_config()
+    document_ids = body.document_ids
+    
+    try:
+        async with httpx.AsyncClient(timeout=60) as client:
+            response = await client.post(
+                f"{config['api_url']}/datasets/{dataset_id}/chunks",
+                headers={
+                    "Authorization": f"Bearer {config['api_key']}",
+                    "Content-Type": "application/json"
+                },
+                json={"document_ids": document_ids}
+            )
+            response.raise_for_status()
+            result = response.json()
+            logger.info(f"✅ 已觸發文檔解析: dataset={dataset_id}, docs={document_ids}")
+            return result
+    except httpx.HTTPError as e:
+        logger.error(f"觸發文檔解析失敗: {e}")
+        raise HTTPException(status_code=500, detail=f"觸發文檔解析失敗: {str(e)}")
+
+
+@router.get("/documents/{dataset_id}/status/{document_id}")
+async def get_document_status(dataset_id: str, document_id: str):
+    """
+    查詢單個文檔的解析狀態
+    回傳: run (UNSTART/RUNNING/CANCEL/DONE/FAIL), progress (0.0~1.0), progress_msg
+    """
+    config = get_ragflow_config()
+    
+    try:
+        async with httpx.AsyncClient(timeout=settings.REQUEST_TIMEOUT) as client:
+            response = await client.get(
+                f"{config['api_url']}/datasets/{dataset_id}/documents",
+                headers={"Authorization": f"Bearer {config['api_key']}"},
+                params={"id": document_id}
+            )
+            response.raise_for_status()
+            data = response.json()
+            
+            docs = data.get("data", {}).get("docs", [])
+            if not docs:
+                raise HTTPException(status_code=404, detail="文檔不存在")
+            
+            doc = docs[0]
+            return {
+                "code": 0,
+                "data": {
+                    "id": doc.get("id"),
+                    "name": doc.get("name"),
+                    "run": doc.get("run", "UNSTART"),
+                    "progress": doc.get("progress", 0.0),
+                    "progress_msg": doc.get("progress_msg", ""),
+                    "chunk_count": doc.get("chunk_count", 0),
+                    "token_count": doc.get("token_count", 0),
+                    "process_duration": doc.get("process_duration", 0),
+                }
+            }
+    except HTTPException:
+        raise
+    except httpx.HTTPError as e:
+        logger.error(f"查詢文檔狀態失敗: {e}")
+        raise HTTPException(status_code=500, detail=f"查詢文檔狀態失敗: {str(e)}")

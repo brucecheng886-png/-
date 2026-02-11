@@ -26,7 +26,10 @@ from enum import Enum
 from pathlib import Path
 from typing import Optional, Dict, Any, List
 
+from backend.core.telemetry import get_tracer
+
 logger = logging.getLogger(__name__)
+_tracer = get_tracer("bruv.saga")
 
 # Saga 日誌持久化路徑
 import os
@@ -199,97 +202,126 @@ class FileImportSaga:
         ragflow_doc_id = None
         kuzu_entity_id = None
 
-        try:
-            # ── Step 1: 上傳至 RAGFlow ──
-            saga_log.record_step("ragflow_upload", status="STARTED")
+        with _tracer.start_as_current_span("saga.file_import") as saga_span:
+            saga_span.set_attribute("saga.id", saga_log.saga_id)
+            saga_span.set_attribute("saga.file_path", str(file_path))
+            saga_span.set_attribute("saga.file_name", file_path.name)
+            saga_span.set_attribute("saga.graph_id", graph_id)
+            saga_span.set_attribute("saga.dataset_id", self.dataset_id)
 
-            upload_result = await asyncio.get_event_loop().run_in_executor(
-                None,
-                lambda: self.rag_client.upload_file(
-                    dataset_id=self.dataset_id,
-                    file_path=str(file_path)
-                )
-            )
-            ragflow_doc_id = self._extract_doc_id(upload_result)
-            saga_log.record_step(
-                "ragflow_upload",
-                status="COMPLETED",
-                doc_id=ragflow_doc_id
-            )
+            try:
+                # ── Step 1: 上傳至 RAGFlow ──
+                with _tracer.start_as_current_span("saga.step.ragflow_upload") as step_span:
+                    step_span.set_attribute("saga.id", saga_log.saga_id)
+                    step_span.set_attribute("saga.file_name", file_path.name)
+                    step_span.set_attribute("saga.step", "ragflow_upload")
 
-            # ── Step 2: 寫入 KuzuDB ──
-            saga_log.record_step("kuzu_write", status="STARTED")
+                    saga_log.record_step("ragflow_upload", status="STARTED")
 
-            if entity_id_generator:
-                kuzu_entity_id = entity_id_generator(file_path, upload_result)
-            else:
-                import hashlib
-                file_hash = hashlib.md5(str(file_path.absolute()).encode()).hexdigest()
-                kuzu_entity_id = ragflow_doc_id or f"doc_{file_hash[:16]}"
-
-            properties = {
-                'path': str(file_path.absolute()),
-                'size': file_path.stat().st_size,
-                'extension': file_path.suffix.lower(),
-                'dataset_id': self.dataset_id,
-                'document_id': ragflow_doc_id,
-            }
-
-            success = self.kuzu_manager.add_entity(
-                entity_id=kuzu_entity_id,
-                name=file_path.name,
-                entity_type='document',
-                properties=properties,
-                graph_id=graph_id
-            )
-            if not success:
-                raise RuntimeError(f"KuzuDB 寫入失敗: {kuzu_entity_id}")
-
-            saga_log.record_step(
-                "kuzu_write",
-                status="COMPLETED",
-                entity_id=kuzu_entity_id
-            )
-
-            # ── Step 3: Excel 深度解析 (可選) ──
-            if file_path.suffix.lower() == '.xlsx' and excel_parser:
-                saga_log.record_step("excel_parse", status="STARTED")
-                try:
-                    excel_parser(file_path, kuzu_entity_id, graph_id)
-                    saga_log.record_step("excel_parse", status="COMPLETED")
-                except Exception as excel_err:
-                    # Excel 解析失敗不觸發補償，只記錄
-                    saga_log.record_step(
-                        "excel_parse",
-                        status="FAILED",
-                        error=str(excel_err)
+                    upload_result = await asyncio.get_event_loop().run_in_executor(
+                        None,
+                        lambda: self.rag_client.upload_file(
+                            dataset_id=self.dataset_id,
+                            file_path=str(file_path)
+                        )
                     )
-                    logger.warning(f"Excel 解析失敗 (不影響主流程): {excel_err}")
+                    ragflow_doc_id = self._extract_doc_id(upload_result)
+                    step_span.set_attribute("saga.ragflow_doc_id", ragflow_doc_id or "")
+                    saga_log.record_step(
+                        "ragflow_upload",
+                        status="COMPLETED",
+                        doc_id=ragflow_doc_id
+                    )
 
-            saga_log.mark_saga_completed()
+                # ── Step 2: 寫入 KuzuDB ──
+                with _tracer.start_as_current_span("saga.step.kuzu_write") as step_span:
+                    step_span.set_attribute("saga.id", saga_log.saga_id)
+                    step_span.set_attribute("saga.file_name", file_path.name)
+                    step_span.set_attribute("saga.step", "kuzu_write")
 
-            return {
-                "success": True,
-                "saga_id": saga_log.saga_id,
-                "ragflow_doc_id": ragflow_doc_id,
-                "kuzu_entity_id": kuzu_entity_id,
-                "steps": saga_log.steps,
-            }
+                    saga_log.record_step("kuzu_write", status="STARTED")
 
-        except Exception as e:
-            logger.error(f"Saga 失敗，啟動補償: {e}")
-            saga_log.status = SagaStatus.COMPENSATING
+                    if entity_id_generator:
+                        kuzu_entity_id = entity_id_generator(file_path, upload_result)
+                    else:
+                        import hashlib
+                        file_hash = hashlib.md5(str(file_path.absolute()).encode()).hexdigest()
+                        kuzu_entity_id = ragflow_doc_id or f"doc_{file_hash[:16]}"
 
-            await self._compensate(saga_log, ragflow_doc_id, kuzu_entity_id)
+                    step_span.set_attribute("saga.entity_id", kuzu_entity_id)
 
-            saga_log.mark_saga_failed(str(e))
+                    properties = {
+                        'path': str(file_path.absolute()),
+                        'size': file_path.stat().st_size,
+                        'extension': file_path.suffix.lower(),
+                        'dataset_id': self.dataset_id,
+                        'document_id': ragflow_doc_id,
+                    }
 
-            return {
-                "success": False,
-                "saga_id": saga_log.saga_id,
-                "error": str(e),
-                "steps": saga_log.steps,
-            }
+                    success = self.kuzu_manager.add_entity(
+                        entity_id=kuzu_entity_id,
+                        name=file_path.name,
+                        entity_type='document',
+                        properties=properties,
+                        graph_id=graph_id
+                    )
+                    if not success:
+                        raise RuntimeError(f"KuzuDB 寫入失敗: {kuzu_entity_id}")
+
+                    saga_log.record_step(
+                        "kuzu_write",
+                        status="COMPLETED",
+                        entity_id=kuzu_entity_id
+                    )
+
+                # ── Step 3: Excel 深度解析 (可選) ──
+                if file_path.suffix.lower() == '.xlsx' and excel_parser:
+                    with _tracer.start_as_current_span("saga.step.excel_parse") as step_span:
+                        step_span.set_attribute("saga.id", saga_log.saga_id)
+                        step_span.set_attribute("saga.file_name", file_path.name)
+                        step_span.set_attribute("saga.step", "excel_parse")
+
+                        saga_log.record_step("excel_parse", status="STARTED")
+                        try:
+                            excel_parser(file_path, kuzu_entity_id, graph_id)
+                            saga_log.record_step("excel_parse", status="COMPLETED")
+                        except Exception as excel_err:
+                            saga_log.record_step(
+                                "excel_parse",
+                                status="FAILED",
+                                error=str(excel_err)
+                            )
+                            step_span.record_exception(excel_err)
+                            logger.warning(f"Excel 解析失敗 (不影響主流程): {excel_err}")
+
+                saga_log.mark_saga_completed()
+                saga_span.set_attribute("saga.status", "completed")
+
+                return {
+                    "success": True,
+                    "saga_id": saga_log.saga_id,
+                    "ragflow_doc_id": ragflow_doc_id,
+                    "kuzu_entity_id": kuzu_entity_id,
+                    "steps": saga_log.steps,
+                }
+
+            except Exception as e:
+                logger.error(f"Saga 失敗，啟動補償: {e}")
+                saga_span.record_exception(e)
+                saga_span.set_attribute("saga.status", "compensating")
+                saga_log.status = SagaStatus.COMPENSATING
+
+                await self._compensate(saga_log, ragflow_doc_id, kuzu_entity_id)
+
+                saga_log.mark_saga_failed(str(e))
+                saga_span.set_attribute("saga.status", "failed")
+
+                return {
+                    "success": False,
+                    "saga_id": saga_log.saga_id,
+                    "error": str(e),
+                    "steps": saga_log.steps,
+                }
 
     async def _compensate(self, saga_log: SagaLog,
                           ragflow_doc_id: Optional[str],
@@ -298,45 +330,54 @@ class FileImportSaga:
         completed_steps = saga_log.get_completed_steps()
         all_compensated = True
 
-        # 反向順序補償
-        if "kuzu_write" in completed_steps and kuzu_entity_id:
-            try:
-                self.kuzu_manager.delete_entity(kuzu_entity_id)
-                saga_log.record_step("comp_kuzu_delete", status="COMPLETED")
-                logger.info(f"🔄 補償完成: 已刪除 KuzuDB 實體 {kuzu_entity_id}")
-            except Exception as comp_err:
-                saga_log.record_step(
-                    "comp_kuzu_delete",
-                    status="FAILED",
-                    error=str(comp_err)
-                )
-                logger.error(f"❌ 補償失敗 (KuzuDB): {comp_err}")
-                all_compensated = False
+        with _tracer.start_as_current_span("saga.compensate") as comp_span:
+            comp_span.set_attribute("saga.id", saga_log.saga_id)
+            comp_span.set_attribute("saga.file_path", saga_log.file_path)
+            comp_span.set_attribute("saga.completed_steps", ",".join(completed_steps))
 
-        if "ragflow_upload" in completed_steps and ragflow_doc_id:
-            try:
-                await asyncio.get_event_loop().run_in_executor(
-                    None,
-                    lambda: self.rag_client.delete_document(
-                        dataset_id=self.dataset_id,
-                        document_id=ragflow_doc_id
+            # 反向順序補償
+            if "kuzu_write" in completed_steps and kuzu_entity_id:
+                try:
+                    self.kuzu_manager.delete_entity(kuzu_entity_id)
+                    saga_log.record_step("comp_kuzu_delete", status="COMPLETED")
+                    logger.info(f"🔄 補償完成: 已刪除 KuzuDB 實體 {kuzu_entity_id}")
+                except Exception as comp_err:
+                    saga_log.record_step(
+                        "comp_kuzu_delete",
+                        status="FAILED",
+                        error=str(comp_err)
                     )
-                )
-                saga_log.record_step("comp_ragflow_delete", status="COMPLETED")
-                logger.info(f"🔄 補償完成: 已刪除 RAGFlow 文件 {ragflow_doc_id}")
-            except Exception as comp_err:
-                saga_log.record_step(
-                    "comp_ragflow_delete",
-                    status="FAILED",
-                    error=str(comp_err)
-                )
-                logger.error(f"❌ 補償失敗 (RAGFlow): {comp_err}")
-                all_compensated = False
+                    comp_span.record_exception(comp_err)
+                    logger.error(f"❌ 補償失敗 (KuzuDB): {comp_err}")
+                    all_compensated = False
 
-        if all_compensated:
-            saga_log.mark_compensation_complete()
-        else:
-            saga_log.mark_compensation_failed("部分補償操作失敗，請查看 DLQ")
+            if "ragflow_upload" in completed_steps and ragflow_doc_id:
+                try:
+                    await asyncio.get_event_loop().run_in_executor(
+                        None,
+                        lambda: self.rag_client.delete_document(
+                            dataset_id=self.dataset_id,
+                            document_id=ragflow_doc_id
+                        )
+                    )
+                    saga_log.record_step("comp_ragflow_delete", status="COMPLETED")
+                    logger.info(f"🔄 補償完成: 已刪除 RAGFlow 文件 {ragflow_doc_id}")
+                except Exception as comp_err:
+                    saga_log.record_step(
+                        "comp_ragflow_delete",
+                        status="FAILED",
+                        error=str(comp_err)
+                    )
+                    comp_span.record_exception(comp_err)
+                    logger.error(f"❌ 補償失敗 (RAGFlow): {comp_err}")
+                    all_compensated = False
+
+            if all_compensated:
+                saga_log.mark_compensation_complete()
+                comp_span.set_attribute("saga.compensation_result", "success")
+            else:
+                saga_log.mark_compensation_failed("部分補償操作失敗，請查看 DLQ")
+                comp_span.set_attribute("saga.compensation_result", "partial_failure")
 
     def _extract_doc_id(self, upload_result: dict) -> Optional[str]:
         """從 RAGFlow 上傳結果提取 document ID"""

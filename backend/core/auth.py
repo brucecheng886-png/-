@@ -1,14 +1,16 @@
 """
 API 認證中間件
 提供基於 API Token 的認證機制，防止未授權存取
+支援多組 Token 發放（多使用者 / 多服務場景）
 """
 import os
 import secrets
 import hashlib
 import json
 import logging
+from datetime import datetime
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Dict, List
 from fastapi import Request, HTTPException
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import JSONResponse
@@ -46,26 +48,103 @@ def _hash_token(token: str) -> str:
     return hashlib.sha256(token.encode()).hexdigest()
 
 
+# ==================== 多 Token 儲存格式 ====================
+# {
+#   "tokens": [
+#     {"user": "admin", "hash": "<sha256>", "role": "admin", "created_at": "..."},
+#     {"user": "guest", "hash": "<sha256>", "role": "user",  "created_at": "..."}
+#   ]
+# }
+# 向後相容：自動遷移舊 dict 格式 / 單一 token_hash 格式
+
+
+def _load_token_store() -> Dict:
+    """讀取完整的 Token 儲存，自動遷移舊格式（支援三代格式）"""
+    if not TOKEN_FILE_PATH.exists():
+        return {"tokens": []}
+    try:
+        with open(TOKEN_FILE_PATH, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+
+        tokens = data.get("tokens")
+
+        # ── 格式 A (最舊)：只有 token_hash，沒有 tokens ──
+        if tokens is None and "token_hash" in data:
+            migrated = {
+                "tokens": [{
+                    "user": "admin",
+                    "hash": data["token_hash"],
+                    "role": "admin",
+                    "created_at": datetime.now().isoformat(),
+                }]
+            }
+            _save_token_store(migrated)
+            logger.info("🔑 已將單一 hash 格式遷移至多用戶陣列格式")
+            return migrated
+
+        # ── 格式 B (中間)：tokens 是 dict {"admin": {"hash": ...}} ──
+        if isinstance(tokens, dict):
+            arr = []
+            for label, entry in tokens.items():
+                arr.append({
+                    "user": label,
+                    "hash": entry.get("hash", ""),
+                    "role": entry.get("role", "user"),
+                    "created_at": entry.get("created_at", datetime.now().isoformat()),
+                })
+            migrated = {"tokens": arr}
+            _save_token_store(migrated)
+            logger.info(f"🔑 已將 dict 格式遷移至陣列格式 ({len(arr)} 組)")
+            return migrated
+
+        # ── 格式 C (新)：tokens 是 list ──
+        if isinstance(tokens, list):
+            return data
+
+        return {"tokens": []}
+    except Exception as e:
+        logger.warning(f"讀取 Token 檔案失敗: {e}")
+        return {"tokens": []}
+
+
+def _save_token_store(store: Dict) -> None:
+    """保存完整的 Token 儲存"""
+    try:
+        TOKEN_FILE_PATH.parent.mkdir(parents=True, exist_ok=True)
+        with open(TOKEN_FILE_PATH, 'w', encoding='utf-8') as f:
+            json.dump(store, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        logger.error(f"保存 Token 檔案失敗: {e}")
+
+
 def _load_token_hash() -> Optional[str]:
-    """從檔案讀取已保存的 Token Hash"""
-    if TOKEN_FILE_PATH.exists():
-        try:
-            with open(TOKEN_FILE_PATH, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-                return data.get("token_hash")
-        except Exception as e:
-            logger.warning(f"讀取 Token 檔案失敗: {e}")
+    """從檔案讀取已保存的 (主) Token Hash"""
+    store = _load_token_store()
+    tokens = store.get("tokens", [])
+    if tokens and isinstance(tokens, list):
+        return tokens[0].get("hash")
     return None
 
 
 def _save_token_hash(token_hash: str) -> None:
-    """保存 Token Hash 到檔案"""
-    try:
-        TOKEN_FILE_PATH.parent.mkdir(parents=True, exist_ok=True)
-        with open(TOKEN_FILE_PATH, 'w', encoding='utf-8') as f:
-            json.dump({"token_hash": token_hash}, f)
-    except Exception as e:
-        logger.error(f"保存 Token 檔案失敗: {e}")
+    """保存 Token Hash — 更新或新建 admin 項目"""
+    store = _load_token_store()
+    tokens = store.get("tokens", [])
+    # 更新已存在的 admin
+    for entry in tokens:
+        if entry.get("user") == "admin":
+            entry["hash"] = token_hash
+            _save_token_store(store)
+            return
+    # 不存在 admin → 新增
+    tokens.insert(0, {
+        "user": "admin",
+        "hash": token_hash,
+        "role": "admin",
+        "created_at": datetime.now().isoformat(),
+    })
+    store["tokens"] = tokens
+    _save_token_store(store)
 
 
 def initialize_auth_token() -> str:
@@ -110,12 +189,86 @@ def initialize_auth_token() -> str:
 
 
 def verify_token(token: str) -> bool:
-    """驗證 Token 是否正確"""
-    saved_hash = _load_token_hash()
-    if not saved_hash:
-        # 尚未設定 Token，允許存取 (首次使用場景)
+    """驗證 Token 是否正確（遍歷 hash 清單）"""
+    store = _load_token_store()
+    tokens = store.get("tokens", [])
+
+    if not tokens:
+        # 尚未設定任何 Token，允許存取 (首次使用場景)
         return True
-    return _hash_token(token) == saved_hash
+
+    incoming_hash = _hash_token(token)
+    return any(entry.get("hash") == incoming_hash for entry in tokens)
+
+
+def get_token_label(token: str) -> Optional[str]:
+    """根據 Token 取得其使用者名稱（用於審計日誌）"""
+    store = _load_token_store()
+    incoming_hash = _hash_token(token)
+    for entry in store.get("tokens", []):
+        if entry.get("hash") == incoming_hash:
+            return entry.get("user")
+    return None
+
+
+# ==================== 多 Token 管理 API 工具函式 ====================
+
+def add_token(label: str, token: str, role: str = "user") -> bool:
+    """
+    新增一組 Token
+
+    Args:
+        label: 使用者名稱 (如 "alice", "service_etl")
+        token: 明文 Token (只在此處使用，不會被保存)
+        role:  角色 — admin / user / service
+
+    Returns:
+        True 成功, False 使用者名稱已存在
+    """
+    store = _load_token_store()
+    tokens = store.get("tokens", [])
+    if any(entry.get("user") == label for entry in tokens):
+        return False  # 使用者名稱已存在
+
+    tokens.append({
+        "user": label,
+        "hash": _hash_token(token),
+        "role": role,
+        "created_at": datetime.now().isoformat(),
+    })
+    store["tokens"] = tokens
+    _save_token_store(store)
+    logger.info(f"🔑 已新增 Token [{label}] (role={role})")
+    return True
+
+
+def revoke_token(label: str) -> bool:
+    """撤銷指定使用者的 Token"""
+    store = _load_token_store()
+    tokens = store.get("tokens", [])
+    original_len = len(tokens)
+
+    store["tokens"] = [e for e in tokens if e.get("user") != label]
+    if len(store["tokens"]) == original_len:
+        return False  # 找不到該使用者
+
+    _save_token_store(store)
+    logger.info(f"🔑 已撤銷 Token [{label}]")
+    return True
+
+
+def list_tokens() -> List[Dict]:
+    """列出所有已發放的 Token (不含完整 hash)"""
+    store = _load_token_store()
+    result = []
+    for entry in store.get("tokens", []):
+        result.append({
+            "user": entry.get("user", "unknown"),
+            "role": entry.get("role", "user"),
+            "created_at": entry.get("created_at", "-"),
+            "hash_prefix": entry.get("hash", "")[:8] + "...",
+        })
+    return result
 
 
 class APIAuthMiddleware(BaseHTTPMiddleware):
@@ -145,6 +298,10 @@ class APIAuthMiddleware(BaseHTTPMiddleware):
         
         # 白名單前綴放行
         if path.startswith(PUBLIC_PATH_PREFIXES):
+            return await call_next(request)
+
+        # 非 API 路徑放行 (前端 SPA 頁面 / 靜態資源)
+        if not path.startswith("/api/"):
             return await call_next(request)
         
         # OPTIONS 請求放行 (CORS preflight)

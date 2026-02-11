@@ -542,80 +542,7 @@ async def get_graph_data(request: Request, graph_id: str = "1"):
 
 
 # 註冊 API 路由
-# ==================== 檔案上傳 API ====================
-
-@app.post("/api/system/upload")
-async def upload_file(
-    request: Request,
-    file: UploadFile = File(...),
-    graph_id: str = Form("1"),
-    graph_mode: str = Form("existing"),
-    graph_name: str = Form(None)
-):
-    """
-    上傳檔案到監控資料夾，創建後台任務自動處理
-    
-    Args:
-        file: 上傳的檔案
-        graph_id: 目標圖譜 ID (預設為 "1" 主腦圖譜)
-        graph_mode: 圖譜模式 ("new" 或 "existing")
-        graph_name: 新圖譜名稱 (當 graph_mode="new" 時使用)
-    
-    Returns:
-        上傳結果資訊及任務 ID
-    """
-    try:
-        logger.info(f"📤 收到文件上傳請求: {file.filename}, graph_mode={graph_mode}, graph_id={graph_id}, graph_name={graph_name}")
-        
-        # 使用監控資料夾作為上傳目錄
-        upload_dir = Path(settings.AUTO_IMPORT_DIR)
-        
-        # 確保上傳目錄存在
-        upload_dir.mkdir(parents=True, exist_ok=True)
-        
-        # 檢查檔案名稱
-        if not file.filename:
-            raise HTTPException(status_code=400, detail="檔案名稱不能為空")
-        
-        # 生成檔案路徑
-        file_path = upload_dir / file.filename
-        
-        # 如果檔案已存在，添加時間戳
-        if file_path.exists():
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            file_stem = file_path.stem
-            file_suffix = file_path.suffix
-            file_path = upload_dir / f"{file_stem}_{timestamp}{file_suffix}"
-        
-        # 儲存檔案
-        with open(file_path, "wb") as buffer:
-            shutil.copyfileobj(file.file, buffer)
-        
-        # 創建後台任務
-        task_id = task_queue.create_task(
-            task_type="file_upload",
-            file_path=file_path,
-            file_name=file_path.name,
-            graph_id=graph_id
-        )
-        
-        logger.info(f"✅ 檔案上傳成功，任務 ID: {task_id}")
-        logger.info(f"📋 檔案將由後台任務處理: {file_path}")
-        
-        return {
-            "success": True,
-            "message": "檔案已送入神經網路，正在解析中...",
-            "task_id": task_id,
-            "filename": file.filename,
-            "saved_path": str(file_path),
-            "size": os.path.getsize(file_path),
-            "upload_time": datetime.now().isoformat()
-        }
-        
-    except Exception as e:
-        logger.error(f"❌ 檔案上傳失敗: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"檔案上傳失敗: {str(e)}")
-
+# (舊版 /api/system/upload 已移除，統一由 system_router 處理，支援 RAGFlow 上傳)
 
 app.include_router(dify_router, prefix="/api/dify", tags=["Dify"])
 app.include_router(ragflow_router, prefix="/api/ragflow", tags=["RAGFlow"])
@@ -625,10 +552,34 @@ app.include_router(system_router, prefix="/api/system", tags=["System"])
 app.include_router(media_library_router, prefix="/api/media", tags=["Media Library"])
 
 
-# 靜態文件服務
-frontend_dir = Path(__file__).parent / "frontend"
-if frontend_dir.exists():
-    app.mount("/static", StaticFiles(directory=str(frontend_dir)), name="static")
+# ==================== 靜態文件服務 (frontend/dist) ====================
+_DIST_DIR = Path(__file__).parent / "frontend" / "dist"
+_INDEX_HTML = _DIST_DIR / "index.html"
+
+if _DIST_DIR.exists():
+    # assets (JS/CSS/圖片) 透過 /assets 路徑掛載
+    _assets_dir = _DIST_DIR / "assets"
+    if _assets_dir.exists():
+        app.mount("/assets", StaticFiles(directory=str(_assets_dir)), name="assets")
+
+    # SPA fallback: 非 /api 路徑回傳 index.html
+    from starlette.responses import FileResponse
+
+    @app.get("/{full_path:path}")
+    async def spa_fallback(request: Request, full_path: str):
+        """SPA 前端路由 fallback — 非 API / 非靜態資源回傳 index.html"""
+        # 嘗試靜態檔案 (favicon.ico, robots.txt 等)
+        static_file = _DIST_DIR / full_path
+        if full_path and static_file.exists() and static_file.is_file():
+            return FileResponse(str(static_file))
+        # 其它全部回傳 index.html (Vue Router 處理)
+        if _INDEX_HTML.exists():
+            return FileResponse(str(_INDEX_HTML))
+        return JSONResponse(status_code=404, content={"error": "前端尚未建構，請執行 npm run build"})
+
+    logger.info(f"✅ 前端靜態檔案已掛載: {_DIST_DIR}")
+else:
+    logger.warning(f"⚠️ 前端 dist 目錄不存在: {_DIST_DIR}，請先執行 cd frontend && npm run build")
 
 
 # 全域異常處理

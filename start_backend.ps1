@@ -19,6 +19,24 @@ if (-not (Test-Path $pythonPath) -and $pythonPath -ne "python") {
     exit 1
 }
 
+# RAGFlow MySQL Schema 自動修復
+$fixScript = Join-Path $projectPath "scripts\fix_ragflow_db.py"
+if (Test-Path $fixScript) {
+    Write-Host ""
+    Write-Host "🔧 檢查 RAGFlow MySQL Schema..." -ForegroundColor Yellow
+    $fixResult = & $pythonPath $fixScript --quiet 2>&1
+    $fixExit = $LASTEXITCODE
+    if ($fixExit -eq 0) {
+        Write-Host "✅ RAGFlow Schema 檢查通過" -ForegroundColor Green
+    } elseif ($fixExit -eq 1) {
+        Write-Host "⚠️  RAGFlow MySQL 容器未啟動，跳過 Schema 檢查" -ForegroundColor Yellow
+    } else {
+        Write-Host "⚠️  RAGFlow Schema 修復異常 (exit=$fixExit)，請檢查" -ForegroundColor Yellow
+        $fixResult | ForEach-Object { Write-Host "   $_" -ForegroundColor DarkYellow }
+    }
+    Write-Host ""
+}
+
 # 配置服務器綁定地址
 $host_addr = if ($env:BRUV_HOST) { $env:BRUV_HOST } else { "127.0.0.1" }
 $port = if ($env:BRUV_PORT) { $env:BRUV_PORT } else { "8000" }

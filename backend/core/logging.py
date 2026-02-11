@@ -5,6 +5,7 @@
 1. StructuredLogFormatter — JSON 面向機器 / 可被 Loki/ELK 解析
 2. RequestTracingMiddleware — 為每個 HTTP 請求注入 X-Request-ID
 3. request_id ContextVar — 跨 async 保持追蹤 ID 傳播
+4. OpenTelemetry 整合 — 自動注入 trace_id / span_id
 """
 import uuid
 import json
@@ -16,6 +17,13 @@ from typing import Callable
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import Response
+
+# ── OTel trace context 擷取 (optional dependency) ──
+try:
+    from opentelemetry import trace as _otel_trace
+    _otel_available = True
+except ImportError:
+    _otel_available = False
 
 # ── 每個請求的唯一追蹤 ID (跨 async 安全) ──
 request_id_var: ContextVar[str] = ContextVar('request_id', default='-')
@@ -50,6 +58,14 @@ class StructuredLogFormatter(logging.Formatter):
             "line": record.lineno,
         }
 
+        # ── OTel trace context (自動注入 trace_id / span_id) ──
+        if _otel_available:
+            span = _otel_trace.get_current_span()
+            ctx = span.get_span_context()
+            if ctx and ctx.trace_id:
+                log_entry["trace_id"] = format(ctx.trace_id, '032x')
+                log_entry["span_id"] = format(ctx.span_id, '016x')
+
         # 附加 exception traceback
         if record.exc_info and record.exc_info[0] is not None:
             log_entry["exception"] = self.formatException(record.exc_info)
@@ -58,6 +74,11 @@ class StructuredLogFormatter(logging.Formatter):
         for key in ('duration_ms', 'status_code', 'method', 'path', 'client_ip'):
             if hasattr(record, key):
                 log_entry[key] = getattr(record, key)
+
+        # ── 業務 Attribute 透傳 (saga_id, file_path, file_name 等) ──
+        for biz_key in ('saga_id', 'file_path', 'file_name', 'step', 'doc_id', 'entity_id'):
+            if hasattr(record, biz_key):
+                log_entry[biz_key] = getattr(record, biz_key)
 
         return json.dumps(log_entry, ensure_ascii=False, default=str)
 
