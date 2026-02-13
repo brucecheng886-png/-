@@ -466,13 +466,13 @@ async def get_graph_data(request: Request, graph_id: str = "1"):
         if str(graph_id) == "1":
             # 主腦圖譜：查詢所有未標記圖譜ID或標記為1的節點
             nodes_query = "MATCH (n:Entity) WHERE n.graph_id IS NULL OR n.graph_id = '1' RETURN n"
-            links_query = "MATCH (a:Entity)-[r:Relation]->(b:Entity) WHERE (a.graph_id IS NULL OR a.graph_id = '1') AND (b.graph_id IS NULL OR b.graph_id = '1') RETURN a, r, b"
+            links_query = "MATCH (a:Entity)-[r:Relation]->(b:Entity) WHERE (a.graph_id IS NULL OR a.graph_id = '1') AND (b.graph_id IS NULL OR b.graph_id = '1') RETURN a.id AS src_id, b.id AS tgt_id, r"
             nodes_result = kuzu_manager.query(nodes_query)
             links_result = kuzu_manager.query(links_query)
         else:
             # 用戶創建的圖譜：使用參數化查詢防止 Cypher 注入
             nodes_query = "MATCH (n:Entity) WHERE n.graph_id = $gid RETURN n"
-            links_query = "MATCH (a:Entity)-[r:Relation]->(b:Entity) WHERE a.graph_id = $gid AND b.graph_id = $gid RETURN a, r, b"
+            links_query = "MATCH (a:Entity)-[r:Relation]->(b:Entity) WHERE a.graph_id = $gid AND b.graph_id = $gid RETURN a.id AS src_id, b.id AS tgt_id, r"
             nodes_result = kuzu_manager.query(nodes_query, parameters={"gid": graph_id})
             links_result = kuzu_manager.query(links_query, parameters={"gid": graph_id})
         
@@ -538,13 +538,11 @@ async def get_graph_data(request: Request, graph_id: str = "1"):
         
         for row in links_result:
             try:
-                source_node = row.get('a', {})
-                target_node = row.get('b', {})
+                source_id = row.get('src_id', '')
+                target_id = row.get('tgt_id', '')
                 relation = row.get('r', {})
                 
                 # 提取關係資訊
-                source_id = source_node.get('id', '')
-                target_id = target_node.get('id', '')
                 relation_type = relation.get('relation_type', 'relates_to')
                 
                 # 構建連結對象
