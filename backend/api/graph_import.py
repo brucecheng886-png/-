@@ -1,6 +1,12 @@
 """
 圖譜導入 API - Excel/CSV 檔案智能解析
 整合 LLM 進行自動化標題生成、描述撰寫與關係推薦
+
+v3.0 優化:
+- 批次處理: 多行資料合併為一次 LLM 呼叫 (預設 5 行/批)
+- 並行執行: asyncio.gather + Semaphore 控制併發
+- 精簡 Prompt: 去除裝飾文字，降低 token 消耗
+- 可配置角色: 不再寫死公司名稱
 """
 from fastapi import APIRouter, HTTPException, UploadFile, File
 from typing import List, Dict, Any, Optional
@@ -8,257 +14,184 @@ import pandas as pd
 import io
 import logging
 import json
-import os
+import asyncio
 from datetime import datetime
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
+# ===== 可調參數 =====
+BATCH_SIZE = 5          # 每批送 LLM 的資料筆數
+MAX_CONCURRENCY = 3     # 最大並行 LLM 請求數
+LLM_TIMEOUT = 120       # 單次 LLM 呼叫超時 (秒)
 
-# ===== LLM Prompt 配置 (v2.0 - 增強版) =====
+
+# ===== LLM Prompt 配置 (v3.0 - 精簡批次版) =====
+
+SYSTEM_ROLE = """你是企業級知識圖譜架構師。根據輸入資料，為每筆記錄產生結構化的圖譜節點。
+
+輸出規則：
+- 回傳一個 JSON 陣列，每個元素對應一筆輸入
+- 不要包含 Markdown 標記或任何額外文字
+- 只輸出純 JSON"""
+
+NODE_SCHEMA = """{
+  "label": "3-10字精準標題",
+  "description": "100-200字描述，含背景、核心內容、應用場景",
+  "type": "技術架構|API介面|數據流程|安全規範|業務流程|最佳實踐|問題排查|配置文檔|自訂(2-4字)",
+  "keywords": ["關鍵詞1", "關鍵詞2", "關鍵詞3"],
+  "suggested_links": [
+    {"target_index": 0, "relation": "dependency|causality|sequence|composition|complement|contrast", "reason": "連線原因(30字內)"}
+  ]
+}"""
+
+
+def build_batch_prompt(
+    rows: List[str],
+    existing_node_names: Optional[List[str]] = None
+) -> str:
+    """
+    建構批次分析 Prompt — 一次送多筆資料給 LLM
+    
+    Args:
+        rows: 每筆資料的文字描述 (已格式化為 "col: val | col: val")
+        existing_node_names: 現有節點名稱列表 (用於避免重複)
+    """
+    # 編號每筆資料
+    numbered = "\n".join([f"[{i}] {row}" for i, row in enumerate(rows)])
+    
+    # 現有節點上下文 (精簡版 — 只列名稱)
+    existing_ctx = ""
+    if existing_node_names:
+        names = ", ".join(existing_node_names[:30])
+        existing_ctx = f"\n已存在的節點: {names}\n避免建立重複節點，suggested_links 的 target_index 可用 -1 代表連線到已存在的節點。\n"
+    
+    return f"""{SYSTEM_ROLE}
+
+節點 Schema:
+{NODE_SCHEMA}
+{existing_ctx}
+以下有 {len(rows)} 筆資料，請輸出 JSON 陣列（長度 = {len(rows)}）：
+
+{numbered}
+
+suggested_links.target_index 指向本批次內其他資料的編號 (0-based)，若無關聯則留空陣列。
+輸出純 JSON 陣列，不要任何多餘文字："""
+
+
 def build_node_analysis_prompt(
     raw_content: str, 
     existing_nodes: Optional[List[Dict[str, Any]]] = None
 ) -> str:
     """
-    建構節點分析的 LLM Prompt（增強版）
-    
-    ✨ v2.0 新增功能：
-    - 領域特化：IDP 數據處理與連貫性分析
-    - 質量控制：嚴格的 JSON 格式驗證
-    - 多語言支持：中英文混合處理優化
-    - 上下文記憶：參考現有節點避免重複
-    - 增強關係類型：6 種智能連線模式
+    單筆分析 Prompt（向下相容，當批次為 1 時使用）
     """
-    # 構建現有節點上下文（含類型統計）
-    existing_nodes_summary = ""
-    node_types_count = {}
-    
+    existing_names = None
     if existing_nodes:
-        # 統計節點類型分佈
-        for node in existing_nodes:
-            node_type = node.get('type', 'unknown')
-            node_types_count[node_type] = node_types_count.get(node_type, 0) + 1
-        
-        # 生成節點列表（限制 25 個最相關的節點）
-        node_list = "\n".join([
-            f"- [{node.get('id', 'unknown')}] {node.get('name', 'unknown')} "
-            f"({node.get('type', 'unknown')}) - {node.get('description', '')[:50]}..."
-            for node in existing_nodes[:25]
-        ])
-        
-        # 類型統計摘要
-        type_summary = ", ".join([f"{t}: {c}個" for t, c in node_types_count.items()])
-        
-        existing_nodes_summary = f"""
-### 📊 現有知識圖譜概覽
-**節點總數**: {len(existing_nodes)} 個
-**類型分佈**: {type_summary}
+        existing_names = [n.get('name', '') for n in existing_nodes if n.get('name')]
+    return build_batch_prompt([raw_content], existing_names)
 
-**節點列表**:
-{node_list}
 
-⚠️ **重要**: 避免創建與現有節點高度相似的內容，優先建立連線關係。
-"""
+def _extract_json(text: str):
+    """從 LLM 回應中提取 JSON（支援陣列和物件）"""
+    import re
+    text = text.strip()
     
-    prompt = f"""你是 IDP Co., Ltd. 的企業級知識圖譜架構師，專精於：
-- 📋 **數據處理流程分析**：身份驗證、文件處理、資料連貫性
-- 🔗 **跨系統整合設計**：API 串接、數據同步、流程自動化
-- 🧠 **智能知識萃取**：技術文檔、業務流程、最佳實踐
-
-## 🎯 核心任務
-
-### 1️⃣ 標題生成 (label) - 精準命名
-**要求**:
-- 使用 3-10 個字的專業術語
-- 支持中英文混合（如：OAuth 2.0 驗證流程）
-- 優先級：技術關鍵詞 > 業務概念 > 通用描述
-
-**範例**:
-✅ 好：「JWT Token 刷新機制」、「GDPR 個資保護合規」
-❌ 差：「關於系統的說明」、「文件內容」
-
-### 2️⃣ 深度描述 (description) - 結構化闡述
-**字數**: 200-250 字（更詳細的上下文）
-**必須包含**:
-```
-【背景】此知識的來源場景、觸發條件或前置需求
-【核心內容】關鍵技術點、流程步驟或業務邏輯（使用條列式）
-【實際應用】可解決的問題、適用場景、預期效益
-【注意事項】潛在風險、限制條件或最佳實踐建議
-```
-
-**品質標準**:
-- 避免籠統描述，提供具體的技術細節或業務場景
-- 使用專業術語但保持可讀性
-- 標註關鍵數據、版本號、時間點等精確信息
-
-### 3️⃣ 知識類型 (type) - 精確分類
-**標準類型** (優先使用):
-- `技術架構` - 系統設計、框架選型、技術棧
-- `API介面` - 端點定義、參數規範、響應格式
-- `數據流程` - ETL、資料轉換、處理邏輯
-- `安全規範` - 驗證機制、加密方式、權限控制
-- `業務流程` - 工作流、審批流程、操作指南
-- `最佳實踐` - 編碼規範、設計模式、優化方案
-- `問題排查` - 錯誤處理、除錯技巧、故障恢復
-- `配置文檔` - 環境設定、參數說明、部署指南
-
-**自訂類型** (若不符合上述):
-- 使用簡短的專業術語（2-4 字）
-
-### 4️⃣ 智能連線推薦 (links) - 六維關係分析
-{existing_nodes_summary}
-
-**關係類型定義** (請根據實際情況選擇):
-
-1. **因果關係** (`causality`)
-   - A 是 B 的前提條件、觸發因素或直接原因
-   - 範例：「用戶認證」→「授權令牌生成」
-
-2. **依賴關係** (`dependency`)
-   - A 的運作需要 B 的支持或 A 調用 B 的功能
-   - 範例：「前端登錄頁」→「身份驗證 API」
-
-3. **時序關係** (`sequence`)
-   - A 在時間順序上先於 B 執行
-   - 範例：「數據採集」→「數據清洗」→「數據分析」
-
-4. **包含關係** (`composition`)
-   - A 是 B 的組成部分或子模組
-   - 範例：「OAuth 系統」包含「Token 管理」、「Scope 權限」
-
-5. **互補關係** (`complement`)
-   - A 與 B 共同完成某個目標，缺一不可
-   - 範例：「資料加密」←→「密鑰管理」
-
-6. **對比關係** (`contrast`)
-   - A 與 B 是不同的實現方案或存在權衡取捨
-   - 範例：「Session 驗證」 vs 「JWT 驗證」
-
-**推薦規則**:
-- 每個新節點建議 **2-5 個連線**（最多 5 個）
-- 優先連接高相關性節點（相同類型或業務場景）
-- 必須提供 **詳細且具體的理由**（50-100 字）
-- 避免建立過於泛泛或牽強的關係
-
-## 📥 待分析內容
-```text
-{raw_content}
-```
-
-## 🔒 輸出格式要求（嚴格遵守）
-
-**格式**: 純 JSON，無 Markdown 包裹，無額外註解
-**編碼**: UTF-8
-**結構**: 必須完全符合以下 Schema
-
-```json
-{{
-  "label": "6-10字的精準標題",
-  "description": "200-250字的結構化描述，包含【背景】【核心內容】【實際應用】【注意事項】四個部分",
-  "type": "從標準類型中選擇或自訂（2-4字）",
-  "links": [
-    {{
-      "target_id": "existing_node_123",
-      "relation": "causality/dependency/sequence/composition/complement/contrast",
-      "reason": "詳細說明為何建立此連線，包含具體的業務場景或技術邏輯（50-100字）"
-    }}
-  ],
-  "metadata": {{
-    "confidence": 0.85,
-    "keywords": ["關鍵詞1", "關鍵詞2", "關鍵詞3"],
-    "language": "zh-TW"
-  }}
-}}
-```
-
-## ⚠️ 品質檢查清單
-- [ ] label 是否具備專業性且無歧義？
-- [ ] description 是否包含四個必要部分且字數達標？
-- [ ] type 是否使用標準類型或合理的自訂類型？
-- [ ] links 的 reason 是否具體且有說服力？
-- [ ] JSON 格式是否完全正確（無額外字符）？
-
-⚡ **立即開始分析並輸出標準 JSON！**
-"""
-    return prompt
-
-
-def parse_llm_response(llm_output: str) -> Dict[str, Any]:
-    """
-    解析 LLM 回應（增強版）
-    
-    ✨ 支援格式：
-    - 純 JSON
-    - Markdown 代碼塊包裹的 JSON
-    - 含額外文字的 JSON（自動提取）
-    
-    ✅ 新增驗證：
-    - 必要欄位檢查
-    - 類型驗證
-    - 數據清洗
-    """
+    # 1. 直接解析
     try:
-        # 嘗試直接解析 JSON
-        data = json.loads(llm_output)
+        return json.loads(text)
     except json.JSONDecodeError:
-        # 嘗試從 markdown 代碼塊中提取 JSON
-        import re
-        json_match = re.search(r'```(?:json)?\s*(\{.*?\})\s*```', llm_output, re.DOTALL)
-        if json_match:
-            data = json.loads(json_match.group(1))
-        else:
-            # 嘗試找到第一個 { 和最後一個 }
-            start = llm_output.find('{')
-            end = llm_output.rfind('}')
-            if start != -1 and end != -1:
-                data = json.loads(llm_output[start:end+1])
-            else:
-                raise ValueError("無法從 LLM 回應中解析 JSON")
+        pass
     
-    # ===== 數據驗證與清洗 =====
+    # 2. 從 markdown 代碼塊提取
+    md = re.search(r'```(?:json)?\s*([\[\{].*?[\]\}])\s*```', text, re.DOTALL)
+    if md:
+        try:
+            return json.loads(md.group(1))
+        except json.JSONDecodeError:
+            pass
     
-    # 1. 必要欄位檢查
-    required_fields = ['label', 'description', 'type']
-    for field in required_fields:
-        if field not in data:
-            raise ValueError(f"缺少必要欄位: {field}")
+    # 3. 找第一個 [ ] 或 { }
+    for open_ch, close_ch in [('[', ']'), ('{', '}')]:
+        start = text.find(open_ch)
+        end = text.rfind(close_ch)
+        if start != -1 and end > start:
+            try:
+                return json.loads(text[start:end + 1])
+            except json.JSONDecodeError:
+                continue
     
-    # 2. label 驗證（3-20 字）
-    if not (3 <= len(data['label']) <= 20):
-        logger.warning(f"label 長度不符合規範: {data['label']}")
+    raise ValueError("無法從 LLM 回應中解析 JSON")
+
+
+def _validate_node(data: Dict[str, Any]) -> Dict[str, Any]:
+    """驗證並清洗單一節點資料"""
+    required = ['label', 'description', 'type']
+    for f in required:
+        if f not in data:
+            data[f] = "未提供" if f != 'type' else "未分類"
     
-    # 3. description 驗證（50-500 字）
-    desc_len = len(data['description'])
-    if desc_len < 50:
-        logger.warning(f"description 過短 ({desc_len} 字)，建議至少 200 字")
-    elif desc_len > 500:
-        logger.warning(f"description 過長 ({desc_len} 字)，已截斷")
+    # description 截斷
+    if len(data.get('description', '')) > 500:
         data['description'] = data['description'][:500] + "..."
     
-    # 4. links 驗證
-    if 'links' not in data:
-        data['links'] = []
-    elif len(data['links']) > 5:
-        logger.warning(f"links 數量過多 ({len(data['links'])}), 保留前 5 個")
-        data['links'] = data['links'][:5]
+    # links / suggested_links 統一為 suggested_links
+    if 'links' in data and 'suggested_links' not in data:
+        data['suggested_links'] = data.pop('links')
+    data.setdefault('suggested_links', [])
+    if len(data['suggested_links']) > 5:
+        data['suggested_links'] = data['suggested_links'][:5]
     
-    # 5. metadata 提取或生成
-    if 'metadata' not in data:
-        data['metadata'] = {
-            'confidence': 0.75,
-            'keywords': [],
-            'language': 'zh-TW'
-        }
+    # keywords
+    data.setdefault('keywords', [])
     
     return data
 
 
-async def call_llm_analysis(prompt: str) -> Dict[str, Any]:
+def parse_llm_response(llm_output: str) -> List[Dict[str, Any]]:
     """
-    調用 Dify LLM 進行內容分析
-    使用 Dify /chat-messages API（blocking 模式）
+    解析 LLM 回應，統一回傳 List[Dict]
+    支援：純 JSON / Markdown 包裹 / 陣列或單一物件
+    """
+    raw = _extract_json(llm_output)
+    
+    # 統一為列表
+    items = raw if isinstance(raw, list) else [raw]
+    
+    return [_validate_node(item) for item in items]
+
+
+# ===== 預設回應 =====
+_DEFAULT_NODE = {
+    "label": "LLM 分析失敗",
+    "description": "自動分析過程發生錯誤，請手動編輯此節點。",
+    "type": "未分類",
+    "keywords": [],
+    "suggested_links": [],
+}
+
+_NO_KEY_NODE = {
+    "label": "待配置 LLM",
+    "description": "Dify API Key 尚未設定，請至系統設定頁面配置後重新匯入。",
+    "type": "未分類",
+    "keywords": [],
+    "suggested_links": [],
+}
+
+
+async def call_llm_batch(
+    rows: List[str],
+    existing_node_names: Optional[List[str]] = None,
+) -> List[Dict[str, Any]]:
+    """
+    批次呼叫 Dify LLM — 一次送 N 筆資料，回傳 N 個節點分析結果
+    
+    Args:
+        rows: 每筆資料的文字描述
+        existing_node_names: 現有節點名稱列表
+    
+    Returns:
+        List[Dict] — 長度與 rows 相同；失敗時填入預設節點
     """
     from backend.core.config import get_current_api_keys, settings
     import httpx
@@ -268,82 +201,67 @@ async def call_llm_analysis(prompt: str) -> Dict[str, Any]:
     dify_api_url = api_keys.get('DIFY_API_URL', settings.DIFY_API_URL)
 
     if not dify_api_key:
-        logger.warning("⚠️ Dify API Key 未配置，使用預設回應")
-        return {
-            "label": "待配置 LLM",
-            "description": "Dify API Key 尚未設定，請至系統設定頁面配置後重新匯入。",
-            "type": "未分類",
-            "links": [],
-            "metadata": {"confidence": 0.0, "keywords": [], "language": "zh-TW"}
-        }
+        logger.warning("Dify API Key 未配置，使用預設回應")
+        return [dict(_NO_KEY_NODE) for _ in rows]
+
+    prompt = build_batch_prompt(rows, existing_node_names)
 
     try:
-        async with httpx.AsyncClient(timeout=120) as client:
+        async with httpx.AsyncClient(timeout=LLM_TIMEOUT) as client:
             resp = await client.post(
                 f"{dify_api_url}/chat-messages",
                 headers={
                     "Authorization": f"Bearer {dify_api_key}",
-                    "Content-Type": "application/json"
+                    "Content-Type": "application/json",
                 },
                 json={
                     "query": prompt,
                     "user": "graph-import-system",
                     "inputs": {},
-                    "response_mode": "blocking"
-                }
+                    "response_mode": "blocking",
+                },
             )
             resp.raise_for_status()
-            result = resp.json()
+            answer = resp.json().get("answer", "")
 
-        # 從 Dify 回應中提取 LLM 文字
-        answer = result.get("answer", "")
         if not answer:
             raise ValueError("Dify 回應為空")
 
-        logger.info(f"✅ Dify LLM 回應（前 200 字）: {answer[:200]}")
+        logger.info(f"Dify LLM 回應（前 200 字）: {answer[:200]}")
+        results = parse_llm_response(answer)
 
-        # 解析 LLM 輸出為結構化資料
-        return parse_llm_response(answer)
+        # 若 LLM 回傳數量不足，補齊預設
+        while len(results) < len(rows):
+            results.append(dict(_DEFAULT_NODE))
+
+        return results[:len(rows)]
 
     except httpx.HTTPStatusError as e:
-        logger.error(f"❌ Dify API HTTP 錯誤 {e.response.status_code}: {e.response.text[:300]}")
+        logger.error(f"Dify API HTTP 錯誤 {e.response.status_code}: {e.response.text[:300]}")
     except httpx.TimeoutException:
-        logger.error("❌ Dify API 請求超時 (120s)")
+        logger.error(f"Dify API 請求超時 ({LLM_TIMEOUT}s)")
     except Exception as e:
-        logger.error(f"❌ LLM 分析失敗: {e}")
+        logger.error(f"LLM 批次分析失敗: {e}")
 
-    # 任何錯誤都回退為預設
-    return {
-        "label": "LLM 分析失敗",
-        "description": "自動分析過程發生錯誤，請手動編輯此節點。",
-        "type": "未分類",
-        "links": [],
-        "metadata": {"confidence": 0.0, "keywords": [], "language": "zh-TW"}
-    }
+    return [dict(_DEFAULT_NODE) for _ in rows]
+
+
+async def call_llm_analysis(prompt: str) -> Dict[str, Any]:
+    """向下相容：單筆 LLM 分析（內部調用 call_llm_batch）"""
+    results = await call_llm_batch([prompt])
+    return results[0]
 
 
 # ===== API 端點 =====
 @router.post("/import/excel")
 async def import_excel(file: UploadFile = File(...)):
     """
-    導入 Excel/CSV 檔案並使用 LLM 智能解析
+    導入 Excel/CSV 檔案並使用 LLM 智能解析（v3.0 批次並行版）
     
-    支援格式：
-    - .xlsx (Excel)
-    - .csv (逗號分隔)
-    
-    回傳格式：
-    [
-        {
-            "id": "node_uuid",
-            "name": "節點名稱",
-            "label": "AI 生成的標題",
-            "description": "AI 生成的描述",
-            "type": "節點類型",
-            "group": 1,
-            "links": [...]
-        }
-    ]
+    優化策略:
+    - 每 BATCH_SIZE 行合併為 1 次 LLM 呼叫（減少 ~80% API 請求）
+    - 最多 MAX_CONCURRENCY 個批次同時執行
+    - Prompt 從 ~2000 token 精簡至 ~500 token / 批
     """
     try:
         # 驗證檔案類型
@@ -357,86 +275,117 @@ async def import_excel(file: UploadFile = File(...)):
                 detail="不支援的檔案格式，請上傳 .xlsx 或 .csv 檔案"
             )
         
-        # 讀取檔案內容
+        # 讀取並解析檔案
         contents = await file.read()
-        
-        # 解析檔案
         if filename.endswith('.xlsx'):
             df = pd.read_excel(io.BytesIO(contents))
         else:
             df = pd.read_csv(io.BytesIO(contents))
         
-        logger.info(f"📊 成功讀取檔案: {file.filename}, 行數: {len(df)}")
+        logger.info(f"成功讀取檔案: {file.filename}, 行數: {len(df)}, 欄位: {list(df.columns)}")
         
-        # 檢查是否為空
         if df.empty:
             raise HTTPException(status_code=400, detail="檔案內容為空")
         
-        # TODO: 獲取現有圖譜節點列表（用於 LLM 關聯分析）
-        existing_nodes = []  # 從 kuzu_manager 或其他來源獲取
+        # ---- 準備每行的文字描述 ----
+        row_texts: List[str] = []
+        row_names: List[str] = []
+        first_col = str(df.columns[0])
         
-        # 處理每一行數據
-        nodes = []
-        for idx, row in df.iterrows():
-            try:
-                # 將 index 轉換為 int 避免類型錯誤
-                index = int(idx) if isinstance(idx, (int, float)) else 0
-                
-                # 提取原始內容
-                raw_content = " | ".join([
-                    f"{col}: {row[col]}" 
-                    for col in df.columns 
-                    if pd.notna(row[col])
-                ])
-                
-                # 建構 LLM Prompt
-                prompt = build_node_analysis_prompt(raw_content, existing_nodes)
-                
-                # 調用 LLM 分析（目前為模擬）
-                llm_result = await call_llm_analysis(prompt)
-                
-                # 建構節點對象
-                first_column = str(df.columns[0])
-                node_name = str(row[first_column]) if first_column in row and pd.notna(row[first_column]) else f"節點 {index + 1}"
+        for row_idx, (idx, row) in enumerate(df.iterrows()):
+            raw = " | ".join(
+                f"{col}: {row[col]}" for col in df.columns if pd.notna(row[col])
+            )
+            row_texts.append(raw)
+            name = str(row[first_col]) if first_col in row and pd.notna(row[first_col]) else f"節點 {row_idx + 1}"
+            row_names.append(name)
+        
+        # ---- 取得現有節點名稱 (用於避免重複) ----
+        existing_names: Optional[List[str]] = None
+        # NOTE: 現階段不傳入 existing_names，因為 import endpoint
+        #       未綁定特定 graph_id。未來可加 query param 指定圖譜後啟用。
+        
+        # ---- 分批 ----
+        batches: List[List[int]] = []
+        for i in range(0, len(row_texts), BATCH_SIZE):
+            batches.append(list(range(i, min(i + BATCH_SIZE, len(row_texts)))))
+        
+        total_batches = len(batches)
+        logger.info(
+            f"分批策略: {len(row_texts)} 行 → {total_batches} 批 "
+            f"(BATCH_SIZE={BATCH_SIZE}, MAX_CONCURRENCY={MAX_CONCURRENCY})"
+        )
+        
+        # ---- 並行處理各批次 ----
+        semaphore = asyncio.Semaphore(MAX_CONCURRENCY)
+        llm_results: List[Optional[List[Dict]]] = [None] * total_batches
+        
+        async def process_batch(batch_idx: int, indices: List[int]):
+            async with semaphore:
+                texts = [row_texts[i] for i in indices]
+                logger.info(f"批次 {batch_idx + 1}/{total_batches} 開始 ({len(texts)} 筆)")
+                result = await call_llm_batch(texts, existing_names)
+                llm_results[batch_idx] = result
+                logger.info(f"批次 {batch_idx + 1}/{total_batches} 完成")
+        
+        tasks = [process_batch(bi, idxs) for bi, idxs in enumerate(batches)]
+        await asyncio.gather(*tasks)
+        
+        # ---- 組裝節點 ----
+        nodes: List[Dict[str, Any]] = []
+        ts = datetime.now().timestamp()
+        
+        for batch_idx, indices in enumerate(batches):
+            batch_results = llm_results[batch_idx] or []
+            for local_i, global_i in enumerate(indices):
+                if local_i < len(batch_results):
+                    llm = batch_results[local_i]
+                else:
+                    llm = dict(_DEFAULT_NODE)
                 
                 node = {
-                    "id": f"node_{datetime.now().timestamp()}_{index}",
-                    "name": node_name,
-                    "label": llm_result.get("label", "未命名"),
-                    "description": llm_result.get("description", ""),
-                    "type": llm_result.get("type", "未分類"),
+                    "id": f"node_{ts}_{global_i}",
+                    "name": row_names[global_i],
+                    "label": llm.get("label", "未命名"),
+                    "description": llm.get("description", ""),
+                    "type": llm.get("type", "未分類"),
                     "group": 1,
                     "size": 20,
-                    "links": llm_result.get("links", []),
-                    "raw_data": row.to_dict()  # 保留原始數據
+                    "keywords": llm.get("keywords", []),
+                    "suggested_links": llm.get("suggested_links", []),
+                    "raw_data": df.iloc[global_i].to_dict(),
                 }
-                
                 nodes.append(node)
-                logger.info(f"✅ 節點 {index + 1} 處理完成: {node['label']}")
-                
-            except Exception as e:
-                # 使用 idx 直接進行錯誤處理
-                error_index = int(idx) if isinstance(idx, (int, float)) else 0
-                logger.error(f"❌ 處理第 {error_index + 1} 行時出錯: {e}")
-                # 創建最小化節點
-                nodes.append({
-                    "id": f"node_error_{error_index}",
-                    "name": f"錯誤節點 {error_index + 1}",
-                    "label": "解析失敗",
-                    "description": f"處理時發生錯誤: {str(e)}",
-                    "type": "錯誤",
-                    "group": 1,
-                    "size": 15,
-                    "links": []
-                })
         
-        logger.info(f"🎉 Excel 導入完成，成功處理 {len(nodes)} 個節點")
+        # ---- 將 suggested_links 的 batch-local index 轉為全域 node id ----
+        for batch_idx, indices in enumerate(batches):
+            offset = indices[0]  # 此批次在全域 nodes 中的起始位置
+            for local_i, global_i in enumerate(indices):
+                node = nodes[global_i]
+                resolved_links = []
+                for link in node.get("suggested_links", []):
+                    target_idx = link.get("target_index")
+                    if target_idx is not None and isinstance(target_idx, int):
+                        abs_idx = offset + target_idx
+                        if 0 <= abs_idx < len(nodes) and abs_idx != global_i:
+                            resolved_links.append({
+                                "target_id": nodes[abs_idx]["id"],
+                                "target_name": nodes[abs_idx]["name"],
+                                "relation": link.get("relation", "complement"),
+                                "reason": link.get("reason", ""),
+                            })
+                node["links"] = resolved_links
+                del node["suggested_links"]
+        
+        logger.info(f"Excel 導入完成: {len(nodes)} 個節點, {total_batches} 批 LLM 呼叫")
         return nodes
         
     except pd.errors.EmptyDataError:
         raise HTTPException(status_code=400, detail="檔案內容為空或格式錯誤")
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"❌ 導入失敗: {e}", exc_info=True)
+        logger.error(f"導入失敗: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"導入失敗: {str(e)}")
 
 
