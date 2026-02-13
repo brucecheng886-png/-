@@ -10,6 +10,7 @@ import os
 
 from backend.core.config import settings, get_current_api_keys
 from backend.core.circuit_breaker import ragflow_breaker, CircuitBreakerOpenError
+from backend.rag_client import RAGFlowClient, RAGFlowAPIError
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -25,10 +26,15 @@ def get_ragflow_config():
 
 
 class RAGFlowQuery(BaseModel):
-    """RAGFlow 查詢模型"""
+    """RAGFlow 混合檢索查詢模型 (Hybrid Search + Rerank)"""
     question: str
     dataset_ids: List[str] = []
-    top_k: int = 5
+    page: int = 1
+    page_size: int = 10
+    similarity_threshold: float = 0.2
+    vector_similarity_weight: float = 0.3
+    top_k: int = 1024
+    rerank_id: Optional[str] = None
 
 
 class DocumentUpload(BaseModel):
@@ -39,32 +45,35 @@ class DocumentUpload(BaseModel):
 
 @router.post("/query")
 async def query_ragflow(request: RAGFlowQuery):
-    """查詢 RAGFlow (受 CircuitBreaker 保護)"""
+    """混合檢索 RAGFlow (Hybrid Search + Rerank，受 CircuitBreaker 保護)"""
     try:
         config = get_ragflow_config()
-        
+        client = RAGFlowClient(
+            api_key=config['api_key'],
+            base_url=config['api_url'],
+        )
+
         async with ragflow_breaker:
-            async with httpx.AsyncClient(timeout=settings.REQUEST_TIMEOUT) as client:
-                response = await client.post(
-                    f"{config['api_url']}/retrieval",
-                    headers={
-                        "Authorization": f"Bearer {config['api_key']}",
-                        "Content-Type": "application/json"
-                    },
-                    json={
-                        "question": request.question,
-                        "dataset_ids": request.dataset_ids,
-                        "top_k": request.top_k
-                    }
-                )
-                response.raise_for_status()
-                return response.json()
+            result = await client.retrieve(
+                question=request.question,
+                dataset_ids=request.dataset_ids,
+                page=request.page,
+                page_size=request.page_size,
+                similarity_threshold=request.similarity_threshold,
+                vector_similarity_weight=request.vector_similarity_weight,
+                top_k=request.top_k,
+                rerank_id=request.rerank_id,
+            )
+            return result
     except CircuitBreakerOpenError as e:
         logger.warning(f"🔴 RAGFlow 斷路器已打開: {e}")
         raise HTTPException(
             status_code=503,
             detail=f"RAGFlow 服務暫時不可用 (斷路器已打開，{e.remaining_seconds:.0f}秒後重試)"
         )
+    except RAGFlowAPIError as e:
+        logger.warning(f"RAGFlow 業務錯誤: {e}")
+        raise HTTPException(status_code=422, detail=str(e))
     except httpx.HTTPError as e:
         logger.error(f"RAGFlow API 錯誤: {e}")
         raise HTTPException(status_code=500, detail=f"RAGFlow 查詢失敗: {str(e)}")
@@ -231,3 +240,49 @@ async def get_document_status(dataset_id: str, document_id: str):
     except httpx.HTTPError as e:
         logger.error(f"查詢文檔狀態失敗: {e}")
         raise HTTPException(status_code=500, detail=f"查詢文檔狀態失敗: {str(e)}")
+
+
+class DeleteDocumentsRequest(BaseModel):
+    """批量刪除文檔請求"""
+    document_ids: List[str]
+
+
+@router.delete("/documents/{dataset_id}")
+async def delete_documents(dataset_id: str, body: DeleteDocumentsRequest):
+    """
+    批量刪除知識庫中的文檔
+    使用 RAGFlowClient 的 async_delete_document 方法
+    """
+    config = get_ragflow_config()
+
+    try:
+        client = RAGFlowClient(
+            api_key=config['api_key'],
+            base_url=config['api_url'],
+        )
+
+        results = []
+        for doc_id in body.document_ids:
+            try:
+                result = await client.async_delete_document(dataset_id, doc_id)
+                results.append({"id": doc_id, "success": True})
+                logger.info(f"✅ 已刪除文檔: dataset={dataset_id}, doc={doc_id}")
+            except RAGFlowAPIError as e:
+                results.append({"id": doc_id, "success": False, "error": str(e)})
+                logger.warning(f"⚠️ 刪除文檔失敗: {doc_id} → {e}")
+            except Exception as e:
+                results.append({"id": doc_id, "success": False, "error": str(e)})
+                logger.error(f"❌ 刪除文檔異常: {doc_id} → {e}")
+
+        succeeded = sum(1 for r in results if r["success"])
+        failed = len(results) - succeeded
+
+        return {
+            "code": 0,
+            "message": f"已刪除 {succeeded} 個文檔" + (f"，{failed} 個失敗" if failed else ""),
+            "data": results
+        }
+
+    except Exception as e:
+        logger.error(f"批量刪除文檔失敗: {e}")
+        raise HTTPException(status_code=500, detail=f"刪除文檔失敗: {str(e)}")

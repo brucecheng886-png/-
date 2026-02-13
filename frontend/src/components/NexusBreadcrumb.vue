@@ -118,7 +118,7 @@ const currentGraphName = computed(() => {
   if (meta?.name) return meta.name;
   
   // 若有節點數據但無圖譜名，用預設名稱
-  if (graphStore.nodeCount > 0) return '主腦圖譜';
+  if (graphStore.nodeCount > 0) return `圖譜 ${currentId}`;
   
   return null;
 });

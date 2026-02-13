@@ -13,6 +13,7 @@ const SystemMonitorPage = () => import('@/views/SystemMonitorPage.vue');
 const ImportPage = () => import('@/views/ImportPage.vue');
 const FileImport = () => import('@/views/FileImport.vue');
 const TimelinePage = () => import('@/views/TimelinePage.vue');
+const ChatPage = () => import('@/views/ChatPage.vue');
 
 // 登入頁面不做 Lazy Loading（首次載入必需）
 import LoginPage from '@/views/LoginPage.vue';
@@ -128,6 +129,15 @@ const routes = [
     meta: {
       title: '時間軸',
       icon: '⏳'
+    }
+  },
+  {
+    path: '/chat',
+    name: 'Chat',
+    component: ChatPage,
+    meta: {
+      title: 'AI 助手',
+      icon: '🤖'
     }
   },
   {

@@ -52,6 +52,7 @@ class GraphMetadataCreate(BaseModel):
     description: Optional[str] = ""
     icon: Optional[str] = "🌐"
     color: Optional[str] = "#3b82f6"
+    cover_image: Optional[str] = ""
 
 
 class GraphMetadataUpdate(BaseModel):
@@ -60,6 +61,7 @@ class GraphMetadataUpdate(BaseModel):
     description: Optional[str] = None
     icon: Optional[str] = None
     color: Optional[str] = None
+    cover_image: Optional[str] = None
 
 
 def _clean_graph_metadata(graph: dict) -> dict:
@@ -340,7 +342,8 @@ async def create_graph(request: Request, graph_data: GraphMetadataCreate):
             name=graph_data.name,
             description=graph_data.description or "",
             icon=graph_data.icon or "🌐",
-            color=graph_data.color or "#3b82f6"
+            color=graph_data.color or "#3b82f6",
+            cover_image=graph_data.cover_image or ""
         )
         
         if not success:
@@ -436,6 +439,8 @@ async def update_graph(request: Request, graph_id: str, graph_data: GraphMetadat
             updates['icon'] = graph_data.icon
         if graph_data.color is not None:
             updates['color'] = graph_data.color
+        if graph_data.cover_image is not None:
+            updates['cover_image'] = graph_data.cover_image
         
         if not updates:
             raise HTTPException(status_code=400, detail="未提供更新字段")
@@ -485,9 +490,12 @@ async def delete_graph(request: Request, graph_id: str, cascade: bool = False):
         if not success:
             raise HTTPException(status_code=500, detail="刪除圖譜失敗")
         
+        cascade_msg = "（含所有節點與連線）" if cascade else ""
         return {
             "success": True,
-            "message": f"圖譜「{existing.get('name', graph_id)}」已刪除"
+            "message": f"圖譜「{existing.get('name', graph_id)}」已刪除{cascade_msg}",
+            "deleted_graph_id": graph_id,
+            "cascade": cascade
         }
         
     except HTTPException:
@@ -495,3 +503,39 @@ async def delete_graph(request: Request, graph_id: str, cascade: bool = False):
     except Exception as e:
         logger.error(f"❌ 刪除圖譜失敗: {e}")
         raise HTTPException(status_code=500, detail=f"刪除圖譜失敗: {str(e)}")
+
+
+@router.post("/interlink/{graph_id}")
+async def build_inter_links(request: Request, graph_id: str):
+    """手動觸發指定圖譜的節點互連分析
+    
+    根據 link domain 和關鍵字共現自動建立節點之間的連線
+    """
+    kuzu_manager = get_kuzu_manager(request)
+    if not kuzu_manager:
+        raise HTTPException(status_code=503, detail="圖譜服務未就緒")
+    
+    try:
+        from backend.services.watcher import AIFileEventHandler
+        from unittest.mock import MagicMock
+        from pathlib import Path
+        
+        handler = AIFileEventHandler.__new__(AIFileEventHandler)
+        handler.kuzu_manager = kuzu_manager
+        handler.rag_client = MagicMock()
+        handler.dataset_id = "manual"
+        
+        links_created = handler._build_inter_node_links(
+            Path("manual_trigger"), "manual", graph_id
+        )
+        
+        return {
+            "success": True,
+            "message": f"已建立 {links_created} 條新連線",
+            "links_created": links_created,
+            "graph_id": graph_id
+        }
+        
+    except Exception as e:
+        logger.error(f"❌ 節點互連失敗: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"節點互連失敗: {str(e)}")

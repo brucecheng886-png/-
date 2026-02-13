@@ -16,15 +16,36 @@ import { useGraphStore } from '../stores/graphStore';
 import { useLayoutStore } from '../stores/layoutStore';
 import { ElMessage } from 'element-plus';
 
+// ===== 工具函數: 防抖 =====
+const debounce = (func, wait) => {
+  let timeout;
+  const debounced = function(...args) {
+    clearTimeout(timeout);
+    timeout = setTimeout(() => func.apply(this, args), wait);
+  };
+  debounced.cancel = () => clearTimeout(timeout);
+  return debounced;
+};
+
 // ===== Store =====
 const graphStore = useGraphStore();
 const layoutStore = useLayoutStore();
 
+// ===== Props =====
+const props = defineProps({
+  densityThreshold: { type: Number, default: 0 },   // 0~100 密度過濾
+  focusFade: { type: Boolean, default: true },       // 聚焦時淡化無關節點
+});
+
+// ===== State =====
 const graphContainer = ref(null);
 const autoRotate = ref(false);
 const selectedNode = ref(null);
 const highlightedNodeId = ref(null); // 當前高亮的節點 ID
 let breathingInterval = null; // 呼吸燈動畫定時器
+
+// 防抖更新鎖
+const isUpdating = ref(false);
 
 // 主題相關計算屬性
 const backgroundColor = computed(() => {
@@ -32,8 +53,11 @@ const backgroundColor = computed(() => {
 });
 
 const linkColor = computed(() => {
-  // 強制使用白色作為一般連接線的顏色（不論深色或淺色模式）
   return 'rgba(255, 255, 255, 0.8)';
+});
+
+const linkParticleColor = computed(() => {
+  return 'rgba(68, 138, 255, 0.5)';
 });
 
 // 重要: 不要將 graph 實例放在 ref 中，避免 Vue Proxy
@@ -55,104 +79,153 @@ const graphData = ref({
   links: []
 });
 
-// ===== Watch: 監聽 Store 數據變更（包含 aiLinks）=====
-watch(
-  () => [graphStore.nodes, graphStore.links, graphStore.aiLinks, graphStore.isCrossGraphMode],
-  ([newNodes, newLinks, newAiLinks, isCrossGraph]) => {
-    if (graphInstance && newNodes.length > 0) {
-      console.log('🔄 [3D] 偵測到數據更新:', {
-        nodes: newNodes.length,
-        links: newLinks.length,
-        aiLinks: newAiLinks?.length || 0,
-        crossGraphMode: isCrossGraph
-      });
-      
-      // 重要: 使用深拷貝斷開 Vue Proxy 鏈接
-      const nodesClone = JSON.parse(JSON.stringify(newNodes));
-      let linksClone = JSON.parse(JSON.stringify(newLinks));
-      
-      // 🌟 跨圖譜模式：合併 AI Links
-      if (isCrossGraph && newAiLinks && newAiLinks.length > 0) {
-        const aiLinksClone = JSON.parse(JSON.stringify(newAiLinks));
-        linksClone = [...linksClone, ...aiLinksClone];
-        console.log('✨ [3D] 已合併 AI Links:', aiLinksClone.length);
-      }
-      
-      graphData.value = {
-        nodes: nodesClone,
-        links: linksClone
-      };
-      
-      // 更新圖表數據
-      graphInstance.graphData(graphData.value);
-      
-      // 重新啟動物理模擬
-      graphInstance.d3ReheatSimulation();
+// ===== 防抖更新函數（同 2D 模式）=====
+const updateGraphData = debounce(() => {
+  if (!graphInstance || isUpdating.value) return;
+  
+  const newNodes = graphStore.nodes;
+  const newLinks = graphStore.links;
+  const newAiLinks = graphStore.aiLinks;
+  const isCrossGraph = graphStore.isCrossGraphMode;
+  
+  if (newNodes.length === 0) return;
+  
+  isUpdating.value = true;
+  
+  try {
+    const nodesClone = JSON.parse(JSON.stringify(newNodes));
+    let linksClone = JSON.parse(JSON.stringify(newLinks));
+    
+    // 🌟 跨圖譜模式：合併 AI Links
+    if (isCrossGraph && newAiLinks && newAiLinks.length > 0) {
+      const aiLinksClone = JSON.parse(JSON.stringify(newAiLinks));
+      linksClone = [...linksClone, ...aiLinksClone];
     }
-  },
-  { deep: true }
+    
+    graphData.value = { nodes: nodesClone, links: linksClone };
+    graphInstance.graphData(graphData.value);
+    graphInstance.d3ReheatSimulation();
+  } finally {
+    isUpdating.value = false;
+  }
+}, 150);
+
+// ===== Watch: 監聽 Store 數據變更（淺層比較，同 2D 模式）=====
+watch(
+  () => ({
+    nodeCount: graphStore.nodes.length,
+    linkCount: graphStore.links.length,
+    aiLinkCount: graphStore.aiLinks.length,
+    crossGraphMode: graphStore.isCrossGraphMode,
+    currentGraphId: graphStore.currentGraphId
+  }),
+  (newVal, oldVal) => {
+    if (graphInstance && (
+      newVal.nodeCount !== oldVal?.nodeCount ||
+      newVal.linkCount !== oldVal?.linkCount ||
+      newVal.aiLinkCount !== oldVal?.aiLinkCount ||
+      newVal.crossGraphMode !== oldVal?.crossGraphMode ||
+      newVal.currentGraphId !== oldVal?.currentGraphId
+    )) {
+      updateGraphData();
+    }
+  }
 );
 
-// ===== Watch: 監聽單個節點更新（雙向同步 - 增強版） =====
+// ===== Watch: 監聽節點屬性變更，即時同步（同 2D nodeVersion 模式）=====
 watch(
-  () => graphStore.nodes,
-  (newNodes) => {
+  () => graphStore.nodeVersion,
+  () => {
     if (!graphInstance || !graphData.value.nodes) return;
+    const internalNodes = graphData.value.nodes;
+    const storeNodes = graphStore.nodes;
     
     let hasChanges = false;
     
-    // 檢查是否有節點屬性被修改（例如名稱、描述）
-    newNodes.forEach(storeNode => {
-      const graphNode = graphData.value.nodes.find(n => n.id === storeNode.id);
-      if (graphNode) {
-        // 檢查是否有變化
-        const nameChanged = graphNode.name !== storeNode.name;
-        const descChanged = graphNode.description !== storeNode.description;
-        
-        if (nameChanged || descChanged) {
-          hasChanges = true;
-          console.log('🔄 [3D] 檢測到節點變更:', {
-            id: storeNode.id,
-            oldName: graphNode.name,
-            newName: storeNode.name,
-            nameChanged,
-            descChanged
-          });
-        }
-        
-        // 更新節點屬性
-        Object.assign(graphNode, {
-          name: storeNode.name,
-          description: storeNode.description,
-          link: storeNode.link,
-          type: storeNode.type,
-          color: storeNode.color
-        });
+    for (const storeNode of storeNodes) {
+      const target = internalNodes.find(n => n.id === storeNode.id);
+      if (!target) continue;
+      
+      if (target.name !== storeNode.name || target.description !== storeNode.description ||
+          target.color !== storeNode.color || target.type !== storeNode.type) {
+        hasChanges = true;
       }
-    });
+      
+      // 同步所有視覺相關屬性
+      target.name = storeNode.name;
+      target.description = storeNode.description;
+      target.image = storeNode.image;
+      target.link = storeNode.link;
+      target.color = storeNode.color;
+      target.size = storeNode.size;
+      target.type = storeNode.type;
+    }
     
     if (hasChanges) {
-      // 重新設置節點標籤函數以觸發重新渲染
       graphInstance.nodeLabel(node => node.name || node.id);
-      
-      // 強制更新圖表數據（確保渲染引擎感知變化）
-      graphInstance.graphData(graphData.value);
-      
-      console.log('✅ [3D] 節點標籤已更新並重新渲染');
+      graphInstance.refresh();
+      console.log('🔄 [3D] 圖譜已即時同步節點屬性變更');
     }
-  },
-  { deep: true }
+  }
 );
 
-// ===== Watch: 監聽主題切換 =====
+// ===== Watch: 選中節點變化時，觸發 focus-fade 效果（3D 直接修改材質）=====
+watch(() => graphStore.selectedNode, (newNode) => {
+  if (!graphInstance) return;
+  
+  const selectedId = newNode?.id;
+  const graphNodes = graphInstance.graphData().nodes;
+  
+  // 預計算鄰居集合
+  const neighborIds = new Set();
+  if (selectedId) {
+    graphStore.links.forEach(l => {
+      const src = typeof l.source === 'object' ? l.source.id : l.source;
+      const tgt = typeof l.target === 'object' ? l.target.id : l.target;
+      if (src === selectedId) neighborIds.add(tgt);
+      if (tgt === selectedId) neighborIds.add(src);
+    });
+  }
+  
+  // 直接修改 Three.js 物件（效能優化，不重建節點）
+  graphNodes.forEach(node => {
+    const obj = node.__threeObj;
+    if (!obj || !obj.material) return;
+    
+    const isSelected = selectedId === node.id;
+    let fadeAlpha = 1;
+    
+    if (props.focusFade && selectedId && !isSelected) {
+      fadeAlpha = neighborIds.has(node.id) ? 0.85 : 0.12;
+    }
+    
+    // 更新主體材質透明度和自發光
+    obj.material.opacity = 0.95 * fadeAlpha;
+    obj.material.emissiveIntensity = isSelected ? 0.4 : 0.1 * fadeAlpha;
+    obj.material.needsUpdate = true;
+    
+    // 選中節點放大
+    const targetScale = isSelected ? 1.4 : 1.0;
+    obj.scale.set(targetScale, targetScale, targetScale);
+  });
+});
+
+// ===== Watch: 監聽主題切換（防抖處理）=====
 watch(
   () => layoutStore.theme,
+  debounce(() => {
+    if (graphInstance) {
+      graphInstance.backgroundColor(backgroundColor.value);
+    }
+  }, 100)
+);
+
+// ===== Watch: 監聽密度 / focusFade 變化 → 觸發重繪 =====
+watch(
+  () => [props.densityThreshold, props.focusFade],
   () => {
     if (graphInstance) {
-      graphInstance
-        .backgroundColor(backgroundColor.value)
-        .linkColor(() => linkColor.value);
-      console.log('🎨 [3D] 主題已更新:', layoutStore.theme);
+      graphInstance.refresh();
     }
   }
 );
@@ -266,24 +339,48 @@ const initGraph = async () => {
     .nodeLabel('name')
     .nodeColor(node => node.color || '#448aff')
     .nodeVal(() => 10)  // 統一節點大小
-    
-    // 🎨 根據連接類型設置顏色
-    .linkColor(link => {
-    // 這裡設定顏色 (白色)
-    if (graphStore.highlightLinks.has(link)) return '#ff0000'; 
-    return 'rgba(255, 255, 255, 0.6)'; 
-    })  // <--- 注意這裡不能有分號 ;
-    .linkWidth(link => {
-    // 這裡設定粗細 (被選中變粗)
-    return graphStore.highlightLinks.has(link) ? 1.5 : 0.5;
-    })
-
-    // 🎨 根據連接類型設置透明度
-    .linkOpacity(link => {
-      if (link.type === 'ai-link') {
-        return 0.8;  // AI Link 更不透明
+    .nodeVisibility(node => {
+      // 密度過濾（同 2D 模式）
+      if (props.densityThreshold > 0) {
+        const linkCount = graphStore.getNodeLinks(node.id).length;
+        const maxLinks = Math.max(1, ...graphStore.nodes.map(n => graphStore.getNodeLinks(n.id).length));
+        const normalised = (linkCount / maxLinks) * 100;
+        if (normalised < props.densityThreshold) return false;
       }
-      return 0.8;  // 普通連線也提高透明度
+      return true;
+    })
+    
+    // 🎨 Focus-fade 連線樣式（同 2D 模式）
+    .linkColor(link => {
+      const selectedId = graphStore.selectedNode?.id;
+      if (props.focusFade && selectedId) {
+        const src = typeof link.source === 'object' ? link.source.id : link.source;
+        const tgt = typeof link.target === 'object' ? link.target.id : link.target;
+        const related = src === selectedId || tgt === selectedId;
+        if (!related) return 'rgba(255, 255, 255, 0.06)';
+      }
+      if (link.type === 'ai-link') return link.style?.color || '#fbbf24';
+      return linkColor.value;
+    })
+    .linkWidth(link => {
+      const selectedId = graphStore.selectedNode?.id;
+      if (props.focusFade && selectedId) {
+        const src = typeof link.source === 'object' ? link.source.id : link.source;
+        const tgt = typeof link.target === 'object' ? link.target.id : link.target;
+        if (src !== selectedId && tgt !== selectedId) return 0.3;
+      }
+      if (link.type === 'ai-link') return link.style?.width || 2;
+      return 1;
+    })
+    .linkOpacity(0.8)
+    .linkVisibility(link => {
+      if (props.densityThreshold <= 0) return true;
+      const src = typeof link.source === 'object' ? link.source.id : link.source;
+      const tgt = typeof link.target === 'object' ? link.target.id : link.target;
+      const srcCount = graphStore.getNodeLinks(src).length;
+      const tgtCount = graphStore.getNodeLinks(tgt).length;
+      const maxLinks = Math.max(1, ...graphStore.nodes.map(n => graphStore.getNodeLinks(n.id).length));
+      return (srcCount / maxLinks * 100 >= props.densityThreshold) && (tgtCount / maxLinks * 100 >= props.densityThreshold);
     })
     // 🎨 AI Link 虛線效果（使用粒子流動模擬）
     .linkDirectionalParticles(link => {
@@ -319,54 +416,88 @@ const initGraph = async () => {
     .warmupTicks(100)  // 效能優化: 預跑 100 次物理模擬
     .cooldownTicks(300)  // 效能優化: 300 tick 後自動停止
     .nodeThreeObject(node => {
-      // 🎨 真實光照球體：物理基礎渲染（PBR）
+      // 🎨 真實光照球體：PBR + Focus-fade（同 2D 模式）
       
-      const nodeSize = 5;  // 統一球體半徑
+      // === Focus-fade 計算 ===
+      const selectedId = graphStore.selectedNode?.id;
+      const isSelected = selectedId === node.id;
+      let fadeAlpha = 1;
+
+      if (props.focusFade && selectedId && !isSelected) {
+        const neighborIds = new Set();
+        graphStore.links.forEach(l => {
+          const src = typeof l.source === 'object' ? l.source.id : l.source;
+          const tgt = typeof l.target === 'object' ? l.target.id : l.target;
+          if (src === selectedId) neighborIds.add(tgt);
+          if (tgt === selectedId) neighborIds.add(src);
+        });
+        fadeAlpha = neighborIds.has(node.id) ? 0.85 : 0.12;
+      }
+      
+      const nodeSize = isSelected ? 7 : 5;  // 選中節點放大
       
       // 1. 創建高精度球體幾何體
-      const geometry = new THREE.SphereGeometry(nodeSize, 64, 64); // 提高到64分段，更平滑
+      const geometry = new THREE.SphereGeometry(nodeSize, 64, 64);
       
-      // 2. 使用標準材質（Standard Material - PBR 物理渲染）
+      // 2. 使用標準材質（PBR）+ focus-fade 透明度
       const material = new THREE.MeshStandardMaterial({
         color: node.color || '#448aff',
         emissive: node.color || '#448aff',
-        emissiveIntensity: 0.1,  // 降低自發光，更自然
-        metalness: 0.3,  // 金屬感（0=電介質，1=金屬）
-        roughness: 0.4,  // 粗糙度（0=完全光滑鏡面，1=完全粗糙）
+        emissiveIntensity: isSelected ? 0.4 : 0.1 * fadeAlpha,
+        metalness: 0.3,
+        roughness: 0.4,
         transparent: true,
-        opacity: 0.95,
-        envMapIntensity: 1.0  // 環境貼圖強度
+        opacity: 0.95 * fadeAlpha,
+        envMapIntensity: 1.0
       });
       
       const mesh = new THREE.Mesh(geometry, material);
       
-      // 3. 添加點光源（每個節點自帶光源，營造真實光照）
-      const pointLight = new THREE.PointLight(node.color || '#448aff', 0.8, nodeSize * 4);
+      // 3. 添加點光源
+      const pointLight = new THREE.PointLight(
+        node.color || '#448aff',
+        isSelected ? 1.5 : 0.8 * fadeAlpha,
+        nodeSize * 4
+      );
       pointLight.position.set(0, 0, 0);
       mesh.add(pointLight);
       
-      // 4. 添加環境光反射（模擬環境光）
+      // 4. 添加環境光反射
       const ambientLight = new THREE.AmbientLight(0xffffff, 0.3);
       mesh.add(ambientLight);
       
-      // 5. 添加細微的外發光層（Rim Light 效果）
+      // 5. 外發光層（Rim Light 效果）
       const glowGeometry = new THREE.SphereGeometry(nodeSize * 1.15, 32, 32);
       const glowMaterial = new THREE.MeshBasicMaterial({
         color: node.color || '#448aff',
         transparent: true,
-        opacity: 0.1,
+        opacity: (isSelected ? 0.25 : 0.1) * fadeAlpha,
         side: THREE.BackSide,
-        blending: THREE.AdditiveBlending  // 加法混合，創造發光效果
+        blending: THREE.AdditiveBlending
       });
       const glowMesh = new THREE.Mesh(glowGeometry, glowMaterial);
       mesh.add(glowMesh);
       
-      // 6. 添加高光反射點（模擬光澤）
+      // 🌟 選中節點：額外脈衝光暈
+      if (isSelected) {
+        const pulseGeometry = new THREE.SphereGeometry(nodeSize * 1.6, 32, 32);
+        const pulseMaterial = new THREE.MeshBasicMaterial({
+          color: '#fbbf24',
+          transparent: true,
+          opacity: 0.15,
+          side: THREE.BackSide,
+          blending: THREE.AdditiveBlending
+        });
+        const pulseMesh = new THREE.Mesh(pulseGeometry, pulseMaterial);
+        mesh.add(pulseMesh);
+      }
+      
+      // 6. 添加高光反射點
       const highlightGeometry = new THREE.SphereGeometry(nodeSize * 0.3, 16, 16);
       const highlightMaterial = new THREE.MeshBasicMaterial({
         color: 0xffffff,
         transparent: true,
-        opacity: 0.6
+        opacity: 0.6 * fadeAlpha
       });
       const highlight = new THREE.Mesh(highlightGeometry, highlightMaterial);
       highlight.position.set(nodeSize * 0.3, nodeSize * 0.3, nodeSize * 0.3);
@@ -386,7 +517,8 @@ const initGraph = async () => {
         const texture = new THREE.CanvasTexture(canvas);
         const spriteMaterial = new THREE.SpriteMaterial({ 
           map: texture,
-          transparent: true
+          transparent: true,
+          opacity: fadeAlpha
         });
         const sprite = new THREE.Sprite(spriteMaterial);
         sprite.scale.set(nodeSize * 1.5, nodeSize * 1.5, 1);
@@ -523,19 +655,6 @@ const handleNodeHover = (node) => {
     graphContainer.value.style.cursor = node ? 'pointer' : 'default';
   }
 };
-
-// 監聽主題變化，動態更新圖譜顏色
-watch(
-  () => layoutStore.theme,
-  (newTheme) => {
-    if (graphInstance) {
-      console.log('🎨 [3D] 主題切換:', newTheme);
-      graphInstance
-        .backgroundColor(backgroundColor.value)
-        .linkColor(() => linkColor.value);
-    }
-  }
-);
 
 // 啟動自動旋轉
 const startAutoRotate = () => {
@@ -690,14 +809,73 @@ const unhighlightNode = () => {
   highlightedNodeId.value = null;
 };
 
+// ===== 縮放控制方法（同 2D 暴露介面）=====
+const resetView = () => {
+  if (graphInstance) {
+    graphInstance.cameraPosition({ x: 0, y: 0, z: 300 }, { x: 0, y: 0, z: 0 }, 1000);
+    selectedNode.value = null;
+  }
+};
+
+const zoomIn = () => {
+  if (graphInstance) {
+    const cam = graphInstance.camera();
+    const pos = cam.position;
+    const ratio = 0.7; // 放大（拉近）
+    graphInstance.cameraPosition(
+      { x: pos.x * ratio, y: pos.y * ratio, z: pos.z * ratio },
+      { x: 0, y: 0, z: 0 },
+      300
+    );
+  }
+};
+
+const zoomOut = () => {
+  if (graphInstance) {
+    const cam = graphInstance.camera();
+    const pos = cam.position;
+    const ratio = 1.4; // 縮小（拉遠）
+    graphInstance.cameraPosition(
+      { x: pos.x * ratio, y: pos.y * ratio, z: pos.z * ratio },
+      { x: 0, y: 0, z: 0 },
+      300
+    );
+  }
+};
+
+const zoomToFit = () => {
+  if (graphInstance) {
+    graphInstance.zoomToFit(800);
+  }
+};
+
+const getZoom = () => {
+  if (!graphInstance) return 1;
+  return graphInstance.camera().position.length();
+};
+
 // 暴露方法給父組件
 defineExpose({
   focusNode,
   highlightNode,
   unhighlightNode,
   resetCamera,
+  resetView,
+  zoomIn,
+  zoomOut,
+  zoomToFit,
+  getZoom,
   generateNewGraph
 });
+
+// 防抖的視窗大小調整處理（頂層定義以便清理）
+const handleResize = debounce(() => {
+  if (graphInstance && graphContainer.value) {
+    const width = graphContainer.value.offsetWidth;
+    const height = graphContainer.value.offsetHeight;
+    graphInstance.width(width).height(height);
+  }
+}, 200);
 
 // 組件掛載
 onMounted(async () => {
@@ -707,30 +885,22 @@ onMounted(async () => {
   setTimeout(() => {
     if (graphInstance) {
       graphInstance.cameraPosition({ x: 0, y: 0, z: 200 }, { x: 0, y: 0, z: 0 }, 1000);
-      console.log('🎯 鏡頭已置中');
     }
   }, 500);
   
-  // 監聽窗口大小變化
-  const handleResize = () => {
-    if (graphInstance && graphContainer.value) {
-      const width = graphContainer.value.offsetWidth;
-      const height = graphContainer.value.offsetHeight;
-      graphInstance.width(width);
-      graphInstance.height(height);
-      console.log('📐 畫布已調整:', { width, height });
-    }
-  };
+  // 監聽視窗大小變化（防抖處理）
   window.addEventListener('resize', handleResize);
-  
-  // 清理函數
-  onUnmounted(() => {
-    window.removeEventListener('resize', handleResize);
-  });
 });
 
 // 組件卸載
 onUnmounted(() => {
+  // 移除事件監聽
+  window.removeEventListener('resize', handleResize);
+  
+  // 取消防抖更新
+  updateGraphData.cancel();
+  
+  // 停止自動旋轉
   stopAutoRotate();
   
   // 清理呼吸燈定時器
@@ -739,8 +909,10 @@ onUnmounted(() => {
     breathingInterval = null;
   }
   
-  if (graph) {
-    graph._destructor();
+  // 清理圖譜實例
+  if (graphInstance) {
+    graphInstance._destructor();
+    graphInstance = null;
   }
 });
 </script>

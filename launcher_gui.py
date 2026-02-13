@@ -550,19 +550,51 @@ class LauncherWorker(QThread):
         except (socket.timeout, ConnectionRefusedError, OSError):
             return False
 
-    def wait_for_port(self, port, timeout=60, check_interval=1):
-        """等待端口服務啟動（帶超時機制）"""
+    def wait_for_port(self, port, timeout=60, check_interval=1, process=None):
+        """等待端口服務啟動（帶超時機制 + 進程存活檢查）"""
         self.log(f"⏳ 等待服務在 localhost:{port} 啟動...")
         start_time = time.time()
+        last_progress = 0
 
         while time.time() - start_time < timeout and self._is_running:
+            # 檢查進程是否已死亡（提前退出，不浪費等待時間）
+            if process and process.poll() is not None:
+                elapsed = time.time() - start_time
+                self.log(f"❌ 進程已退出 (exit code: {process.returncode})，耗時 {elapsed:.1f}s")
+                # 嘗試讀取殘餘輸出
+                try:
+                    remaining = process.stdout.read()
+                    if remaining and remaining.strip():
+                        for line in remaining.strip().split('\n'):
+                            if line.strip():
+                                self.log(f"   {line.strip()}")
+                except Exception:
+                    pass
+                return False
+
             if self.check_port_status(port):
                 elapsed = time.time() - start_time
                 self.log(f"✅ 服務已就緒 (localhost:{port}) - 耗時 {elapsed:.1f}s")
                 return True
+
+            # 每 10 秒輸出一次等待進度
+            elapsed_int = int(time.time() - start_time)
+            if elapsed_int > 0 and elapsed_int % 10 == 0 and elapsed_int != last_progress:
+                last_progress = elapsed_int
+                self.log(f"   ⏳ 已等待 {elapsed_int}s / {timeout}s...")
+
             time.sleep(check_interval)
 
         self.log(f"❌ 服務啟動超時 (localhost:{port})，已等待 {timeout}s")
+        return False
+
+    def wait_for_port_free(self, port, timeout=10):
+        """等待端口完全釋放（stop → start 場景）"""
+        start_time = time.time()
+        while time.time() - start_time < timeout:
+            if not self.check_port_status(port):
+                return True
+            time.sleep(0.5)
         return False
 
     def kill_process_by_port(self, port):
@@ -688,11 +720,21 @@ class LauncherWorker(QThread):
         
         # 預防性清理：確保 Port 8000 是乾淨的
         self.kill_process_by_port(8000)
-        time.sleep(1)  # 等待端口釋放
+        
+        # 等待端口完全釋放（Windows 有時需要較長時間）
+        if not self.wait_for_port_free(8000, timeout=10):
+            self.log("⚠️  Port 8000 仍被佔用，嘗試二次強制清理...")
+            self.kill_process_by_port(8000)
+            time.sleep(2)
+            if self.check_port_status(8000):
+                self.log("❌ Port 8000 無法釋放，請手動檢查佔用進程")
+                self.status_signal.emit("backend", "error")
+                return None
 
         try:
             env = os.environ.copy()
             env['PYTHONIOENCODING'] = 'utf-8'
+            env['PYTHONUNBUFFERED'] = '1'  # 強制不緩衝，確保錯誤訊息即時顯示
 
             process = subprocess.Popen([
                 sys.executable,
@@ -720,12 +762,26 @@ class LauncherWorker(QThread):
             # 開啟一個子執行緒來讀取 Log
             import threading
             def read_stream(stream):
-                for line in iter(stream.readline, ''):
-                    if line: self.log(line.strip())
-                    if not self._is_running: break
-                stream.close()
+                try:
+                    for line in iter(stream.readline, ''):
+                        if line: self.log(line.strip())
+                        if not self._is_running: break
+                except (ValueError, OSError):
+                    pass  # stream closed
+                finally:
+                    try:
+                        stream.close()
+                    except Exception:
+                        pass
 
             threading.Thread(target=read_stream, args=(process.stdout,), daemon=True).start()
+
+            # 短暫等待，讓 uvicorn 有時間輸出啟動錯誤訊息
+            time.sleep(1)
+            if process.poll() is not None:
+                self.log(f"❌ 後端進程立即退出 (exit code: {process.returncode})")
+                self.status_signal.emit("backend", "error")
+                return None
 
             return process
         except Exception as e:
@@ -746,7 +802,12 @@ class LauncherWorker(QThread):
         
         # 預防性清理：確保 Port 5173 是乾淨的
         self.kill_process_by_port(5173)
-        time.sleep(1)  # 等待端口釋放
+        
+        # 等待端口完全釋放
+        if not self.wait_for_port_free(5173, timeout=10):
+            self.log("⚠️  Port 5173 仍被佔用，嘗試二次強制清理...")
+            self.kill_process_by_port(5173)
+            time.sleep(2)
 
         npm_cmd = 'npm.cmd' if self.is_windows else 'npm'
 
@@ -764,13 +825,20 @@ class LauncherWorker(QThread):
             self.processes.append(process)
             self.log(f"✅ 前端服務已啟動 (PID: {process.pid})")
 
-             # 開啟一個子執行緒來讀取 Log
+            # 開啟一個子執行緒來讀取 Log
             import threading
             def read_stream(stream):
-                for line in iter(stream.readline, ''):
-                    if line: self.log(line.strip())
-                    if not self._is_running: break
-                stream.close()
+                try:
+                    for line in iter(stream.readline, ''):
+                        if line: self.log(line.strip())
+                        if not self._is_running: break
+                except (ValueError, OSError):
+                    pass
+                finally:
+                    try:
+                        stream.close()
+                    except Exception:
+                        pass
 
             threading.Thread(target=read_stream, args=(process.stdout,), daemon=True).start()
 
@@ -807,8 +875,8 @@ class LauncherWorker(QThread):
             return
         else:
             self.status_signal.emit("backend", "starting")
-            # 等待後端就緒
-            if not self.wait_for_port(8000, timeout=60):
+            # 等待後端就緒（傳入 process 以偵測進程死亡）
+            if not self.wait_for_port(8000, timeout=60, process=backend_result):
                 self.log("❌ 後端服務啟動超時")
                 self.status_signal.emit("backend", "error")
                 self.finished_signal.emit(False)
@@ -825,8 +893,8 @@ class LauncherWorker(QThread):
             return
         else:
             self.status_signal.emit("frontend", "starting")
-            # 等待前端就緒
-            if not self.wait_for_port(5173, timeout=60):
+            # 等待前端就緒（傳入 process 以偵測進程死亡）
+            if not self.wait_for_port(5173, timeout=60, process=frontend_result):
                 self.log("⚠️  前端服務啟動超時")
                 self.status_signal.emit("frontend", "error")
             else:
@@ -1107,6 +1175,13 @@ class BruVLauncherGUI(QMainWindow):
         layout.addWidget(self.title_label)
         layout.addStretch()
 
+        # 🔄 重新載入 Launcher 按鈕
+        self.reload_btn = QPushButton("🔄")
+        self.reload_btn.setObjectName("themeBtn")
+        self.reload_btn.setFixedSize(40, 30)
+        self.reload_btn.clicked.connect(self.restart_self)
+        self.reload_btn.setToolTip("重新載入 Launcher GUI")
+
         # 主題切換按鈕
         self.theme_btn = QPushButton("🌙")
         self.theme_btn.setObjectName("themeBtn")
@@ -1126,6 +1201,7 @@ class BruVLauncherGUI(QMainWindow):
         close_btn.setFixedSize(40, 30)
         close_btn.clicked.connect(self.close_application)
 
+        layout.addWidget(self.reload_btn)
         layout.addWidget(self.theme_btn)
         layout.addWidget(min_btn)
         layout.addWidget(close_btn)
@@ -1542,13 +1618,17 @@ class BruVLauncherGUI(QMainWindow):
         self.append_log(self.t("log_stopping_system"))
         self.append_log("=" * 60)
         
-        # 如果有舊的 worker 在運行，先停止它
-        if self.worker and self.worker.isRunning():
-            self.worker._is_running = False
-            self.worker.wait(2000)  # 等待 2 秒
+        # 保存舊 worker 的進程引用（確保 stop worker 能正確終止它們）
+        old_processes = []
+        if self.worker:
+            old_processes = self.worker.processes.copy()
+            if self.worker.isRunning():
+                self.worker._is_running = False
+                self.worker.wait(2000)  # 等待 2 秒
         
-        # 創建新的 worker 執行停止操作
+        # 創建新的 worker 執行停止操作，並傳遞舊進程引用
         self.worker = LauncherWorker(self.project_root, mode='stop')
+        self.worker.processes = old_processes  # 傳遞進程引用以確保可靠終止
         self.worker.log_signal.connect(self.append_log)
         self.worker.status_signal.connect(self.update_status)
         self.worker.finished_signal.connect(self.on_stop_finished)
@@ -1796,6 +1876,28 @@ class BruVLauncherGUI(QMainWindow):
         """手動開啟 API Token 管理"""
         dialog = TokenManagerDialog(self.project_root, detected_token=self._detected_token, parent=self)
         dialog.exec()
+
+    def restart_self(self):
+        """重新載入 Launcher GUI（Hot Reload）"""
+        self.append_log("🔄 正在重新載入 Launcher...")
+        # 注意：不停止後端/前端服務，僅重啟 GUI 本身
+        try:
+            # 停止監控 worker（但不停服務）
+            if self.worker and self.worker.isRunning():
+                self.worker._is_running = False
+                self.worker.wait(1000)
+
+            # 使用 os.execv 原地替換進程（保留 PID）
+            import os
+            self.append_log("🚀 Launcher 重啟中...")
+            QApplication.instance().quit()
+            os.execv(sys.executable, [sys.executable] + sys.argv)
+        except Exception as e:
+            self.append_log(f"❌ 重啟失敗: {e}")
+            # Fallback: 用 subprocess 啟動新實例
+            import subprocess as sp
+            sp.Popen([sys.executable] + sys.argv, cwd=str(self.project_root))
+            QApplication.instance().quit()
 
     def close_application(self):
         """關閉應用程式"""

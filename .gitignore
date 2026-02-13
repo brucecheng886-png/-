@@ -51,6 +51,14 @@ logs/
 # Docker
 docker-compose.override.yml
 
+# SSL certificates
+nginx/ssl/*.pem
+nginx/ssl/*.key
+nginx/ssl/*.crt
+
+# Frontend build output
+frontend/dist/
+
 # Node
 node_modules/
 package-lock.json

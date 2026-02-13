@@ -1,6 +1,6 @@
 {
   "dify_api_key": "app-xxxxxxxxxxxxxxxx",
-  "dify_api_url": "http://localhost:5001/v1",
+  "dify_api_url": "http://localhost:82/v1",
   "ragflow_api_key": "ragflow-xxxxxxxxxxxxxxxx",
   "ragflow_api_url": "http://localhost:9380/api/v1"
 }

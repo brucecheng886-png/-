@@ -22,7 +22,10 @@ from backend.api.tasks import router as tasks_router
 from backend.api.media_library import router as media_library_router
 from backend.core.kuzu_manager import KuzuDBManager, MockKuzuManager, AsyncKuzuWrapper
 from backend.core.config import settings, get_current_api_keys
-from backend.core.auth import APIAuthMiddleware, initialize_auth_token, verify_token
+from backend.core.auth import (
+    APIAuthMiddleware, initialize_auth_token, verify_token,
+    add_token, revoke_token, list_tokens, update_user, get_token_label
+)
 from backend.services.watcher import WatcherService
 from backend.services.task_queue import task_queue
 from backend.core.logging import (
@@ -165,7 +168,7 @@ app = FastAPI(
 if os.environ.get("OTEL_ENABLED", "false").lower() == "true":
     setup_opentelemetry(app=app)
 
-# CORS 配置 - 僅允許已知的前端來源
+# CORS 配置 - 允許已知的前端來源 + 區網 IP
 _cors_origins = [
     "http://localhost:8000",
     "http://127.0.0.1:8000",
@@ -182,6 +185,8 @@ if _extra_origins:
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_cors_origins,
+    # 允許 192.168.x.x 區網任意 port 的前端存取
+    allow_origin_regex=r"^https?://192\.168\.\d{1,3}\.\d{1,3}(:\d+)?$",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -227,6 +232,58 @@ async def login(request: LoginRequest):
 async def auth_status():
     """檢查認證是否啟用"""
     return {"auth_enabled": auth_enabled}
+
+
+# ==================== 使用者管理 API ====================
+
+class CreateUserRequest(BaseModel):
+    """建立使用者請求"""
+    username: str
+    password: str
+    role: str = "user"
+    dify_api_key: str = ""
+
+class UpdateUserRequest(BaseModel):
+    """更新使用者請求"""
+    password: Optional[str] = None
+    role: Optional[str] = None
+    dify_api_key: Optional[str] = None
+
+@app.get("/api/auth/users")
+async def get_users():
+    """列出所有使用者"""
+    return {"success": True, "users": list_tokens()}
+
+@app.post("/api/auth/users")
+async def create_user(request: CreateUserRequest):
+    """建立新使用者（帳號+密碼+Dify Key）"""
+    if not request.username or not request.password:
+        raise HTTPException(status_code=400, detail="使用者名稱與密碼不可為空")
+    if len(request.password) < 4:
+        raise HTTPException(status_code=400, detail="密碼至少 4 碼")
+    ok = add_token(request.username, request.password, request.role, request.dify_api_key)
+    if not ok:
+        raise HTTPException(status_code=409, detail=f"使用者 '{request.username}' 已存在")
+    return {"success": True, "message": f"使用者 '{request.username}' 已建立"}
+
+@app.put("/api/auth/users/{username}")
+async def edit_user(username: str, request: UpdateUserRequest):
+    """更新使用者的密碼 / 角色 / Dify Key"""
+    ok = update_user(username, request.password, request.role, request.dify_api_key)
+    if not ok:
+        raise HTTPException(status_code=404, detail=f"找不到使用者 '{username}'")
+    return {"success": True, "message": f"使用者 '{username}' 已更新"}
+
+@app.delete("/api/auth/users/{username}")
+async def delete_user(username: str):
+    """刪除使用者"""
+    if username == "admin":
+        raise HTTPException(status_code=403, detail="不可刪除 admin 帳號")
+    ok = revoke_token(username)
+    if not ok:
+        raise HTTPException(status_code=404, detail=f"找不到使用者 '{username}'")
+    return {"success": True, "message": f"使用者 '{username}' 已刪除"}
+
 
 # 健康檢查
 @app.get("/api/health")

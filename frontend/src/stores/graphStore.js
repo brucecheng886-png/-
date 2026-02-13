@@ -2,7 +2,7 @@ import { defineStore } from 'pinia';
 import { ref, computed } from 'vue';
 import crossGraphData from '../data/crossGraphTestData.js';
 import graphDataManager from '../services/GraphDataManager.js';
-import { authFetch } from '../services/apiClient';
+import { authFetch, apiGet, apiPost, apiPut, apiDelete, apiPostForm } from '../services/apiClient';
 
 /**
  * Graph Store - 圖譜數據管理
@@ -98,6 +98,12 @@ export const useGraphStore = defineStore('graph', () => {
    * @type {import('vue').Ref<boolean>}
    */
   const isCrossGraphMode = ref(false);
+  
+  /**
+   * RAGFlow 知識庫列表（集中管理，避免各頁面重複抓取）
+   * @type {import('vue').Ref<Array<Object>>}
+   */
+  const ragflowDatasets = ref([]);
   
   /**
    * 已匯入的檔案列表
@@ -256,11 +262,11 @@ export const useGraphStore = defineStore('graph', () => {
   
   /**
    * 獲取圖譜數據（使用 Manager - 自動去重和緩存）
-   * @param {number} graphId - 圖譜 ID (1: 主腦圖譜, 其他: 用戶圖譜)
+   * @param {number} graphId - 圖譜 ID
    * @param {Object} options - 選項
    * @param {boolean} options.forceRefresh - 強制刷新（忽略緩存）
    */
-  const fetchGraphData = async (graphId = 1, options = {}) => {
+  const fetchGraphData = async (graphId = null, options = {}) => {
     loading.value = true;
     error.value = null;
     
@@ -330,31 +336,14 @@ export const useGraphStore = defineStore('graph', () => {
    * @returns {Promise<Object>} { nodes, links }
    */
   const fetchNeighbors = async (entityId) => {
-    if (!entityId) {
-      throw new Error('entityId 不能為空');
-    }
-    
+    if (!entityId) throw new Error('entityId 不能為空');
     loading.value = true;
     error.value = null;
-    
     try {
-      console.log(`🔄 正在獲取節點 ${entityId} 的鄰居...`);
-      
-      const response = await authFetch(`/api/graph/entities/${entityId}/neighbors`);
-      
-      if (!response.ok) {
-        throw new Error(`API 請求失敗: ${response.status} ${response.statusText}`);
-      }
-      
-      const data = await response.json();
-      
-      if (!data.success) {
-        throw new Error(data.message || '獲取鄰居節點失敗');
-      }
-      
+      const data = await apiGet(`/api/graph/entities/${entityId}/neighbors`);
+      if (!data.success) throw new Error(data.message || '獲取鄰居節點失敗');
       console.log(`✅ 鄰居節點已加載:`, data.data);
       return data.data;
-      
     } catch (err) {
       error.value = err.message || '獲取鄰居節點失敗';
       console.error('❌ 獲取鄰居節點錯誤:', err);
@@ -392,30 +381,12 @@ export const useGraphStore = defineStore('graph', () => {
     
     loading.value = true;
     error.value = null;
-    
     try {
-      console.log(`🔄 正在執行 Cypher 查詢...`);
-      console.log('Query:', query);
-      
-      const response = await authFetch('/api/graph/query', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ query, params })
-      });
-      
-      if (!response.ok) {
-        throw new Error(`API 請求失敗: ${response.status} ${response.statusText}`);
-      }
-      
-      const data = await response.json();
-      
-      if (!data.success) {
-        throw new Error(data.message || 'Cypher 查詢失敗');
-      }
-      
+      console.log(`🔄 Cypher 查詢:`, query);
+      const data = await apiPost('/api/graph/query', { query, params });
+      if (!data.success) throw new Error(data.message || 'Cypher 查詢失敗');
       console.log(`✅ Cypher 查詢結果:`, data.data);
       return data.data;
-      
     } catch (err) {
       error.value = err.message || 'Cypher 查詢失敗';
       console.error('❌ Cypher 查詢錯誤:', err);
@@ -863,22 +834,9 @@ export const useGraphStore = defineStore('graph', () => {
       
       // 建立 FormData
       const formData = new FormData();
-      files.forEach(file => {
-        formData.append('files', file);
-      });
+      files.forEach(file => formData.append('files', file));
       
-      // 發送請求到後端 API
-      const response = await authFetch('/api/graph/import/files', {
-        method: 'POST',
-        body: formData
-      });
-      
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({ detail: '未知錯誤' }));
-        throw new Error(errorData.detail || `HTTP ${response.status}`);
-      }
-      
-      const data = await response.json();
+      const data = await apiPostForm('/api/graph/import/files', formData);
       
       // 驗證回傳數據
       if (!Array.isArray(data)) {
@@ -1066,6 +1024,54 @@ export const useGraphStore = defineStore('graph', () => {
   };
   
   /**
+   * 刪除圖譜（調用後端 API + 同步 store）
+   * @param {string} graphId - 圖譜 ID
+   * @param {boolean} cascade - 是否級聯刪除所有節點（預設 true）
+   * @returns {Promise<boolean>} 是否成功
+   */
+  const deleteGraph = async (graphId, cascade = true) => {
+    loading.value = true;
+    error.value = null;
+    
+    try {
+      console.log('🗑️ [Store] 刪除圖譜:', graphId, cascade ? '(級聯)' : '');
+      
+      await graphDataManager.deleteGraph(graphId, cascade);
+      
+      // 從本地列表移除
+      graphMetadataList.value = graphMetadataList.value.filter(
+        g => String(g.id) !== String(graphId)
+      );
+      
+      // 如果刪除的是當前圖譜，切換到剩餘的第一個圖譜
+      if (String(currentGraphId.value) === String(graphId)) {
+        const remaining = graphMetadataList.value[0];
+        if (remaining) {
+          currentGraphId.value = remaining.id;
+          localStorage.setItem('lastGraphId', String(remaining.id));
+        } else {
+          currentGraphId.value = null;
+          localStorage.removeItem('lastGraphId');
+        }
+        // 清空當前節點/連線
+        nodes.value = [];
+        links.value = [];
+        selectedNode.value = null;
+      }
+      
+      console.log('✅ [Store] 圖譜刪除成功:', graphId);
+      return true;
+      
+    } catch (err) {
+      error.value = err.message || '圖譜刪除失敗';
+      console.error('❌ [Store] 圖譜刪除錯誤:', err);
+      throw err;
+    } finally {
+      loading.value = false;
+    }
+  };
+
+  /**
    * 創建新圖譜（調用後端 API）
    * @param {Object} graphData - 圖譜數據 { name, description, icon, color }
    * @returns {Promise<Object>} 創建的圖譜元數據
@@ -1101,6 +1107,39 @@ export const useGraphStore = defineStore('graph', () => {
   };
 
   /**
+   * 更新圖譜元數據（名稱、描述、圖示、顏色）
+   * @param {string|number} graphId - 圖譜 ID
+   * @param {Object} updates - { name?, description?, icon?, color? }
+   * @returns {Promise<Object>} 更新後的圖譜元數據
+   */
+  const updateGraph = async (graphId, updates) => {
+    loading.value = true;
+    error.value = null;
+    
+    try {
+      console.log('🔄 [Store] 更新圖譜:', graphId, updates);
+      
+      const updatedGraph = await graphDataManager.updateGraph(graphId, updates);
+      
+      // 同步本地圖譜列表
+      const idx = graphMetadataList.value.findIndex(g => String(g.id) === String(graphId));
+      if (idx !== -1) {
+        graphMetadataList.value[idx] = { ...graphMetadataList.value[idx], ...updatedGraph };
+      }
+      
+      console.log('✅ [Store] 圖譜更新成功:', updatedGraph);
+      return updatedGraph;
+      
+    } catch (err) {
+      error.value = err.message || '圖譜更新失敗';
+      console.error('❌ [Store] 圖譜更新錯誤:', err);
+      throw err;
+    } finally {
+      loading.value = false;
+    }
+  };
+
+  /**
    * 創建單一實體節點（調用後端 API + 同步 store）
    * @param {Object} entity - 實體 { id, name, type, description, properties }
    * @returns {Promise<Object>} 創建結果
@@ -1109,33 +1148,18 @@ export const useGraphStore = defineStore('graph', () => {
     loading.value = true;
     error.value = null;
     try {
-      const response = await authFetch('/api/graph/create', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          id: entity.id,
-          name: entity.name,
-          type: entity.type,
-          description: entity.description || '',
-          properties: entity.properties || {},
-          graph_id: String(currentGraphId.value || '1')
-        })
+      const result = await apiPost('/api/graph/create', {
+        id: entity.id,
+        name: entity.name,
+        type: entity.type,
+        description: entity.description || '',
+        properties: entity.properties || {},
+        graph_id: String(currentGraphId.value)
       });
-      const result = await response.json();
-      if (response.ok && result.success) {
-        // 同步到 store — 新增節點
-        addNode({
-          id: entity.id,
-          name: entity.name,
-          type: entity.type,
-          description: entity.description || '',
-          ...entity
-        });
-        console.log('✅ 實體已創建並同步到 store:', entity.name);
-        return result;
-      } else {
-        throw new Error(result.detail || result.message || '創建實體失敗');
-      }
+      if (!result.success) throw new Error(result.message || '創建實體失敗');
+      addNode({ id: entity.id, name: entity.name, type: entity.type, description: entity.description || '', ...entity });
+      console.log('✅ 實體已創建並同步到 store:', entity.name);
+      return result;
     } catch (err) {
       error.value = err.message;
       console.error('❌ createEntity 錯誤:', err);
@@ -1154,22 +1178,9 @@ export const useGraphStore = defineStore('graph', () => {
     loading.value = true;
     error.value = null;
     try {
-      const response = await authFetch('/api/graph/batch-create', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          entities: entities.map(e => ({
-            ...e,
-            graph_id: String(currentGraphId.value || '1')
-          }))
-        })
+      const result = await apiPost('/api/graph/batch-create', {
+        entities: entities.map(e => ({ ...e, graph_id: String(currentGraphId.value) }))
       });
-      if (!response.ok) {
-        const errData = await response.json();
-        throw new Error(errData.detail || '批量創建失敗');
-      }
-      const result = await response.json();
-      // 同步到 store
       addBatchNodes(entities);
       console.log('✅ 批量實體已創建並同步到 store:', entities.length, '筆');
       return result;
@@ -1195,13 +1206,8 @@ export const useGraphStore = defineStore('graph', () => {
     formData.append('graph_id', graphId);
     formData.append('graph_mode', graphMode);
     try {
-      const response = await authFetch('/api/system/upload', {
-        method: 'POST',
-        body: formData
-      });
-      const result = await response.json();
+      const result = await apiPostForm('/api/system/upload', formData);
       if (result.success) {
-        // 自動重新加載圖譜數據以同步
         await fetchGraphData(currentGraphId.value);
         console.log('✅ 文件上傳成功並已重新同步圖譜');
       }
@@ -1209,6 +1215,59 @@ export const useGraphStore = defineStore('graph', () => {
     } catch (err) {
       console.error('❌ uploadFileToGraph 錯誤:', err);
       throw err;
+    }
+  };
+
+  /**
+   * 更新實體節點（調用後端 API + 同步 store）
+   * @param {string} nodeId - 節點 ID
+   * @param {Object} updates - 要更新的屬性 { name, link, description, image, ... }
+   * @returns {Promise<Object>} 更新結果
+   */
+  const updateEntity = async (nodeId, updates) => {
+    try {
+      const result = await apiPut(`/api/graph/entities/${encodeURIComponent(nodeId)}`, updates);
+      updateNode(nodeId, updates);
+      console.log('✅ 實體已更新並同步到 store:', nodeId);
+      return result;
+    } catch (err) {
+      console.error('❌ updateEntity 錯誤:', err);
+      throw err;
+    }
+  };
+
+  /**
+   * 刪除實體節點（調用後端 API + 同步 store）
+   * @param {string} nodeId - 節點 ID
+   * @returns {Promise<Object>} 刪除結果
+   */
+  const deleteEntity = async (nodeId) => {
+    try {
+      const result = await apiDelete(`/api/graph/entities/${encodeURIComponent(nodeId)}`);
+      deleteNode(nodeId);
+      console.log('✅ 實體已刪除並同步 store:', nodeId);
+      return result;
+    } catch (err) {
+      console.error('❌ deleteEntity 錯誤:', err);
+      throw err;
+    }
+  };
+
+  /**
+   * 獲取 RAGFlow 知識庫列表（集中管理）
+   * @returns {Promise<Array>} 知識庫列表
+   */
+  const fetchRAGFlowDatasets = async () => {
+    try {
+      const data = await apiGet('/api/ragflow/datasets');
+      if (data && data.code === 0) {
+        ragflowDatasets.value = data.data || [];
+        console.log(`✅ 已加載 ${ragflowDatasets.value.length} 個 RAGFlow 知識庫`);
+      }
+      return ragflowDatasets.value;
+    } catch (err) {
+      console.warn('⚠️ 獲取 RAGFlow 資料集失敗:', err.message);
+      return [];
     }
   };
   
@@ -1232,6 +1291,7 @@ export const useGraphStore = defineStore('graph', () => {
     aiLinks,
     activeGraphIds,
     isCrossGraphMode,
+    ragflowDatasets,
     
     // Computed
     nodeCount,
@@ -1280,11 +1340,16 @@ export const useGraphStore = defineStore('graph', () => {
     snapshotWorkspaceGraph,
     clearGraphMetadata,
     createGraph,
+    updateGraph,
     loadGraphMetadataList,
     
     // 統一 API Actions（同步 store）
     createEntity,
     batchCreateEntities,
-    uploadFileToGraph
+    uploadFileToGraph,
+    updateEntity,
+    deleteEntity,
+    fetchRAGFlowDatasets,
+    deleteGraph
   };
 });

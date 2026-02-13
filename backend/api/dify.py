@@ -1,7 +1,7 @@
 """
 Dify API 路由 (包含 CircuitBreaker 斷路器保護)
 """
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 from typing import Dict, Any, Optional
 import httpx
@@ -11,18 +11,31 @@ import os
 from backend.core.config import settings, get_current_api_keys
 from backend.core.circuit_breaker import dify_breaker, CircuitBreakerOpenError
 from backend.services.agent_service import agent_service
+from backend.core.auth import get_user_dify_key
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
-def get_dify_config():
-    """動態獲取 Dify 配置"""
+def get_dify_config(user_key: Optional[str] = None):
+    """動態獲取 Dify 配置，優先使用用戶專屬 Key"""
     api_keys = get_current_api_keys()
     return {
-        'api_key': api_keys['DIFY_API_KEY'],
+        'api_key': user_key or api_keys['DIFY_API_KEY'],
         'api_url': api_keys['DIFY_API_URL']
     }
+
+
+def _extract_user_key(request: Request) -> Optional[str]:
+    """從 Request 中提取用戶專屬的 Dify API Key"""
+    auth_header = request.headers.get("Authorization", "")
+    if auth_header.startswith("Bearer "):
+        token = auth_header[7:]
+        return get_user_dify_key(token)
+    api_token = request.headers.get("x-api-token")
+    if api_token:
+        return get_user_dify_key(api_token)
+    return None
 
 
 class DifyRequest(BaseModel):
@@ -47,9 +60,10 @@ class WorkflowRequest(BaseModel):
 
 
 @router.post("/chat")
-async def chat_with_dify(request: DifyRequest):
-    """與 Dify 對話 (受 CircuitBreaker 保護)"""
-    config = get_dify_config()
+async def chat_with_dify(request: DifyRequest, raw_request: Request):
+    """與 Dify 對話 (受 CircuitBreaker 保護，支援用戶專屬 Key)"""
+    user_key = _extract_user_key(raw_request)
+    config = get_dify_config(user_key)
     
     try:
         async with dify_breaker:

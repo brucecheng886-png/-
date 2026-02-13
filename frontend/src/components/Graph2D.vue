@@ -112,7 +112,7 @@ const backgroundColor = computed(() => {
 });
 
 const linkColor = computed(() => {
-  return 'rgba(120, 200, 255, 0.85)';
+  return 'rgba(255, 255, 255, 0.8)';
 });
 
 const linkParticleColor = computed(() => {
@@ -530,7 +530,7 @@ const initGraph = async () => {
         const src = typeof link.source === 'object' ? link.source.id : link.source;
         const tgt = typeof link.target === 'object' ? link.target.id : link.target;
         const related = src === selectedId || tgt === selectedId;
-        if (!related) return 'rgba(120, 200, 255, 0.06)'; // 極淡
+        if (!related) return 'rgba(255, 255, 255, 0.06)'; // 極淡
       }
       if (link.type === 'ai-link') return link.style?.color || '#fbbf24';
       return linkColor.value;

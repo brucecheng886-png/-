@@ -65,6 +65,7 @@ class KuzuDBManager:
                     description STRING,
                     icon STRING,
                     color STRING,
+                    cover_image STRING,
                     created_at STRING,
                     updated_at STRING,
                     node_count INT64,
@@ -95,6 +96,14 @@ class KuzuDBManager:
             """)
             
             logger.info("✅ 圖譜結構初始化完成")
+            
+            # 遷移：為已有的 GraphMetadata 表新增 cover_image 欄位
+            try:
+                self.conn.execute("ALTER TABLE GraphMetadata ADD cover_image STRING DEFAULT ''")
+                logger.info("✅ GraphMetadata 新增 cover_image 欄位")
+            except Exception:
+                pass  # 欄位已存在，忽略
+                
         except Exception as e:
             logger.warning(f"圖譜結構可能已存在: {e}")
     
@@ -291,7 +300,7 @@ class KuzuDBManager:
     # ===== 圖譜元數據管理 =====
     
     def create_graph_metadata(self, graph_id: str, name: str, description: str = "", 
-                              icon: str = "🌐", color: str = "#3b82f6") -> bool:
+                              icon: str = "🌐", color: str = "#3b82f6", cover_image: str = "") -> bool:
         """創建圖譜元數據
         
         Args:
@@ -300,6 +309,7 @@ class KuzuDBManager:
             description: 圖譜描述
             icon: 圖標 emoji
             color: 主題顏色
+            cover_image: 封面圖片（base64 DataURL 或 URL）
         
         Returns:
             是否創建成功
@@ -315,6 +325,7 @@ class KuzuDBManager:
                     description: $description,
                     icon: $icon,
                     color: $color,
+                    cover_image: $cover_image,
                     created_at: $created_at,
                     updated_at: $updated_at,
                     node_count: $node_count,
@@ -326,6 +337,7 @@ class KuzuDBManager:
                 "description": description,
                 "icon": icon,
                 "color": color,
+                "cover_image": cover_image,
                 "created_at": now,
                 "updated_at": now,
                 "node_count": 0,
@@ -833,6 +845,15 @@ class AsyncKuzuWrapper:
             return await loop.run_in_executor(
                 self._executor,
                 self._manager.list_graph_metadata
+            )
+
+    async def safe_delete_graph_metadata(self, graph_id: str, cascade: bool = False) -> bool:
+        """異步安全刪除圖譜元數據（含可選級聯刪除）"""
+        async with self._write_lock:
+            loop = asyncio.get_event_loop()
+            return await loop.run_in_executor(
+                self._executor,
+                lambda: self._manager.delete_graph_metadata(graph_id, cascade=cascade)
             )
 
     async def safe_update_graph_stats(self, graph_id: str) -> bool:

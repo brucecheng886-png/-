@@ -52,9 +52,8 @@ const searchQueryLocal = computed(() => props.searchQuery);
 
 // Dropdown computed
 const selectedGraphLabel = computed(() => {
-  if (props.selectedGraphId === 1 || props.selectedGraphId === '1') return '主腦圖譜';
   const graph = graphStore.graphMetadataList.find(g => String(g.id) === String(props.selectedGraphId));
-  return graph?.name || '主腦圖譜';
+  return graph?.name || '未選擇圖譜';
 });
 
 // Click outside to close
@@ -235,8 +234,7 @@ function getNodeIcon(node) {
       <Transition name="dropdown">
         <div v-show="isSelectOpen" class="absolute left-6 right-6 mt-1 bg-[#1a1f2e] border border-white/10 rounded-lg shadow-2xl shadow-black/40 overflow-hidden z-50">
           <div class="max-h-48 overflow-y-auto custom-scrollbar py-1">
-            <div class="px-4 py-2.5 text-sm cursor-pointer transition-all duration-150 hover:bg-white/10" :class="selectedGraphId === 1 || selectedGraphId === '1' ? 'text-blue-400 bg-blue-500/10' : 'text-gray-300'" @click="selectGraph(1)">主腦圖譜</div>
-            <div v-for="graph in graphStore.graphMetadataList.filter(g => g.id !== 1 && g.id !== '1')" :key="graph.id" class="px-4 py-2.5 text-sm cursor-pointer transition-all duration-150 hover:bg-white/10" :class="String(selectedGraphId) === String(graph.id) ? 'text-blue-400 bg-blue-500/10' : 'text-gray-300'" @click="selectGraph(graph.id)">{{ graph.name }}</div>
+            <div v-for="graph in graphStore.graphMetadataList" :key="graph.id" class="px-4 py-2.5 text-sm cursor-pointer transition-all duration-150 hover:bg-white/10" :class="String(selectedGraphId) === String(graph.id) ? 'text-blue-400 bg-blue-500/10' : 'text-gray-300'" @click="selectGraph(graph.id)">{{ graph.name }}</div>
           </div>
         </div>
       </Transition>

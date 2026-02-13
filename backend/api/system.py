@@ -151,7 +151,7 @@ async def get_config():
         "config": {
             "dify_key": "app-xxxxxxxx",
             "ragflow_key": "ragflow-xxxxxxxx",
-            "dify_api_url": "http://localhost:5001/v1",
+            "dify_api_url": "http://localhost:82/v1",
             "ragflow_api_url": "http://localhost:9380/api/v1"
         }
     }
@@ -186,7 +186,7 @@ async def update_config(request: ConfigUpdateRequest):
     {
         "dify_key": "app-xxxxxxxxxxxxxxxx",
         "ragflow_key": "ragflow-xxxxxxxxxxxxxxxx",
-        "dify_api_url": "http://localhost:5001/v1",
+        "dify_api_url": "http://localhost:82/v1",
         "ragflow_api_url": "http://localhost:9380/api/v1"
     }
     
@@ -406,7 +406,7 @@ async def test_connection():
 @router.post("/upload")
 async def upload_file(
     file: UploadFile = File(...),
-    graph_id: str = Form("1"),
+    graph_id: str = Form(None),
     graph_mode: str = Form("existing"),
     graph_name: str = Form(None),
     enable_ai_link: str = Form("false"),
@@ -417,7 +417,7 @@ async def upload_file(
     
     Args:
         file: 上傳的檔案
-        graph_id: 目標圖譜 ID (預設為 "1" 主腦圖譜)
+        graph_id: 目標圖譜 ID
         graph_mode: 圖譜模式 ("new" 或 "existing")
         graph_name: 新圖譜名稱 (當 graph_mode="new" 時使用)
         enable_ai_link: 是否啟用 AI 智能連線 ("true" 或 "false")
@@ -466,12 +466,28 @@ async def upload_file(
             file_suffix = file_path.suffix
             file_path = upload_dir / f"{file_stem}_{timestamp}{file_suffix}"
         
-        # 儲存檔案（已讀取到 content）
-        with open(file_path, "wb") as buffer:
-            buffer.write(content)
+        # ── 階段 1: 先寫 meta.json（確保 Watcher 讀取不會失敗）──
+        # 注意：主檔案尚未寫入，Watcher 不會被觸發
+        import json
+        metadata_file = file_path.with_suffix(file_path.suffix + '.meta.json')
+        metadata = {
+            "graph_id": graph_id,
+            "graph_mode": graph_mode,
+            "graph_name": graph_name,
+            "upload_time": datetime.now().isoformat(),
+            "ai_enabled": ai_enabled,
+            "ragflow_dataset_id": ragflow_dataset_id if ai_enabled else None,
+            "ragflow_result": None,
+            "ragflow_doc_ids": None
+        }
+        with open(metadata_file, 'w', encoding='utf-8') as f:
+            json.dump(metadata, f, ensure_ascii=False, indent=2)
+        logger.info(f"📋 圖譜元數據已預寫入: graph_id={graph_id}, path={metadata_file.name}")
         
-        # 如果啟用 AI 處理，先上傳到 RAGFlow
+        # ── 階段 2: RAGFlow 上傳（耗時操作，在主檔案寫入前完成）──
+        # 先用臨時檔寫入 content 供 RAGFlow 上傳，但不放在 Auto_Import 觸發 Watcher
         ragflow_result = None
+        temp_file_for_ragflow = None
         if ai_enabled and ragflow_dataset_id:
             try:
                 logger.info(f"🤖 正在上傳到 RAGFlow 知識庫: {ragflow_dataset_id}")
@@ -485,6 +501,13 @@ async def upload_file(
                 if not api_keys['RAGFLOW_API_KEY']:
                     logger.warning("⚠️ RAGFlow API Key 未配置，跳過 RAGFlow 上傳")
                 else:
+                    # 將內容寫入臨時檔案供 RAGFlow 上傳（避免觸發 Watcher）
+                    import tempfile
+                    temp_dir = tempfile.gettempdir()
+                    temp_file_for_ragflow = Path(temp_dir) / file_path.name
+                    with open(temp_file_for_ragflow, "wb") as tmp:
+                        tmp.write(content)
+                    
                     # 使用配置中的 RAGFlow API URL
                     ragflow_api_url = api_keys['RAGFLOW_API_URL']
                     rag_client = RAGFlowClient(
@@ -495,7 +518,7 @@ async def upload_file(
                     # 非同步上傳到 RAGFlow（避免阻塞事件迴圈）
                     ragflow_result = await rag_client.async_upload_file(
                         dataset_id=ragflow_dataset_id,
-                        file_path=str(file_path)
+                        file_path=str(temp_file_for_ragflow)
                     )
                     logger.info(f"✅ RAGFlow 上傳成功: {ragflow_result}")
                     
@@ -519,23 +542,23 @@ async def upload_file(
                                 ragflow_doc_ids = doc_ids
             except Exception as e:
                 logger.warning(f"⚠️ RAGFlow 上傳失敗（繼續處理）: {e}")
+            finally:
+                # 清理臨時檔案
+                if temp_file_for_ragflow and temp_file_for_ragflow.exists():
+                    try:
+                        temp_file_for_ragflow.unlink()
+                    except OSError:
+                        pass
         
-        # 保存圖譜元數據到文件的擴展屬性（供 WatcherService 使用）
-        metadata_file = file_path.with_suffix(file_path.suffix + '.meta.json')
-        metadata = {
-            "graph_id": graph_id,
-            "graph_mode": graph_mode,
-            "graph_name": graph_name,
-            "upload_time": datetime.now().isoformat(),
-            "ai_enabled": ai_enabled,
-            "ragflow_dataset_id": ragflow_dataset_id if ai_enabled else None,
-            "ragflow_result": ragflow_result,
-            "ragflow_doc_ids": ragflow_doc_ids if ai_enabled else None
-        }
-        
-        import json
+        # ── 階段 3: 回填 meta.json（補充 RAGFlow 結果）──
+        metadata["ragflow_result"] = ragflow_result
+        metadata["ragflow_doc_ids"] = ragflow_doc_ids if ai_enabled else None
         with open(metadata_file, 'w', encoding='utf-8') as f:
             json.dump(metadata, f, ensure_ascii=False, indent=2)
+        
+        # ── 階段 4: 最後寫入主檔案（觸發 Watcher，此時 meta.json 已就緒）──
+        with open(file_path, "wb") as buffer:
+            buffer.write(content)
         
         logger.info(f"✅ 檔案上傳成功，已進入監控佇列: {file_path}")
         logger.info(f"📋 圖譜元數據已保存: {metadata}")

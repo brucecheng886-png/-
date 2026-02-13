@@ -296,7 +296,8 @@ class GraphDataManager {
           name: graphData.name.trim(),
           description: graphData.description || `自定義圖譜：${graphData.name}`,
           icon: graphData.icon || '🌐',
-          color: graphData.color || '#3b82f6'
+          color: graphData.color || '#3b82f6',
+          cover_image: graphData.cover_image || ''
         })
       });
       
@@ -323,13 +324,47 @@ class GraphDataManager {
   }
   
   /**
-   * 刪除圖譜
+   * 更新圖譜元數據（名稱、描述、圖示、顏色）
    */
-  async deleteGraph(graphId) {
-    console.log('🔄 刪除圖譜:', graphId);
+  async updateGraph(graphId, updates) {
+    console.log('🔄 更新圖譜元數據:', graphId, updates);
     
     try {
       const response = await authFetch(`/api/graph/metadata/${graphId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(updates)
+      });
+      
+      if (!response.ok) {
+        throw new Error(`更新圖譜失敗: HTTP ${response.status}`);
+      }
+      
+      const result = await response.json();
+      
+      if (!result.success) {
+        throw new Error(result.message || '更新圖譜失敗');
+      }
+      
+      this.invalidateMetadataCache();
+      
+      console.log('✅ 圖譜更新成功:', result.graph);
+      return result.graph;
+      
+    } catch (error) {
+      console.error('❌ 圖譜更新失敗:', error);
+      throw error;
+    }
+  }
+  
+  /**
+   * 刪除圖譜
+   */
+  async deleteGraph(graphId, cascade = true) {
+    console.log('🔄 刪除圖譜:', graphId, cascade ? '(級聯)' : '');
+    
+    try {
+      const response = await authFetch(`/api/graph/metadata/${graphId}?cascade=${cascade}`, {
         method: 'DELETE'
       });
       

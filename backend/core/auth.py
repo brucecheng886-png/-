@@ -213,7 +213,7 @@ def get_token_label(token: str) -> Optional[str]:
 
 # ==================== 多 Token 管理 API 工具函式 ====================
 
-def add_token(label: str, token: str, role: str = "user") -> bool:
+def add_token(label: str, token: str, role: str = "user", dify_api_key: str = "") -> bool:
     """
     新增一組 Token
 
@@ -221,6 +221,7 @@ def add_token(label: str, token: str, role: str = "user") -> bool:
         label: 使用者名稱 (如 "alice", "service_etl")
         token: 明文 Token (只在此處使用，不會被保存)
         role:  角色 — admin / user / service
+        dify_api_key: 該用戶專屬的 Dify API Key
 
     Returns:
         True 成功, False 使用者名稱已存在
@@ -234,6 +235,7 @@ def add_token(label: str, token: str, role: str = "user") -> bool:
         "user": label,
         "hash": _hash_token(token),
         "role": role,
+        "dify_api_key": dify_api_key,
         "created_at": datetime.now().isoformat(),
     })
     store["tokens"] = tokens
@@ -262,13 +264,44 @@ def list_tokens() -> List[Dict]:
     store = _load_token_store()
     result = []
     for entry in store.get("tokens", []):
+        dify_key = entry.get("dify_api_key", "")
         result.append({
             "user": entry.get("user", "unknown"),
             "role": entry.get("role", "user"),
             "created_at": entry.get("created_at", "-"),
             "hash_prefix": entry.get("hash", "")[:8] + "...",
+            "has_dify_key": bool(dify_key),
+            "dify_key_preview": (dify_key[:8] + "...") if dify_key else "",
         })
     return result
+
+
+def get_user_dify_key(token: str) -> Optional[str]:
+    """根據 Token 取得該用戶專屬的 Dify API Key"""
+    store = _load_token_store()
+    incoming_hash = _hash_token(token)
+    for entry in store.get("tokens", []):
+        if entry.get("hash") == incoming_hash:
+            return entry.get("dify_api_key") or None
+    return None
+
+
+def update_user(label: str, password: Optional[str] = None, role: Optional[str] = None, dify_api_key: Optional[str] = None) -> bool:
+    """更新指定用戶的資訊"""
+    store = _load_token_store()
+    tokens = store.get("tokens", [])
+    for entry in tokens:
+        if entry.get("user") == label:
+            if password is not None:
+                entry["hash"] = _hash_token(password)
+            if role is not None:
+                entry["role"] = role
+            if dify_api_key is not None:
+                entry["dify_api_key"] = dify_api_key
+            _save_token_store(store)
+            logger.info(f"🔑 已更新用戶 [{label}]")
+            return True
+    return False
 
 
 class APIAuthMiddleware(BaseHTTPMiddleware):

@@ -3,17 +3,17 @@
     class="fixed left-0 top-[56px] z-40 overflow-hidden"
     :style="{ width: layoutStore.isSidebarCollapsed ? '0' : '280px', height: 'calc(100vh - 56px)', transition: 'width 0.3s ease' }"
   >
-    <div class="h-full w-[280px] flex flex-col border-r border-white/5 px-4 py-6 bg-nexus-bg/95 backdrop-blur-md">
+    <div class="h-full w-[280px] flex flex-col border-r border-white/[0.06] px-4 py-6" style="background: rgba(11, 18, 34, 0.92); backdrop-filter: blur(24px) saturate(1.2); -webkit-backdrop-filter: blur(24px) saturate(1.2);">
       <!-- Logo 區域 -->
-      <div class="flex items-center gap-3 px-2 pb-5 border-b border-white/10 mb-5">
-        <div class="w-9 h-9 rounded-lg bg-gradient-to-br from-blue-500 to-blue-700 flex items-center justify-center flex-shrink-0 shadow-lg shadow-blue-500/20">
+      <div class="flex items-center gap-3 px-2 pb-5 border-b border-white/[0.06] mb-5">
+        <div class="w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0" style="background: var(--primary-blue); box-shadow: 0 2px 8px rgba(59, 130, 246, 0.3);">
           <svg class="w-5 h-5 text-white" viewBox="0 0 20 20" fill="currentColor">
             <path d="M10 2L2 7v6l8 5 8-5V7l-8-5zM10 4.5L15 7.5v5L10 15.5 5 12.5v-5L10 4.5z"/>
           </svg>
         </div>
         <div>
           <h1 class="m-0 text-sm font-bold text-white tracking-tight leading-tight">BruV AI NEXUS</h1>
-          <p class="mt-0.5 text-[10px] text-text-tertiary uppercase tracking-[0.12em]">KNOWLEDGE PLATFORM</p>
+          <p class="mt-0.5 text-[10px] uppercase tracking-[0.12em]" style="color: var(--text-tertiary)">ENTERPRISE PLATFORM</p>
         </div>
       </div>
 
@@ -73,6 +73,20 @@
           </router-link>
         </div>
 
+        <!-- AI 助手分組 -->
+        <div class="mb-5">
+          <div class="flex items-center gap-2 px-3 py-2 mb-1">
+            <span class="text-xs font-semibold text-text-tertiary uppercase tracking-wider">AI</span>
+          </div>
+          <router-link to="/chat" class="nav-item" active-class="nav-item-active">
+            <svg class="nav-icon-svg" viewBox="0 0 20 20" fill="currentColor">
+              <path d="M2 5a2 2 0 012-2h7a2 2 0 012 2v4a2 2 0 01-2 2H9l-3 3v-3H4a2 2 0 01-2-2V5z"/>
+              <path d="M15 7v2a4 4 0 01-4 4H9.828l-1.766 1.767c.28.149.599.233.938.233h2l3 3v-3h2a2 2 0 002-2V9a2 2 0 00-2-2h-1z"/>
+            </svg>
+            <span class="nav-label">AI 助手</span>
+          </router-link>
+        </div>
+
         <!-- 系統分組 -->
         <div>
           <div class="flex items-center gap-2 px-3 py-2 mb-1">
@@ -94,12 +108,12 @@
       </nav>
 
       <!-- 底部資訊 -->
-      <div class="pt-4 border-t border-white/10 mt-4">
-        <div class="flex items-center gap-2 px-3 py-2 rounded-lg bg-white/5 border border-white/10 mb-2">
-          <span class="w-2 h-2 rounded-full bg-green-500 animate-pulse shadow-[0_0_8px_rgba(16,185,129,0.6)]"></span>
-          <span class="text-xs font-medium text-green-400">System Online</span>
+      <div class="pt-4 border-t border-white/[0.06] mt-4">
+        <div class="flex items-center gap-2.5 px-3 py-2.5 rounded-lg mb-2" style="background: rgba(34, 197, 94, 0.06); border: 1px solid rgba(34, 197, 94, 0.12);">
+          <span class="status-indicator"></span>
+          <span class="text-xs font-medium" style="color: #4ade80;">System Online</span>
         </div>
-        <div class="text-center text-xs text-text-tertiary mt-1">v1.0.0</div>
+        <div class="text-center text-xs mt-1" style="color: var(--text-tertiary)">v1.0.0</div>
       </div>
     </div>
   </aside>
@@ -127,30 +141,51 @@ const toggleSubmenu = (menuKey) => {
 </script>
 
 <style scoped>
-.nav-icon-svg {
-  width: 18px;
-  height: 18px;
+/* 狀態指示燈 */
+.status-indicator {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #22c55e;
+  box-shadow: 0 0 6px rgba(34, 197, 94, 0.5), 0 0 12px rgba(34, 197, 94, 0.2);
+  position: relative;
   flex-shrink: 0;
-  opacity: 1;
+}
+.status-indicator::after {
+  content: '';
+  position: absolute;
+  inset: -3px;
+  border-radius: 50%;
+  border: 1px solid rgba(34, 197, 94, 0.3);
+  animation: statusPulse 2s ease-in-out infinite;
+}
+@keyframes statusPulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.3; transform: scale(1.6); }
+}
+
+.nav-icon-svg {
+  width: 17px;
+  height: 17px;
+  flex-shrink: 0;
+  opacity: 0.7;
   transition: opacity 0.2s;
 }
 
-.nav-item:hover .nav-icon-svg,
-.nav-item-active .nav-icon-svg {
-  opacity: 1;
-}
+.nav-item:hover .nav-icon-svg { opacity: 1; }
+.nav-item-active .nav-icon-svg { opacity: 1; }
 
 .nav-item {
   display: flex;
   align-items: center;
-  gap: 14px;
-  padding: 12px 16px;
-  border-radius: 10px;
+  gap: 12px;
+  padding: 10px 14px;
+  border-radius: 8px;
   text-decoration: none;
-  font-size: 15px;
+  font-size: 14px;
   font-weight: 500;
-  color: rgba(255, 255, 255, 0.95);
-  transition: all 0.3s ease;
+  color: var(--text-secondary);
+  transition: all 0.2s ease;
   position: relative;
   overflow: hidden;
   margin-bottom: 2px;
@@ -161,9 +196,9 @@ const toggleSubmenu = (menuKey) => {
 
 .expand-arrow {
   margin-left: auto;
-  font-size: 10px;
-  transition: transform 0.3s ease;
-  opacity: 0.85;
+  font-size: 9px;
+  transition: transform 0.2s ease;
+  opacity: 0.5;
 }
 .expand-arrow.rotated { transform: rotate(90deg); }
 
@@ -171,56 +206,55 @@ const toggleSubmenu = (menuKey) => {
   margin-left: 20px;
   margin-top: 2px;
   margin-bottom: 6px;
-  border-left: 2px solid rgba(59, 130, 246, 0.3);
-  padding-left: 8px;
+  border-left: 1px solid rgba(59, 130, 246, 0.2);
+  padding-left: 10px;
 }
 
 .nav-subitem {
   padding: 8px 12px;
-  font-size: 14px;
+  font-size: 13px;
   margin-bottom: 1px;
 }
-.nav-subitem .nav-icon { font-size: 18px; }
+.nav-subitem .nav-icon { font-size: 16px; }
 
 .submenu-enter-active, .submenu-leave-active {
-  transition: all 0.3s ease;
+  transition: all 0.25s ease;
   overflow: hidden;
 }
 .submenu-enter-from, .submenu-leave-to {
-  opacity: 0; max-height: 0; transform: translateY(-10px);
+  opacity: 0; max-height: 0; transform: translateY(-8px);
 }
 .submenu-enter-to, .submenu-leave-from {
   opacity: 1; max-height: 500px; transform: translateY(0);
 }
 
 .nav-item:hover {
-  background: rgba(59, 130, 246, 0.1);
-  color: white;
-  transform: translateX(4px);
+  background: rgba(148, 163, 184, 0.06);
+  color: var(--text-primary);
 }
 
 .nav-item-active {
-  background: rgba(59, 130, 246, 0.2) !important;
-  color: #60a5fa !important;
+  background: rgba(59, 130, 246, 0.1) !important;
+  color: var(--accent-blue) !important;
   font-weight: 600;
-  box-shadow: 0 0 0 1px rgba(59, 130, 246, 0.3);
+  border: 1px solid rgba(59, 130, 246, 0.15);
 }
 
 .nav-item::before {
   content: '';
   position: absolute;
-  left: 0; top: 0; bottom: 0;
+  left: 0; top: 25%; bottom: 25%;
   width: 3px;
-  background: #3b82f6;
+  border-radius: 0 2px 2px 0;
+  background: var(--primary-blue);
   transform: scaleY(0);
-  transition: transform 0.3s ease;
+  transition: transform 0.2s ease;
 }
-.nav-item:hover::before,
 .nav-item-active::before { transform: scaleY(1); }
 
-.nav-icon { font-size: 20px; width: 24px; text-align: center; flex-shrink: 0; }
+.nav-icon { font-size: 18px; width: 22px; text-align: center; flex-shrink: 0; }
 .nav-label { flex: 1; white-space: nowrap; }
 
-nav::-webkit-scrollbar { width: 4px; }
-nav::-webkit-scrollbar-thumb { background: rgba(59, 130, 246, 0.3); border-radius: 2px; }
+nav::-webkit-scrollbar { width: 3px; }
+nav::-webkit-scrollbar-thumb { background: rgba(148, 163, 184, 0.15); border-radius: 2px; }
 </style>

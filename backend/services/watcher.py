@@ -71,7 +71,7 @@ class DeadLetterQueue:
 
     def record(self, file_path: Path, failed_step: str, error: str,
                ragflow_doc_id: str = None, kuzu_entity_id: str = None,
-               graph_id: str = "1", saga_steps: dict = None):
+               graph_id: str = None, saga_steps: dict = None):
         """記錄到 DLQ"""
         try:
             with self._get_conn() as conn:
@@ -214,20 +214,41 @@ class AIFileEventHandler(FileSystemEventHandler):
         saga_steps = {}
         ragflow_doc_id = None
         kuzu_entity_id = None
-
         try:
-            # 讀取圖譜元數據
+            # 讀取圖譜元數據 + 冪等性檢查
             metadata_file = file_path.with_suffix(file_path.suffix + '.meta.json')
-            graph_id = "1"  # 預設圖譜 ID
+            graph_id = None  # 必須從 meta.json 讀取
             
             if metadata_file.exists():
                 try:
                     with open(metadata_file, 'r', encoding='utf-8') as f:
                         metadata = json.load(f)
-                        graph_id = metadata.get('graph_id', "1")
+                        graph_id = metadata.get('graph_id')
+
+                    # 冪等性檢查：已處理 + 檔案未修改 → 跳過
+                    if metadata.get('processed') is True:
+                        file_mtime = datetime.fromtimestamp(
+                            file_path.stat().st_mtime
+                        ).isoformat()
+                        last_processed = metadata.get('last_processed_time', '')
+                        if last_processed and file_mtime <= last_processed:
+                            logger.info(
+                                f"⏩ 冪等性跳過 (已處理且未修改): {file_path.name}"
+                            )
+                            return
+                        logger.info(
+                            f"🔄 檔案已修改，重新處理: {file_path.name} "
+                            f"(mtime={file_mtime} > last={last_processed})"
+                        )
+                    else:
                         logger.info(f"📋 讀取圖譜元數據: graph_id={graph_id}")
                 except Exception as e:
                     logger.warning(f"⚠️  讀取元數據失敗，使用預設圖譜: {e}")
+            
+            # graph_id 安全檢查
+            if not graph_id:
+                logger.error(f"❌ 無法確定目標圖譜 ID，跳過處理: {file_path.name}")
+                return
             
             # ── Step A: 上傳檔案至 RAGFlow (with retry) ──
             logger.info(f"📤 正在上傳檔案至 RAGFlow: {file_path.name}")
@@ -318,6 +339,40 @@ class AIFileEventHandler(FileSystemEventHandler):
                         exc_info=True
                     )
 
+            # ── Step D: 節點互連 (基於 domain + 關鍵字共現) ──
+            if kuzu_entity_id:
+                try:
+                    inter_links = self._build_inter_node_links(
+                        file_path, kuzu_entity_id, graph_id
+                    )
+                    saga_steps["inter_node_links"] = {
+                        "status": "COMPLETED",
+                        "links_created": inter_links
+                    }
+                except Exception as link_err:
+                    saga_steps["inter_node_links"] = {
+                        "status": "FAILED",
+                        "error": str(link_err)
+                    }
+                    logger.error(
+                        f"⚠️  節點互連失敗 (不影響主流程): {link_err}",
+                        exc_info=True
+                    )
+
+            # ── 寫入冪等性元數據 (.meta.json) ──
+            try:
+                meta_payload = {
+                    "graph_id": graph_id,
+                    "processed": True,
+                    "last_processed_time": datetime.now().isoformat(),
+                    "ragflow_id": ragflow_doc_id,
+                }
+                with open(metadata_file, 'w', encoding='utf-8') as f:
+                    json.dump(meta_payload, f, ensure_ascii=False, indent=2)
+                logger.info(f"💾 已寫入冪等性標記: {metadata_file.name}")
+            except Exception as meta_err:
+                logger.warning(f"⚠️  寫入元數據失敗 (不影響主流程): {meta_err}")
+
             logger.info(f"✅ Saga 完成: {file_path.name} | steps={list(saga_steps.keys())}")
             
         except FileNotFoundError as e:
@@ -343,7 +398,7 @@ class AIFileEventHandler(FileSystemEventHandler):
             return data[0].get('id')
         return None
     
-    def _add_to_graph(self, file_path: Path, upload_result: dict, graph_id: str = "1") -> Optional[str]:
+    def _add_to_graph(self, file_path: Path, upload_result: dict, graph_id: str = None) -> Optional[str]:
         """
         將檔案資訊添加到知識圖譜（創建檔案主節點）
         
@@ -558,6 +613,187 @@ class AIFileEventHandler(FileSystemEventHandler):
                 exc_info=True
             )
 
+    def _build_inter_node_links(self, file_path: Path, file_node_id: str, graph_id: str = "1") -> int:
+        """
+        分析同一圖譜中的 Resource 節點，根據以下規則建立互連：
+          1. Link Domain 歸類 — 相同網域的資源互相連線 (same_domain)
+          2. 關鍵字共現 — title/description 中的共同關鍵字 (keyword_overlap)
+        
+        Args:
+            file_path: 來源檔案（用於日誌）
+            file_node_id: 檔案主節點 ID
+            graph_id: 目標圖譜 ID
+            
+        Returns:
+            建立的連線數量
+        """
+        if not self.kuzu_manager:
+            return 0
+
+        try:
+            from urllib.parse import urlparse
+            import re
+
+            logger.info(f"🔗 開始建立節點互連: graph_id={graph_id}")
+
+            # 查詢同圖譜的所有 Resource 節點
+            entities = self.kuzu_manager.query("""
+                MATCH (e:Entity {graph_id: $graph_id})
+                WHERE e.type = 'Resource'
+                RETURN e.id AS id, e.name AS name, e.properties AS properties
+            """, parameters={"graph_id": graph_id})
+
+            if len(entities) < 2:
+                logger.info(f"⏭️  節點數量不足 ({len(entities)})，跳過互連")
+                return 0
+
+            # 查詢已存在的所有連線，避免重複建立
+            existing_relations = set()
+            try:
+                rels = self.kuzu_manager.query("""
+                    MATCH (a:Entity {graph_id: $graph_id})-[:Relation]->(b:Entity {graph_id: $graph_id})
+                    RETURN a.id AS src, b.id AS dst
+                """, parameters={"graph_id": graph_id})
+                for r in rels:
+                    existing_relations.add((r['src'], r['dst']))
+                    existing_relations.add((r['dst'], r['src']))  # 雙向避免重複
+            except Exception:
+                pass  # 查詢失敗不中斷
+
+            # ── 第 1 層：Link Domain 歸類 ──
+            domain_groups = {}  # domain → [entity_id, ...]
+            entity_map = {}     # id → {name, link, description, keywords}
+
+            for e in entities:
+                eid = e['id']
+                name = e.get('name', '')
+                props_raw = e.get('properties', '{}')
+                
+                # 解析 properties 字串
+                try:
+                    if isinstance(props_raw, str):
+                        props = eval(props_raw) if props_raw.startswith('{') else {}
+                    else:
+                        props = props_raw or {}
+                except Exception:
+                    props = {}
+
+                link = props.get('link', '')
+                description = props.get('description', '')
+
+                entity_map[eid] = {
+                    'name': name,
+                    'link': link,
+                    'description': description
+                }
+
+                # 提取 domain
+                if link:
+                    try:
+                        parsed = urlparse(link)
+                        domain = parsed.netloc.replace('www.', '').lower()
+                        if domain:
+                            domain_groups.setdefault(domain, []).append(eid)
+                    except Exception:
+                        pass
+
+            # 建立同 domain 連線
+            link_count = 0
+            for domain, ids in domain_groups.items():
+                if len(ids) < 2:
+                    continue
+                # 限制同 domain 最多建立 20 條連線，避免爆炸
+                pairs = []
+                for i in range(len(ids)):
+                    for j in range(i + 1, min(len(ids), i + 5)):
+                        pairs.append((ids[i], ids[j]))
+                
+                for src_id, dst_id in pairs[:20]:
+                    if (src_id, dst_id) in existing_relations:
+                        continue
+                    success = self.kuzu_manager.add_relation(
+                        source_id=src_id,
+                        target_id=dst_id,
+                        relation_type="same_domain",
+                        properties={'domain': domain, 'auto': True}
+                    )
+                    if success:
+                        link_count += 1
+                        existing_relations.add((src_id, dst_id))
+                        existing_relations.add((dst_id, src_id))
+
+            logger.info(f"🌐 Domain 歸類連線: {link_count} 條")
+
+            # ── 第 2 層：關鍵字共現分析 ──
+            # 從 title + description 提取關鍵字，找共同詞的節點互連
+            stopwords = {
+                'the', 'a', 'an', 'is', 'are', 'was', 'were', 'in', 'on', 'at',
+                'to', 'for', 'of', 'and', 'or', 'not', 'with', 'by', 'from',
+                'this', 'that', 'it', 'its', 'be', 'has', 'have', 'had', 'do',
+                'does', 'did', 'but', 'if', 'as', 'no', 'so', 'up', 'out',
+                'about', 'into', 'than', 'then', 'can', 'will', 'just',
+                '的', '是', '在', '了', '和', '與', '或', '不', '有', '也',
+                '都', '要', '會', '把', '被', '讓', '這', '那', '就',
+                'post', 'page', 'http', 'https', 'www', 'com'
+            }
+
+            def extract_keywords(text: str) -> set:
+                if not text:
+                    return set()
+                # 中文：2字以上的詞；英文：3字以上的詞
+                words = re.findall(r'[\u4e00-\u9fff]{2,}|[a-zA-Z]{3,}', text.lower())
+                return {w for w in words if w not in stopwords and len(w) <= 20}
+
+            entity_keywords = {}
+            for eid, info in entity_map.items():
+                kws = extract_keywords(info['name']) | extract_keywords(info['description'])
+                if kws:
+                    entity_keywords[eid] = kws
+
+            keyword_link_count = 0
+            eids = list(entity_keywords.keys())
+            for i in range(len(eids)):
+                for j in range(i + 1, len(eids)):
+                    if keyword_link_count >= 100:  # 限制最大連線數
+                        break
+                    eid_a, eid_b = eids[i], eids[j]
+                    if (eid_a, eid_b) in existing_relations:
+                        continue
+                    
+                    common = entity_keywords[eid_a] & entity_keywords[eid_b]
+                    # 至少要有 2 個共同關鍵字才建立連線
+                    if len(common) >= 2:
+                        success = self.kuzu_manager.add_relation(
+                            source_id=eid_a,
+                            target_id=eid_b,
+                            relation_type="keyword_overlap",
+                            properties={
+                                'keywords': list(common)[:5],
+                                'score': len(common),
+                                'auto': True
+                            }
+                        )
+                        if success:
+                            keyword_link_count += 1
+                            existing_relations.add((eid_a, eid_b))
+                            existing_relations.add((eid_b, eid_a))
+
+            logger.info(f"🔑 關鍵字共現連線: {keyword_link_count} 條")
+            total = link_count + keyword_link_count
+            logger.info(f"✅ 節點互連完成: 共 {total} 條新連線 (domain={link_count}, keyword={keyword_link_count})")
+
+            # 更新圖譜統計
+            try:
+                self.kuzu_manager.update_graph_stats(graph_id)
+            except Exception:
+                pass
+
+            return total
+
+        except Exception as e:
+            logger.error(f"❌ 節點互連失敗: {e}", exc_info=True)
+            return 0
+
 
 class WatcherService:
     """檔案監控服務管理器"""
@@ -676,6 +912,30 @@ class WatcherService:
                 
                 # 檢查副檔名
                 if file_path.suffix.lower() in AIFileEventHandler.SUPPORTED_EXTENSIONS:
+                    # 冪等性檢查：如果已有 .meta.json 且標記 processed → 跳過
+                    meta_path = file_path.with_suffix(
+                        file_path.suffix + '.meta.json'
+                    )
+                    if meta_path.exists():
+                        try:
+                            with open(meta_path, 'r', encoding='utf-8') as mf:
+                                meta = json.load(mf)
+                            if meta.get('processed') is True:
+                                file_mtime = datetime.fromtimestamp(
+                                    file_path.stat().st_mtime
+                                ).isoformat()
+                                last_processed = meta.get(
+                                    'last_processed_time', ''
+                                )
+                                if last_processed and file_mtime <= last_processed:
+                                    logger.debug(
+                                        f"⏩ 跳過已處理檔案: {file_path.name}"
+                                    )
+                                    skipped_count += 1
+                                    continue
+                        except Exception:
+                            pass  # 元數據損壞，重新處理
+
                     logger.info(f"📄 處理已存在的檔案: {file_path.name}")
                     if self.event_handler:
                         self.event_handler._process_file(file_path)

@@ -12,11 +12,12 @@ import BottomToolbar from '../components/BottomToolbar.vue';
 import StatsBar from '../components/StatsBar.vue';
 import DensitySlider from '../components/DensitySlider.vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
-import { authFetch } from '../services/apiClient';
+import { useRouter } from 'vue-router';
 
 // ===== Store =====
 const graphStore = useGraphStore();
 const layoutStore = useLayoutStore();
+const router = useRouter();
 
 // ===== State =====
 const searchQuery = ref('');
@@ -39,7 +40,7 @@ const selectedSuggestedLinks = ref(new Set()); // 使用者選擇的連線
 const hoveredLinkTarget = ref(null); // 當前suspended節點
 
 // NEXUS 控制台狀態 — 從 store 同步，支持 localStorage 持久化
-const selectedGraphId = ref(graphStore.currentGraphId || localStorage.getItem('lastGraphId') || 1);
+const selectedGraphId = ref(graphStore.currentGraphId || localStorage.getItem('lastGraphId') || null);
 const activeFilter = ref('all'); // 'all', 'focus', 'part'
 const nodeViewMode = ref('medium'); // 'list', 'small', 'medium', 'large'
 const isLinkingMode = ref(false); // 手動連線模式
@@ -496,22 +497,10 @@ const saveChanges = async () => {
   console.log('💾 [GraphPage] 保存節點變更:', nodeId, updates);
   
   try {
-    // 1️⃣ 呼叫後端 API 持久化到資料庫
-    const response = await authFetch(`/api/graph/entities/${encodeURIComponent(nodeId)}`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(updates)
-    });
+    // 1️⃣ 呼叫 Store 統一 API（後端持久化 + 前端同步）
+    await graphStore.updateEntity(nodeId, updates);
     
-    if (!response.ok) {
-      const errorData = await response.json().catch(() => ({}));
-      throw new Error(errorData.detail || `API 錯誤: ${response.status}`);
-    }
-    
-    // 2️⃣ 同步更新前端 Store（即時渲染）
-    graphStore.updateNode(nodeId, updates);
-    
-    // 3️⃣ 處理 AI 建議連線
+    // 2️⃣ 處理 AI 建議連線
     const selectedLinks = Array.from(selectedSuggestedLinks.value);
     if (selectedLinks.length > 0) {
       for (const linkId of selectedLinks) {
@@ -672,20 +661,10 @@ const deleteNode = async () => {
   console.log('🗑️ [GraphPage] 刪除節點:', nodeId, nodeName);
   
   try {
-    // 1️⃣ 呼叫後端 API 刪除
-    const response = await authFetch(`/api/graph/entities/${encodeURIComponent(nodeId)}`, {
-      method: 'DELETE'
-    });
+    // 1️⃣ 呼叫 Store 統一 API（後端刪除 + 前端同步）
+    await graphStore.deleteEntity(nodeId);
     
-    if (!response.ok) {
-      const errorData = await response.json().catch(() => ({}));
-      throw new Error(errorData.detail || `API 錯誤: ${response.status}`);
-    }
-    
-    // 2️⃣ 同步前端 Store
-    graphStore.deleteNode(nodeId);
-    
-    // 3️⃣ 關閉面板
+    // 2️⃣ 關閉面板
     showRightPanel.value = false;
     
     ElMessage.success({
@@ -738,16 +717,129 @@ const onSelectBlur = () => {
   }, 200);
 };
 
-const handleEditGraph = () => {
-  ElMessage.info('✏️ 編輯圖譜功能開發中...');
+const handleEditGraph = async () => {
+  const graphId = selectedGraphId.value;
+  const graph = graphStore.graphMetadataList.find(g => String(g.id) === String(graphId));
+  const currentName = graph?.name || '';
+  
+  try {
+    const { value: newName } = await ElMessageBox.prompt(
+      '請輸入新的圖譜名稱',
+      '編輯圖譜',
+      {
+        confirmButtonText: '儲存',
+        cancelButtonText: '取消',
+        inputValue: currentName,
+        inputPattern: /\S+/,
+        inputErrorMessage: '圖譜名稱不能為空',
+        customClass: 'dark-message-box'
+      }
+    );
+    
+    if (newName && newName.trim() !== currentName) {
+      await graphStore.updateGraph(graphId, { name: newName.trim() });
+      ElMessage.success(`✅ 圖譜已重新命名為「${newName.trim()}」`);
+    }
+  } catch {
+    // 使用者取消
+  }
 };
 
-const handleCreateGraph = () => {
-  ElMessage.info('➕ 新增圖譜功能開發中...');
+const handleCreateGraph = async () => {
+  try {
+    const { value: graphName } = await ElMessageBox.prompt(
+      '請輸入圖譜名稱',
+      '新增圖譜',
+      {
+        confirmButtonText: '建立',
+        cancelButtonText: '取消',
+        inputPlaceholder: '例如：研究專題、專案知識庫...',
+        inputPattern: /\S+/,
+        inputErrorMessage: '圖譜名稱不能為空',
+        customClass: 'dark-message-box'
+      }
+    );
+    
+    if (graphName && graphName.trim()) {
+      const newGraph = await graphStore.createGraph({ name: graphName.trim() });
+      ElMessage.success(`✅ 圖譜「${graphName.trim()}」已建立`);
+      
+      // 自動切換到新圖譜
+      selectedGraphId.value = newGraph.id;
+      await graphStore.fetchGraphData(newGraph.id);
+      
+      // 提示是否前往匯入資料
+      try {
+        await ElMessageBox.confirm(
+          `圖譜「${graphName.trim()}」已建立成功，\n是否立即前往匯入資料？`,
+          '📂 匯入資料',
+          {
+            confirmButtonText: '前往匯入',
+            cancelButtonText: '稍後再說',
+            type: 'info',
+            customClass: 'dark-message-box'
+          }
+        );
+        router.push({ path: '/file-import', query: { graphId: newGraph.id } });
+      } catch {
+        // 使用者選擇稍後再說，留在當前頁面
+      }
+    }
+  } catch {
+    // 使用者取消
+  }
 };
 
-const handleDeleteGraph = () => {
-  ElMessage.warning('🗑️ 刪除圖譜功能開發中...');
+const handleDeleteGraph = async () => {
+  const graphId = selectedGraphId.value;
+  
+  // 禁止刪除最後一個圖譜
+  if (graphStore.graphMetadataList.length <= 1) {
+    ElMessage.warning('⚠️ 至少需要保留一個圖譜，無法刪除');
+    return;
+  }
+  
+  // 取得圖譜名稱
+  const graph = graphStore.graphMetadataList.find(g => String(g.id) === String(graphId));
+  const graphName = graph?.name || graphId;
+  const nodeCount = graphStore.nodeCount;
+  const linkCount = graphStore.linkCount;
+  
+  try {
+    await ElMessageBox.confirm(
+      `確定要刪除圖譜「${graphName}」嗎？\n\n` +
+      `此操作將永久刪除：\n` +
+      `• ${nodeCount} 個節點\n` +
+      `• ${linkCount} 條連線\n\n` +
+      `⚠️ 此操作無法復原！`,
+      '刪除圖譜',
+      {
+        confirmButtonText: '確定刪除',
+        cancelButtonText: '取消',
+        type: 'warning',
+        confirmButtonClass: 'el-button--danger',
+        customClass: 'dark-message-box'
+      }
+    );
+    
+    // 使用者確認刪除
+    await graphStore.deleteGraph(graphId, true);
+    
+    // 切換到剩餘的第一個圖譜
+    const remaining = graphStore.graphMetadataList[0];
+    if (remaining) {
+      selectedGraphId.value = remaining.id;
+      await graphStore.fetchGraphData(remaining.id);
+    }
+    
+    ElMessage.success(`✅ 圖譜「${graphName}」已刪除`);
+    
+  } catch (action) {
+    // 使用者取消 或 刪除失敗
+    if (action !== 'cancel') {
+      ElMessage.error(`❌ 刪除失敗: ${action.message || action}`);
+    }
+  }
 };
 
 const setFilter = (filter) => {

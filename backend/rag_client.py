@@ -114,6 +114,110 @@ class RAGFlowClient:
             resp.raise_for_status()
             return self._check_response(resp.json())
 
+    # ---------- Chunks 取回方法 ----------
+
+    async def async_get_chunks(
+        self,
+        dataset_id: str,
+        document_id: str,
+        page: int = 1,
+        page_size: int = 100
+    ) -> Dict[str, Any]:
+        """非同步取回文件的解析分塊"""
+        url = (f"{self.base_url}/datasets/{dataset_id}"
+               f"/documents/{document_id}/chunks"
+               f"?page={page}&page_size={page_size}")
+        async with httpx.AsyncClient(timeout=30) as client:
+            resp = await client.get(url, headers=self._headers)
+            resp.raise_for_status()
+            return self._check_response(resp.json())
+
+    def get_chunks(
+        self,
+        dataset_id: str,
+        document_id: str,
+        page: int = 1,
+        page_size: int = 100
+    ) -> Dict[str, Any]:
+        """同步取回文件的解析分塊（供 WatcherService 使用）"""
+        url = (f"{self.base_url}/datasets/{dataset_id}"
+               f"/documents/{document_id}/chunks"
+               f"?page={page}&page_size={page_size}")
+        with httpx.Client(timeout=30, headers=self._headers) as client:
+            resp = client.get(url)
+            resp.raise_for_status()
+            return self._check_response(resp.json())
+
+    async def async_get_document_status(
+        self,
+        dataset_id: str,
+        document_id: str
+    ) -> Dict[str, Any]:
+        """非同步取得文件解析狀態"""
+        url = f"{self.base_url}/datasets/{dataset_id}/documents?id={document_id}"
+        async with httpx.AsyncClient(timeout=15) as client:
+            resp = await client.get(url, headers=self._headers)
+            resp.raise_for_status()
+            result = self._check_response(resp.json())
+            docs = result.get('data', {}).get('docs', [])
+            return docs[0] if docs else {}
+
+    def get_document_status(
+        self,
+        dataset_id: str,
+        document_id: str
+    ) -> Dict[str, Any]:
+        """同步取得文件解析狀態"""
+        url = f"{self.base_url}/datasets/{dataset_id}/documents?id={document_id}"
+        with httpx.Client(timeout=15, headers=self._headers) as client:
+            resp = client.get(url)
+            resp.raise_for_status()
+            result = self._check_response(resp.json())
+            docs = result.get('data', {}).get('docs', [])
+            return docs[0] if docs else {}
+
+    # ---------- Hybrid Search / Retrieval ----------
+
+    async def retrieve(
+        self,
+        question: str,
+        dataset_ids: list[str],
+        page: int = 1,
+        page_size: int = 10,
+        similarity_threshold: float = 0.2,
+        vector_similarity_weight: float = 0.3,
+        top_k: int = 1024,
+        rerank_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """混合檢索 (Hybrid Search) + 可選 Rerank
+
+        Args:
+            question: 查詢問題
+            dataset_ids: 目標知識庫 ID 列表
+            page / page_size: 分頁參數
+            similarity_threshold: 最低相似度門檻
+            vector_similarity_weight: 向量 vs 關鍵字 權重 (0~1，越大越偏向量)
+            top_k: 初篩範圍（擴大可提升召回率）
+            rerank_id: Rerank 模型 ID（傳 None 則不啟用重排序）
+        """
+        payload: Dict[str, Any] = {
+            "question": question,
+            "dataset_ids": dataset_ids,
+            "page": page,
+            "page_size": page_size,
+            "similarity_threshold": similarity_threshold,
+            "vector_similarity_weight": vector_similarity_weight,
+            "top_k": top_k,
+        }
+        if rerank_id is not None:
+            payload["rerank_id"] = rerank_id
+
+        url = f"{self.base_url}/retrieval"
+        async with httpx.AsyncClient(timeout=30) as client:
+            resp = await client.post(url, headers=self._headers, json=payload)
+            resp.raise_for_status()
+            return self._check_response(resp.json())
+
     # ---------- 工具方法 ----------
 
     @staticmethod

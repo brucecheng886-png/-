@@ -90,7 +90,7 @@ class Settings(BaseSettings):
     PORT: int = 8765
 
     # API 配置
-    DIFY_API_URL: str = "http://localhost:5001/v1"
+    DIFY_API_URL: str = "http://localhost:82/v1"
     DIFY_API_KEY: str = ""
 
     RAGFLOW_API_URL: str = "http://localhost:9380/api/v1"

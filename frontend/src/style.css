@@ -10,49 +10,54 @@
   box-sizing: border-box;
 }
 
-/* ===== 根元素樣式 (Nexus Universe Architecture) ===== */
+/* ===== 根元素樣式 (Enterprise Navy Architecture) ===== */
 :root {
-  /* Nexus 主題色彩 */
-  --primary-blue: #3b82f6;            /* Nexus Blue - 主要強調色 */
-  --accent-orange: #ff8e3c;           /* 數據/圖表 */
-  --success-green: #10b981;           /* 成功狀態 */
-  --warning-yellow: #f59e0b;          /* 警告 */
-  --danger-red: #ef4444;              /* 錯誤 */
+  /* 主要強調色 */
+  --primary-blue: #3b82f6;
+  --accent-blue: #60a5fa;
+  --accent-orange: #f59e0b;
+  --success-green: #22c55e;
+  --warning-yellow: #eab308;
+  --danger-red: #ef4444;
   
-  /* 語意化顏色變數 (Nexus 深藍主題 - 固定) */
-  --bg-main: #0c1029;                 /* 主背景 (深空藍) */
-  --bg-surface: #1a1d3a;              /* 面板表面 */
-  --bg-elevated: #252847;             /* 懸浮元素 */
-  --border-color: #2d3154;            /* 邊框 */
-  --text-primary: #e5e5e5;            /* 主要文字 */
-  --text-secondary: #9ca3af;          /* 次要文字 */
-  --text-tertiary: #6b7280;           /* 輔助文字 */
+  /* 企業級深色海軍藍 + 炭灰背景系統 */
+  --bg-main: #0b1222;                 /* 主背景 (深海軍藍) */
+  --bg-surface: #111a2e;              /* 面板表面 (炭灰藍) */
+  --bg-elevated: #182136;             /* 懸浮元素 */
+  --bg-card: rgba(17, 26, 46, 0.65);  /* 毛玻璃卡片 */
+  --border-color: rgba(148, 163, 184, 0.12); /* 細膩邊框 */
+  --text-primary: #e2e8f0;            /* 主要文字 (slate-200) */
+  --text-secondary: #94a3b8;          /* 次要文字 (slate-400) */
+  --text-tertiary: #64748b;           /* 輔助文字 (slate-500) */
   
-  /* Nexus 背景系統 */
-  --bg-void: #0a0e27;                 /* 最深層背景 */
+  /* 深層背景 */
+  --bg-void: #060d1a;                 /* 最深層背景 */
   --bg-primary: var(--bg-main);
-  --bg-hover: #2d3154;                /* Hover 狀態 */
+  --bg-hover: #1e2d47;                /* Hover 狀態 */
+  --bg-input: #0d1526;                /* 輸入框背景 */
   
   /* 文字色 */
-  --text-disabled: #4b5563;
+  --text-disabled: #475569;
   
-  /* Borders */
+  /* 邊框系統 */
   --border-primary: var(--border-color);
-  --border-subtle: #1f2337;
+  --border-subtle: rgba(148, 163, 184, 0.06);
   --border-focus: #3b82f6;
+  --border-glow: rgba(59, 130, 246, 0.25);
   
-  /* Nexus Shadow (霓虹陰影) */
-  --shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.5);
-  --shadow-md: 0 4px 20px rgba(0, 0, 0, 0.6);
-  --shadow-lg: 0 8px 40px rgba(0, 0, 0, 0.7);
-  --shadow-xl: 0 12px 60px rgba(0, 0, 0, 0.8);
+  /* 企業級陰影 (更柔和、更專業) */
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.3), 0 1px 2px rgba(0, 0, 0, 0.2);
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.35);
+  --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.4);
+  --shadow-xl: 0 16px 48px rgba(0, 0, 0, 0.5);
+  --shadow-glass: 0 8px 32px rgba(0, 0, 0, 0.25), inset 0 1px 0 rgba(255, 255, 255, 0.03);
   
-  /* 圓角 */
-  --radius-sm: 8px;
-  --radius-md: 12px;
-  --radius-lg: 16px;
-  --radius-xl: 24px;
-  --radius-2xl: 32px;
+  /* 圓角 (更克制的企業風) */
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+  --radius-xl: 18px;
+  --radius-2xl: 24px;
   
   /* 間距 */
   --spacing-xs: 4px;
@@ -78,7 +83,7 @@ body {
   font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 
                'Oxygen', 'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 
                'Helvetica Neue', sans-serif;
-  background: #0a0e27;                    /* Nexus 深藍背景 */
+  background: var(--bg-main);             /* 企業級深海軍藍 */
   color: var(--text-primary);
   overflow-x: hidden;
   font-weight: 400;
@@ -105,18 +110,18 @@ body::before {
 }
 
 ::-webkit-scrollbar-track {
-  background: var(--bg-surface);        /* 極夜黑軌道 */
-  border-radius: 0;                     /* 極簡風格，無圓角 */
+  background: rgba(11, 18, 34, 0.5);   /* 深海軍藍軌道 */
+  border-radius: 4px;
 }
 
 ::-webkit-scrollbar-thumb {
-  background: var(--border-primary);    /* 暗灰色滑塊 */
-  border-radius: 0;
+  background: rgba(148, 163, 184, 0.15); /* 柔和石板灰 */
+  border-radius: 4px;
   transition: background 0.2s ease;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #444444;                  /* Hover 稍亮 */
+  background: rgba(148, 163, 184, 0.25); /* Hover 稍亮 */
 }
 
 /* ===== 選取文字樣式 (Anytype Blue) ===== */
@@ -130,16 +135,36 @@ body::before {
   color: var(--text-primary);
 }
 
-/* ===== Matte Surface (啞光面板，無模糊) ===== */
+/* ===== 毛玻璃面板 (Enterprise Frosted Glass) ===== */
 .glass {
-  background: var(--bg-surface);        /* 純色，無透明度 */
+  background: var(--bg-card);
+  backdrop-filter: blur(24px) saturate(1.2);
+  -webkit-backdrop-filter: blur(24px) saturate(1.2);
   border: 1px solid var(--border-primary);
-  /* 移除 backdrop-filter，Anytype 使用純色 */
+  box-shadow: var(--shadow-glass);
 }
 
 .glass-dark {
-  background: var(--bg-void);           /* 更深的純黑 */
+  background: rgba(6, 13, 26, 0.8);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
   border: 1px solid var(--border-subtle);
+}
+
+/* 企業級毛玻璃卡片 */
+.glass-card {
+  background: var(--bg-card);
+  backdrop-filter: blur(24px) saturate(1.2);
+  -webkit-backdrop-filter: blur(24px) saturate(1.2);
+  border: 1px solid var(--border-primary);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-glass);
+  transition: border-color 0.3s ease, box-shadow 0.3s ease;
+}
+
+.glass-card:hover {
+  border-color: rgba(148, 163, 184, 0.18);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.04);
 }
 
 /* ===== 按鈕基礎樣式 ===== */
@@ -228,19 +253,21 @@ a:hover {
   text-underline-offset: 3px;
 }
 
-/* ===== 卡片樣式 (Matte Finish) ===== */
+/* ===== 卡片樣式 (Enterprise Frosted Glass Card) ===== */
 .card {
-  background: var(--bg-surface);        /* 純色面板 */
+  background: var(--bg-card);
+  backdrop-filter: blur(24px) saturate(1.2);
+  -webkit-backdrop-filter: blur(24px) saturate(1.2);
   border: 1px solid var(--border-primary);
-  border-radius: var(--radius-xl);      /* 更大圓角 */
+  border-radius: var(--radius-xl);
   padding: var(--spacing-lg);
-  box-shadow: var(--shadow-lg);         /* 懸浮陰影 */
-  transition: transform 0.2s ease, box-shadow 0.2s ease;
+  box-shadow: var(--shadow-glass);
+  transition: border-color 0.3s ease, box-shadow 0.3s ease;
 }
 
 .card:hover {
-  transform: translateY(-2px);          /* 輕微懸浮 */
-  box-shadow: var(--shadow-xl);
+  border-color: rgba(148, 163, 184, 0.18);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.35);
 }
 
 /* ===== 標題樣式 (Swiss Typography) ===== */
@@ -335,16 +362,175 @@ img {
 .el-table {
   --el-table-bg-color: transparent;
   --el-table-tr-bg-color: transparent;
-  --el-table-header-bg-color: rgba(59, 130, 246, 0.2);
-  --el-table-row-hover-bg-color: rgba(59, 130, 246, 0.15);
-  --el-table-border-color: rgba(255, 255, 255, 0.1);
+  --el-table-header-bg-color: rgba(59, 130, 246, 0.08);
+  --el-table-row-hover-bg-color: rgba(59, 130, 246, 0.06);
+  --el-table-border-color: var(--border-primary);
   --el-table-text-color: var(--text-primary);
-  --el-table-header-text-color: var(--text-primary);
+  --el-table-header-text-color: var(--text-secondary);
 }
 
 .el-message-box {
   --el-messagebox-title-color: var(--text-primary);
   --el-messagebox-content-color: var(--text-secondary);
+}
+
+/* ===== dark-message-box：統一暗色主題對話框 ===== */
+.dark-message-box {
+  background: var(--bg-surface) !important;
+  border: 1px solid var(--border-primary) !important;
+  border-radius: 14px !important;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.6) !important;
+  padding: 0 !important;
+  overflow: hidden;
+}
+
+/* 標題區 */
+.dark-message-box .el-message-box__header {
+  background: var(--bg-void);
+  padding: 20px 24px 12px;
+  border-bottom: 1px solid var(--border-primary);
+}
+
+.dark-message-box .el-message-box__title {
+  color: #e5e5e5 !important;
+  font-size: 16px;
+  font-weight: 600;
+  font-family: 'Inter', sans-serif;
+}
+
+.dark-message-box .el-message-box__headerbtn {
+  top: 16px;
+  right: 16px;
+}
+
+.dark-message-box .el-message-box__headerbtn .el-message-box__close {
+  color: #666 !important;
+  transition: color 0.2s;
+}
+
+.dark-message-box .el-message-box__headerbtn:hover .el-message-box__close {
+  color: #e5e5e5 !important;
+}
+
+/* 內容區 */
+.dark-message-box .el-message-box__content {
+  padding: 16px 24px 8px;
+  color: #888888 !important;
+  font-size: 14px;
+}
+
+.dark-message-box .el-message-box__message p {
+  color: #888888 !important;
+}
+
+/* 輸入框 */
+.dark-message-box .el-message-box__input {
+  padding-top: 12px;
+}
+
+.dark-message-box .el-message-box__input .el-input__wrapper {
+  background: var(--bg-input) !important;
+  border: 1px solid var(--border-primary) !important;
+  border-radius: 8px !important;
+  box-shadow: none !important;
+  padding: 8px 12px;
+  transition: border-color 0.2s;
+}
+
+.dark-message-box .el-message-box__input .el-input__wrapper:hover {
+  border-color: rgba(148, 163, 184, 0.25) !important;
+}
+
+.dark-message-box .el-message-box__input .el-input__wrapper.is-focus {
+  border-color: var(--primary-blue) !important;
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1) !important;
+}
+
+.dark-message-box .el-message-box__input .el-input__inner {
+  color: #e5e5e5 !important;
+  font-size: 14px;
+  font-family: 'Inter', sans-serif;
+}
+
+.dark-message-box .el-message-box__input .el-input__inner::placeholder {
+  color: #555555 !important;
+}
+
+/* 錯誤提示 */
+.dark-message-box .el-message-box__errormsg {
+  color: #ef4444 !important;
+  font-size: 12px;
+  padding-top: 4px;
+}
+
+/* 按鈕區 */
+.dark-message-box .el-message-box__btns {
+  padding: 12px 24px 20px;
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+/* 取消按鈕 */
+.dark-message-box .el-message-box__btns .el-button--default {
+  background: transparent !important;
+  border: 1px solid var(--border-primary) !important;
+  color: var(--text-secondary) !important;
+  border-radius: 8px !important;
+  padding: 8px 20px;
+  font-size: 14px;
+  transition: all 0.2s;
+}
+
+.dark-message-box .el-message-box__btns .el-button--default:hover {
+  border-color: rgba(148, 163, 184, 0.3) !important;
+  color: var(--text-primary) !important;
+  background: rgba(148, 163, 184, 0.06) !important;
+}
+
+/* 確認按鈕 */
+.dark-message-box .el-message-box__btns .el-button--primary {
+  background: var(--primary-blue) !important;
+  border: 1px solid rgba(59, 130, 246, 0.5) !important;
+  color: #ffffff !important;
+  border-radius: 8px !important;
+  padding: 8px 20px;
+  font-size: 14px;
+  font-weight: 500;
+  transition: all 0.2s;
+}
+
+.dark-message-box .el-message-box__btns .el-button--primary:hover {
+  background: #2563eb !important;
+}
+
+/* 遮罩層（Element Plus 會自動加上 overlay） */
+.el-overlay:has(.dark-message-box) {
+  background: rgba(0, 0, 0, 0.6) !important;
+  backdrop-filter: none !important;
+}
+
+/* 刪除確認 — 危險按鈕紅色 */
+.dark-message-box .el-message-box__btns .el-button--danger,
+.dark-message-box .el-message-box__btns .el-button--primary.el-button--danger {
+  background: #dc2626 !important;
+  border: none !important;
+  color: #ffffff !important;
+  border-radius: 8px !important;
+  padding: 8px 20px;
+  font-size: 14px;
+  font-weight: 500;
+  transition: all 0.2s;
+}
+
+.dark-message-box .el-message-box__btns .el-button--danger:hover,
+.dark-message-box .el-message-box__btns .el-button--primary.el-button--danger:hover {
+  background: #ef4444 !important;
+}
+
+/* 警告圖示 */
+.dark-message-box .el-message-box__status.el-icon {
+  color: #f59e0b !important;
 }
 
 /* ===== 響應式斷點 ===== */
@@ -404,26 +590,30 @@ img {
 
 /* ===== Anytype Space Utility Classes ===== */
 
-/* Matte Panel (啞光面板) */
+/* Matte Panel (企業級毛玻璃面板) */
 .panel-matte {
-  background: var(--bg-surface);
+  background: var(--bg-card);
+  backdrop-filter: blur(24px) saturate(1.2);
+  -webkit-backdrop-filter: blur(24px) saturate(1.2);
   border: 1px solid var(--border-primary);
   border-radius: var(--radius-xl);
-  box-shadow: var(--shadow-lg);
+  box-shadow: var(--shadow-glass);
 }
 
 /* Elevated Panel (懸浮面板) */
 .panel-elevated {
-  background: var(--bg-elevated);
+  background: rgba(24, 33, 54, 0.75);
+  backdrop-filter: blur(24px) saturate(1.2);
+  -webkit-backdrop-filter: blur(24px) saturate(1.2);
   border: 1px solid var(--border-primary);
   border-radius: var(--radius-2xl);
-  box-shadow: var(--shadow-xl);
-  transition: transform 0.2s ease, box-shadow 0.2s ease;
+  box-shadow: var(--shadow-lg);
+  transition: border-color 0.3s ease, box-shadow 0.3s ease;
 }
 
 .panel-elevated:hover {
-  transform: translateY(-4px);
-  box-shadow: 0 16px 80px rgba(0, 0, 0, 0.95);
+  border-color: rgba(148, 163, 184, 0.18);
+  box-shadow: 0 16px 56px rgba(0, 0, 0, 0.45);
 }
 
 /* Swiss Grid (瑞士網格) */
@@ -433,10 +623,10 @@ img {
   grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
 }
 
-/* Minimal Button (極簡按鈕) */
+/* Minimal Button (線條按鈕 — 企業風) */
 .btn-minimal {
   background: transparent;
-  border: 1px solid var(--border-primary);
+  border: 1px solid rgba(148, 163, 184, 0.2);
   color: var(--text-primary);
   padding: 10px 20px;
   border-radius: var(--radius-md);
@@ -447,14 +637,14 @@ img {
 }
 
 .btn-minimal:hover {
-  background: var(--bg-hover);
-  border-color: var(--text-secondary);
+  background: rgba(148, 163, 184, 0.08);
+  border-color: rgba(148, 163, 184, 0.3);
 }
 
-/* Primary Button (Anytype Blue) */
+/* Primary Button (實色主按鈕 — 企業藍) */
 .btn-primary {
   background: var(--primary-blue);
-  border: none;
+  border: 1px solid rgba(59, 130, 246, 0.5);
   color: #ffffff;
   padding: 10px 24px;
   border-radius: var(--radius-md);
@@ -462,13 +652,13 @@ img {
   letter-spacing: -0.01em;
   transition: all 0.2s ease;
   cursor: pointer;
-  box-shadow: 0 4px 12px rgba(51, 94, 234, 0.3);
+  box-shadow: 0 2px 8px rgba(59, 130, 246, 0.25);
 }
 
 .btn-primary:hover {
-  background: #2549d8;
-  box-shadow: 0 6px 20px rgba(51, 94, 234, 0.4);
-  transform: translateY(-1px);
+  background: #2563eb;
+  border-color: rgba(59, 130, 246, 0.7);
+  box-shadow: 0 4px 16px rgba(59, 130, 246, 0.35);
 }
 
 /* Accent Text (Anytype Orange for numbers) */
@@ -486,22 +676,42 @@ img {
   margin: var(--spacing-lg) 0;
 }
 
-/* Status Dot (狀態指示器) */
+/* Status Dot (狀態指示器 — 企業級) */
 .status-dot {
   display: inline-block;
   width: 8px;
   height: 8px;
   border-radius: 50%;
   margin-right: 8px;
+  position: relative;
 }
 
 .status-dot.online {
   background: var(--success-green);
-  box-shadow: 0 0 8px var(--success-green);
+  box-shadow: 0 0 6px rgba(34, 197, 94, 0.5), 0 0 12px rgba(34, 197, 94, 0.2);
+}
+
+.status-dot.online::after {
+  content: '';
+  position: absolute;
+  inset: -3px;
+  border-radius: 50%;
+  border: 1px solid rgba(34, 197, 94, 0.3);
+  animation: statusPulse 2s ease-in-out infinite;
+}
+
+.status-dot.warning {
+  background: var(--warning-yellow);
+  box-shadow: 0 0 6px rgba(234, 179, 8, 0.5);
 }
 
 .status-dot.offline {
   background: var(--text-disabled);
+}
+
+@keyframes statusPulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.4; transform: scale(1.5); }
 }
 
 /* Monospace Number Display */
@@ -514,48 +724,31 @@ img {
 }
 
 /* ===== 全域滾動條樣式 ===== */
-/* 通用滾動條 class（用於需要自定義滾動的容器） */
+/* 通用滾動條 class */
 .custom-scrollbar {
   scrollbar-width: thin;
-  scrollbar-color: rgba(139, 92, 246, 0.6) rgba(255, 255, 255, 0.05);
+  scrollbar-color: rgba(148, 163, 184, 0.15) transparent;
 }
 
-/* Webkit 瀏覽器滾動條（Chrome, Safari, Edge） */
+/* Webkit 滾動條 */
 .custom-scrollbar::-webkit-scrollbar {
-  width: 10px;
-  height: 10px;
+  width: 6px;
+  height: 6px;
 }
 
 .custom-scrollbar::-webkit-scrollbar-track {
-  background: rgba(255, 255, 255, 0.05);
-  border-radius: 5px;
+  background: transparent;
+  border-radius: 3px;
 }
 
 .custom-scrollbar::-webkit-scrollbar-thumb {
-  background: linear-gradient(180deg, #3b82f6, #8b5cf6);
-  border-radius: 5px;
+  background: rgba(148, 163, 184, 0.15);
+  border-radius: 3px;
   transition: all 0.3s ease;
 }
 
 .custom-scrollbar::-webkit-scrollbar-thumb:hover {
-  background: linear-gradient(180deg, #2563eb, #7c3aed);
-  box-shadow: 0 0 8px rgba(139, 92, 246, 0.5);
+  background: rgba(148, 163, 184, 0.25);
 }
 
-/* 淺色模式滾動條 */
-html.light .custom-scrollbar {
-  scrollbar-color: rgba(139, 92, 246, 0.4) rgba(0, 0, 0, 0.05);
-}
-
-html.light .custom-scrollbar::-webkit-scrollbar-track {
-  background: rgba(0, 0, 0, 0.05);
-}
-
-html.light .custom-scrollbar::-webkit-scrollbar-thumb {
-  background: linear-gradient(180deg, #60a5fa, #a78bfa);
-}
-
-html.light .custom-scrollbar::-webkit-scrollbar-thumb:hover {
-  background: linear-gradient(180deg, #3b82f6, #8b5cf6);
-  box-shadow: 0 0 8px rgba(139, 92, 246, 0.3);
-}
+/* 淡色模式滾動條 (留空以備未來擴展) */

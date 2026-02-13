@@ -8,59 +8,65 @@ export default {
   theme: {
     extend: {
       colors: {
-        // Nexus 霓虹藍風格配色
+        // Enterprise Navy + Charcoal 配色系統
         nexus: {
-          bg: '#0a0e27',           // 深藍黑背景
-          surface: '#1a1d3a',      // 卡片表面
-          elevated: '#252847',     // 懸浮元素
-          border: '#2d3154',       // 邊框
-          glow: '#3b82f6',         // 電藍光暈
+          bg: '#0b1222',           // 深海軍藍主背景
+          surface: '#111a2e',      // 炭灰藍表面
+          elevated: '#182136',     // 懸浮元素
+          border: 'rgba(148, 163, 184, 0.12)', // 細膩邊框
+          glow: '#3b82f6',         // 聚焦光暈
         },
-        neon: {
-          blue: '#3b82f6',         // 主要霓虹藍
-          purple: '#8b5cf6',       // 紫色
-          cyan: '#06b6d4',         // 青色
-          pink: '#ec4899',         // 粉紅
-          indigo: '#6366f1',       // 靛藍
+        navy: {
+          50: '#eef2ff',
+          100: '#dbe4ff',
+          200: '#bfccfe',
+          300: '#93a5fd',
+          400: '#6070fa',
+          500: '#3b82f6',         // 主要企業藍
+          600: '#2563eb',
+          700: '#1d4ed8',
+          800: '#1e3a5f',
+          900: '#0b1222',         // 最深
         },
         primary: {
-          DEFAULT: '#3b82f6',      // 電藍
+          DEFAULT: '#3b82f6',
           dark: '#2563eb',
           light: '#60a5fa',
         },
         accent: {
-          orange: '#ff8e3c',       
-          green: '#10b981',        
+          orange: '#f59e0b',
+          green: '#22c55e',
+          teal: '#14b8a6',
         },
-        
-        // 語意化顏色
+
+        // 語意化顏色 (CSS variable bridge)
         main: 'var(--bg-main)',
         surface: 'var(--bg-surface)',
         'border-color': 'var(--border-color)',
         'txt-main': 'var(--text-primary)',
         'txt-sec': 'var(--text-secondary)',
-        
+
         // 深色主題色系
         void: {
           black: '#000000',
-          primary: '#0a0e27',      // Nexus 背景
-          surface: '#1a1d3a',
-          elevated: '#252847',
-          hover: '#2d3154',
+          primary: '#060d1a',
+          surface: '#0b1222',
+          elevated: '#111a2e',
+          hover: '#1e2d47',
         },
         text: {
-          primary: '#e5e5e5',
-          secondary: '#9ca3af',
-          tertiary: '#6b7280',
-          disabled: '#4b5563',
+          primary: '#e2e8f0',
+          secondary: '#94a3b8',
+          tertiary: '#64748b',
+          disabled: '#475569',
         },
         border: {
-          primary: '#2d3154',
-          subtle: '#1f2337',
+          primary: 'rgba(148, 163, 184, 0.12)',
+          subtle: 'rgba(148, 163, 184, 0.06)',
           focus: '#3b82f6',
         },
-        success: '#10b981',
-        warning: '#f59e0b',
+        success: '#22c55e',
+        warning: '#eab308',
         danger: '#ef4444',
       },
       fontFamily: {
@@ -80,13 +86,15 @@ export default {
         tight: '-0.01em',
       },
       boxShadow: {
-        'void-sm': '0 2px 8px rgba(0, 0, 0, 0.5)',
-        'void-md': '0 4px 20px rgba(0, 0, 0, 0.6)',
-        'void-lg': '0 8px 40px rgba(0, 0, 0, 0.8)',
-        'void-xl': '0 12px 60px rgba(0, 0, 0, 0.9)',
-        'neon-blue': '0 0 20px rgba(59, 130, 246, 0.5), 0 0 40px rgba(59, 130, 246, 0.3)',
-        'neon-purple': '0 0 20px rgba(139, 92, 246, 0.5), 0 0 40px rgba(139, 92, 246, 0.3)',
-        'neon-cyan': '0 0 20px rgba(6, 182, 212, 0.5), 0 0 40px rgba(6, 182, 212, 0.3)',
+        'void-sm': '0 1px 3px rgba(0, 0, 0, 0.3), 0 1px 2px rgba(0, 0, 0, 0.2)',
+        'void-md': '0 4px 12px rgba(0, 0, 0, 0.35)',
+        'void-lg': '0 8px 24px rgba(0, 0, 0, 0.4)',
+        'void-xl': '0 16px 48px rgba(0, 0, 0, 0.5)',
+        'glass': '0 8px 32px rgba(0, 0, 0, 0.25), inset 0 1px 0 rgba(255, 255, 255, 0.03)',
+        'enterprise': '0 4px 16px rgba(0, 0, 0, 0.3)',
+        'enterprise-lg': '0 8px 32px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.03)',
+        'neon-blue': '0 0 12px rgba(59, 130, 246, 0.3), 0 0 24px rgba(59, 130, 246, 0.15)',
+        'status-green': '0 0 6px rgba(34, 197, 94, 0.5), 0 0 12px rgba(34, 197, 94, 0.2)',
       },
       animation: {
         'fade-in': 'fadeIn 0.3s ease-out',

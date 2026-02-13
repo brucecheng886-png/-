@@ -221,17 +221,49 @@
             <label for="ragflow-upload" class="text-sm text-text-secondary">Upload to RAGFlow dataset</label>
           </div>
 
+          <Transition name="dropdown">
           <div v-if="useRAGFlow">
-            <select
-              v-model="selectedDataset"
-              class="w-full px-4 py-2.5 bg-black/20 border border-white/10 rounded-lg text-white focus:outline-none focus:border-neon-blue transition-colors"
-            >
-              <option value="" disabled>Choose a dataset...</option>
-              <option v-for="dataset in ragflowDatasets" :key="dataset.id" :value="dataset.id">
-                {{ dataset.name }}
-              </option>
-            </select>
+            <div class="relative" ref="nexusDatasetDropdownRef">
+              <button
+                @click="nexusDatasetDropdownOpen = !nexusDatasetDropdownOpen"
+                class="w-full px-4 py-2.5 bg-black/20 border border-white/10 rounded-lg text-left focus:outline-none focus:border-neon-blue transition-all flex items-center justify-between"
+                :class="selectedDataset ? 'text-white' : 'text-text-secondary'"
+              >
+                <span v-if="selectedDataset">
+                  {{ ragflowDatasets.find(d => d.id === selectedDataset)?.name || selectedDataset }}
+                </span>
+                <span v-else>Choose a dataset...</span>
+                <svg 
+                  class="w-4 h-4 flex-shrink-0 transition-transform duration-300 ease-out opacity-60" 
+                  :class="{ 'rotate-180': nexusDatasetDropdownOpen }" 
+                  viewBox="0 0 12 12" fill="currentColor">
+                  <path d="M6 8L2 4h8L6 8z"/>
+                </svg>
+              </button>
+              <Transition name="dropdown">
+                <div 
+                  v-show="nexusDatasetDropdownOpen" 
+                  class="absolute left-0 right-0 mt-1 bg-[#1a1f2e] border border-white/10 rounded-lg shadow-2xl shadow-black/40 overflow-hidden z-50"
+                >
+                  <div class="max-h-48 overflow-y-auto custom-scrollbar py-1">
+                    <div 
+                      v-for="dataset in ragflowDatasets" 
+                      :key="dataset.id" 
+                      class="px-4 py-2.5 text-sm cursor-pointer transition-all duration-150 hover:bg-white/10"
+                      :class="selectedDataset === dataset.id ? 'text-blue-400 bg-blue-500/10 font-semibold' : 'text-gray-300'"
+                      @click="selectedDataset = dataset.id; nexusDatasetDropdownOpen = false"
+                    >
+                      {{ dataset.name }}
+                    </div>
+                    <div v-if="ragflowDatasets.length === 0" class="px-4 py-2.5 text-sm text-gray-500 text-center">
+                      No datasets available
+                    </div>
+                  </div>
+                </div>
+              </Transition>
+            </div>
           </div>
+          </Transition>
         </div>
 
         <!-- 對話框操作 -->
@@ -256,11 +288,10 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onActivated, watch } from 'vue';
+import { ref, computed, onMounted, onActivated, onBeforeUnmount, watch, Transition } from 'vue';
 import { useRouter, useRoute } from 'vue-router';
 import { useGraphStore } from '../stores/graphStore';
 import { ElMessage } from 'element-plus';
-import { authFetch } from '../services/apiClient';
 import draggable from 'vuedraggable';
 
 const router = useRouter();
@@ -275,7 +306,9 @@ const uploadedFile = ref(null);
 const fileInputRef = ref(null);
 const useRAGFlow = ref(false);
 const selectedDataset = ref('');
-const ragflowDatasets = ref([]);
+const ragflowDatasets = computed(() => graphStore.ragflowDatasets);
+const nexusDatasetDropdownOpen = ref(false);
+const nexusDatasetDropdownRef = ref(null);
 
 const newGraphData = ref({
   name: '',
@@ -317,8 +350,8 @@ const graphList = computed(() => {
   if (graphStore.nodeCount > 0) {
     return [{
       id: graphStore.currentGraphId,
-      name: '主腦圖譜',
-      icon: '🧠',
+      name: `圖譜 ${graphStore.currentGraphId}`,
+      icon: '🌐',
       nodeCount: graphStore.nodeCount,
       linkCount: graphStore.linkCount,
       lastUpdate: formatLastUpdate(graphStore.lastUpdate),
@@ -433,18 +466,6 @@ const handleCreateGraph = async () => {
   }
 };
 
-const fetchRAGFlowDatasets = async () => {
-  try {
-    const response = await authFetch('/api/ragflow/datasets');
-    const data = await response.json();
-    if (data && data.code === 0) {
-      ragflowDatasets.value = data.data || [];
-    }
-  } catch (error) {
-    console.warn('⚠️ 獲取 RAGFlow 數據集失敗:', error);
-  }
-};
-
 // 🌟 統一的數據載入函數
 const loadGraphData = async (forceRefresh = false) => {
   // ✨ 優先加載圖譜元數據列表（確保卡片顯示）
@@ -458,8 +479,19 @@ const loadGraphData = async (forceRefresh = false) => {
 
 onMounted(async () => {
   await loadGraphData();
-  await fetchRAGFlowDatasets();
+  await graphStore.fetchRAGFlowDatasets();
+  document.addEventListener('click', handleNexusClickOutside);
 });
+
+onBeforeUnmount(() => {
+  document.removeEventListener('click', handleNexusClickOutside);
+});
+
+const handleNexusClickOutside = (e) => {
+  if (nexusDatasetDropdownRef.value && !nexusDatasetDropdownRef.value.contains(e.target)) {
+    nexusDatasetDropdownOpen.value = false;
+  }
+};
 
 // 🔄 監聽頁面激活（從其他頁面返回時重新載入）
 onActivated(async () => {
@@ -606,5 +638,26 @@ watch(
   box-shadow: 0 0 30px rgba(59, 130, 246, 0.3), 0 8px 32px rgba(0, 0, 0, 0.5);
   border-color: rgba(59, 130, 246, 0.5) !important;
   transform: scale(1.02);
+}
+
+/* Dropdown animation */
+.dropdown-enter-active {
+  transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.dropdown-leave-active {
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+.dropdown-enter-from {
+  opacity: 0;
+  transform: translateY(-8px) scaleY(0.95);
+}
+.dropdown-leave-to {
+  opacity: 0;
+  transform: translateY(-4px) scaleY(0.98);
+}
+.dropdown-enter-to,
+.dropdown-leave-from {
+  opacity: 1;
+  transform: translateY(0) scaleY(1);
 }
 </style>

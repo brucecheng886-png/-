@@ -137,9 +137,10 @@ onMounted(() => {
 .top-bar {
   height: 56px;
   min-height: 56px;
-  background: rgba(26, 29, 58, 0.95);
-  backdrop-filter: blur(10px);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  background: rgba(11, 18, 34, 0.85);
+  backdrop-filter: blur(20px) saturate(1.2);
+  -webkit-backdrop-filter: blur(20px) saturate(1.2);
+  border-bottom: 1px solid rgba(148, 163, 184, 0.08);
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -154,13 +155,13 @@ onMounted(() => {
 .ai-copilot-btn {
   display: flex; align-items: center; gap: 8px;
   padding: 8px 18px;
-  background: #2563eb;
-  border: 1px solid #3b82f6; border-radius: 10px;
+  background: var(--primary-blue);
+  border: 1px solid rgba(59, 130, 246, 0.5); border-radius: 10px;
   color: #ffffff; font-size: 14px; font-weight: 600;
-  cursor: pointer; transition: all 0.3s ease;
+  cursor: pointer; transition: all 0.2s ease;
 }
-.ai-copilot-btn:hover { background: #1d4ed8; transform: translateY(-1px); }
-.ai-copilot-btn.active { background: #1e40af; box-shadow: 0 0 20px rgba(59, 130, 246, 0.5); border-color: #60a5fa; }
+.ai-copilot-btn:hover { background: #2563eb; }
+.ai-copilot-btn.active { background: #1d4ed8; box-shadow: 0 0 12px rgba(59, 130, 246, 0.35); border-color: #60a5fa; }
 
 .ai-icon { font-size: 18px; }
 .ai-label { font-size: 13px; letter-spacing: 0.02em; }
