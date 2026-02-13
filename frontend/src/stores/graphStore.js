@@ -111,6 +111,18 @@ export const useGraphStore = defineStore('graph', () => {
    */
   const importedFiles = ref([]);
   
+  // ===== Excel 匯入進度追蹤 =====
+  const importTaskId = ref(null);
+  const importStatus = ref('idle');  // idle | running | done | error
+  const importProgress = ref(0);     // 0-100
+  const importDetail = ref({
+    total: 0, completed: 0, failed: 0, filename: '',
+    eta_seconds: null, rows_per_sec: 0,
+    batch_size: 0, total_batches: 0, completed_batches: 0,
+    fast_mode: false, elapsed_seconds: null,
+  });
+  let _importPollTimer = null;
+  
   /**
    * 當前選中的圖譜 ID（從 localStorage 恢復，確保跨頁面一致）
    * @type {import('vue').Ref<number|string>}
@@ -725,94 +737,181 @@ export const useGraphStore = defineStore('graph', () => {
     try {
       console.log('📥 開始匯入檔案:', file.name, '模式:', mode);
       
-      // 創建 FormData
-      const formData = new FormData();
-      formData.append('file', file);
-      formData.append('mode', mode); // 添加模式參數
+      const ext = file.name.split('.').pop()?.toLowerCase();
+      const isExcel = ext === 'xlsx' || ext === 'csv' || ext === 'xls';
       
-      // TODO: 實際調用後端 API
-      // const response = await fetch('/api/graph/import/file', {
-      //   method: 'POST',
-      //   body: formData
-      // });
-      // const data = await response.json();
-      
-      // 模擬 API 回應
-      if (mode === 'multi' && file.name.endsWith('.xlsx')) {
-        // 多節點模式：模擬創建多個節點
-        console.log('📋 多節點模式：模擬解析 Excel 檔案');
-        
-        // 模擬創建 3 個節點作為示例
-        const mockRowCount = 3;
-        for (let i = 1; i <= mockRowCount; i++) {
-          const newNode = {
-            id: `excel_row_${Date.now()}_${i}`,
-            name: `${file.name} - 第 ${i} 列`,
-            label: `Excel 資料列 ${i}`,
-            group: 'resource',
-            type: 'Resource',
-            color: '#10b981',
-            size: 1.0,
-            timestamp: Date.now(),
-            description: `從 ${file.name} 的第 ${i} 列解析`
-          };
-          
-          addNode(newNode);
-          
-          // 添加到匯入檔案列表
-          importedFiles.value.unshift({
-            id: Date.now() + i,
-            nodeId: newNode.id,
-            name: `第 ${i} 列 - ${file.name}`,
-            ext: 'ROW',
-            status: `Excel 第 ${i} 列`,
-            timestamp: Date.now()
-          });
-        }
-        
-        console.log(`✅ Excel 匯入成功: ${file.name} → ${mockRowCount} 個節點`);
-        return { nodeCount: mockRowCount };
-        
-      } else {
-        // 單一節點模式
-        const newNode = {
-          id: `file_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-          name: file.name,
-          label: file.name,
-          group: 'file',
-          type: file.type || 'document',
-          fileType: file.name.split('.').pop()?.toLowerCase(),
-          color: '#3b82f6',
-          size: 1.2,
-          timestamp: Date.now(),
-          aiStatus: 'linked',
-          description: `從檔案 ${file.name} 匯入`
-        };
-        
-        // 添加節點到圖譜
-        addNode(newNode);
-        
-        // 添加到匯入檔案列表
-        importedFiles.value.unshift({
-          id: Date.now(),
-          nodeId: newNode.id,
-          name: file.name,
-          ext: file.name.split('.').pop()?.toUpperCase() || 'FILE',
-          status: 'AI 已關聯',
-          timestamp: Date.now()
-        });
-        
-        // 自動選中新節點
-        selectedNode.value = newNode;
-        
-        console.log('✅ 檔案匯入成功:', file.name, '→', newNode.id);
-        
-        return newNode;
+      // Excel/CSV → 使用背景任務 API (支援 3000+ 筆)
+      if (mode === 'multi' && isExcel) {
+        return await importExcelAsync(file);
       }
+      
+      // 單一節點模式 — 本地建立節點
+      const newNode = {
+        id: `file_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+        name: file.name,
+        label: file.name,
+        group: 'file',
+        type: file.type || 'document',
+        fileType: ext,
+        color: '#3b82f6',
+        size: 1.2,
+        timestamp: Date.now(),
+        aiStatus: 'linked',
+        description: `從檔案 ${file.name} 匯入`
+      };
+      
+      addNode(newNode);
+      importedFiles.value.unshift({
+        id: Date.now(),
+        nodeId: newNode.id,
+        name: file.name,
+        ext: ext?.toUpperCase() || 'FILE',
+        status: 'AI 已關聯',
+        timestamp: Date.now()
+      });
+      selectedNode.value = newNode;
+      console.log('✅ 檔案匯入成功:', file.name, '→', newNode.id);
+      return newNode;
     } catch (err) {
       console.error('❌ 檔案匯入失敗:', err);
       error.value = '檔案匯入失敗: ' + err.message;
       throw err;
+    }
+  };
+
+  /**
+   * 非同步 Excel 匯入 — 使用背景任務 API
+   * POST 檔案 → 取得 task_id → 輪詢進度 → 完成後加入節點
+   * @param {File} file - Excel/CSV 檔案
+   * @returns {Promise<Object>} { task_id, total }
+   */
+  const importExcelAsync = async (file) => {
+    cancelImportPoll(); // 取消上一次的輪詢
+    
+    importStatus.value = 'running';
+    importProgress.value = 0;
+    importDetail.value = {
+      total: 0, completed: 0, failed: 0, filename: file.name,
+      eta_seconds: null, rows_per_sec: 0,
+      batch_size: 0, total_batches: 0, completed_batches: 0,
+      fast_mode: false, elapsed_seconds: null,
+    };
+    error.value = null;
+    
+    try {
+      console.log('📤 上傳 Excel 到背景任務 API:', file.name);
+      
+      const formData = new FormData();
+      formData.append('file', file);
+      
+      const result = await apiPostForm('/api/graph/import/excel', formData);
+      
+      if (!result.task_id) {
+        throw new Error('伺服器未回傳 task_id');
+      }
+      
+      importTaskId.value = result.task_id;
+      importDetail.value.total = result.total || 0;
+      
+      console.log(`✅ 匯入任務已啟動: task_id=${result.task_id}, total=${result.total}`);
+      
+      // 開始輪詢進度
+      pollImportStatus(result.task_id);
+      
+      return result;
+    } catch (err) {
+      importStatus.value = 'error';
+      error.value = '匯入啟動失敗: ' + err.message;
+      console.error('❌ importExcelAsync 失敗:', err);
+      throw err;
+    }
+  };
+
+  /**
+   * 輪詢匯入任務進度
+   * @param {string} taskId - 任務 ID
+   */
+  const pollImportStatus = (taskId) => {
+    cancelImportPoll();
+    
+    const POLL_INTERVAL = 3000; // 3 秒
+    
+    const poll = async () => {
+      try {
+        const data = await apiGet(`/api/graph/import/status/${taskId}`);
+        
+        importProgress.value = data.progress_pct || 0;
+        importDetail.value = {
+          total: data.total || 0,
+          completed: data.completed || 0,
+          failed: data.failed || 0,
+          filename: data.filename || '',
+          // v5.0 新欄位
+          eta_seconds: data.eta_seconds ?? null,
+          rows_per_sec: data.rows_per_sec || 0,
+          batch_size: data.batch_size || 0,
+          total_batches: data.total_batches || 0,
+          completed_batches: data.completed_batches || 0,
+          fast_mode: data.fast_mode || false,
+          elapsed_seconds: data.elapsed_seconds ?? null,
+        };
+        
+        if (data.status === 'done') {
+          importStatus.value = 'done';
+          cancelImportPoll();
+          
+          // 將結果節點加入圖譜
+          if (Array.isArray(data.nodes) && data.nodes.length > 0) {
+            const stats = addBatchNodes(data.nodes);
+            console.log(`🎉 Excel 匯入完成: ${stats.success} 個節點已加入圖譜`);
+            
+            // 加入匯入檔案列表
+            importedFiles.value.unshift({
+              id: Date.now(),
+              nodeId: data.nodes[0]?.id,
+              name: data.filename || 'Excel 匯入',
+              ext: 'XLSX',
+              status: `✅ ${stats.success} 個節點`,
+              timestamp: Date.now()
+            });
+          }
+          
+          // 5 秒後自動重置進度狀態
+          setTimeout(() => {
+            if (importStatus.value === 'done') {
+              importStatus.value = 'idle';
+              importProgress.value = 0;
+            }
+          }, 5000);
+          
+        } else if (data.status === 'error') {
+          importStatus.value = 'error';
+          error.value = data.error || '匯入任務失敗';
+          cancelImportPoll();
+          
+        } else {
+          // 繼續輪詢
+          _importPollTimer = setTimeout(poll, POLL_INTERVAL);
+        }
+        
+      } catch (err) {
+        console.error('⚠️ 輪詢進度失敗:', err);
+        // 網路錯誤不中斷輪詢，繼續嘗試
+        _importPollTimer = setTimeout(poll, POLL_INTERVAL * 2);
+      }
+    };
+    
+    // 立即執行第一次
+    _importPollTimer = setTimeout(poll, 1000);
+  };
+
+  /**
+   * 取消匯入進度輪詢
+   */
+  const cancelImportPoll = () => {
+    if (_importPollTimer) {
+      clearTimeout(_importPollTimer);
+      _importPollTimer = null;
     }
   };
   
@@ -1286,6 +1385,12 @@ export const useGraphStore = defineStore('graph', () => {
     importedFiles,
     currentGraphId,
     
+    // 匯入進度狀態
+    importTaskId,
+    importStatus,
+    importProgress,
+    importDetail,
+    
     // 跨圖譜狀態
     graphMetadataList,
     aiLinks,
@@ -1329,6 +1434,8 @@ export const useGraphStore = defineStore('graph', () => {
     deleteNode,
     setFilterMode,
     importFile,
+    importExcelAsync,
+    cancelImportPoll,
     importMultipleFiles,
     
     // 跨圖譜 Actions

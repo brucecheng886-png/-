@@ -1,5 +1,5 @@
 <script setup>
-import { ref } from 'vue';
+import { ref, computed } from 'vue';
 import { useGraphStore } from '../stores/graphStore';
 import { useLayoutStore } from '../stores/layoutStore';
 import { ElMessage } from 'element-plus';
@@ -31,7 +31,11 @@ async function onFileChange(event) {
     await graphStore.importFile(file, importMode.value);
   }
   
-  ElMessage.success(`成功匯入 ${files.length} 個檔案`);
+  if (importMode.value === 'single') {
+    ElMessage.success(`成功匯入 ${files.length} 個檔案`);
+  } else {
+    ElMessage.info('Excel 匯入任務已啟動，請等待處理完成');
+  }
 }
 
 // 拖放處理
@@ -49,7 +53,11 @@ async function handleDrop(event) {
     await graphStore.importFile(file, importMode.value);
   }
   
-  ElMessage.success(`成功匯入 ${files.length} 個檔案`);
+  if (importMode.value === 'single') {
+    ElMessage.success(`成功匯入 ${files.length} 個檔案`);
+  } else {
+    ElMessage.info('Excel 匯入任務已啟動');
+  }
 }
 
 // 點擊檔案卡片
@@ -102,6 +110,66 @@ function getFileColor(ext) {
 function isNodeSelected(file) {
   return graphStore.selectedNode?.id === file.nodeId;
 }
+
+// 計算進度條文字
+const progressText = computed(() => {
+  const d = graphStore.importDetail;
+  if (graphStore.importStatus === 'running') {
+    return `處理中 ${d.completed}/${d.total} 筆`;
+  }
+  if (graphStore.importStatus === 'done') {
+    const elapsed = d.elapsed_seconds ? ` (${formatTime(d.elapsed_seconds)})` : '';
+    return `✅ 完成！共 ${d.completed} 筆 (失敗 ${d.failed})${elapsed}`;
+  }
+  if (graphStore.importStatus === 'error') {
+    return `❌ 匯入失敗`;
+  }
+  return '';
+});
+
+// ETA 格式化
+const etaText = computed(() => {
+  const d = graphStore.importDetail;
+  if (graphStore.importStatus !== 'running') return '';
+  const parts = [];
+  if (d.eta_seconds != null && d.eta_seconds > 0) {
+    parts.push(`預估剩餘 ${formatTime(d.eta_seconds)}`);
+  }
+  if (d.rows_per_sec > 0) {
+    parts.push(`${d.rows_per_sec} 筆/秒`);
+  }
+  if (d.total_batches > 0) {
+    parts.push(`批次 ${d.completed_batches}/${d.total_batches}`);
+  }
+  return parts.join(' · ');
+});
+
+// 大量模式標籤
+const modeLabel = computed(() => {
+  const d = graphStore.importDetail;
+  if (!d.fast_mode) return '';
+  return '⚡ 快速模式';
+});
+
+// 時間格式化
+function formatTime(seconds) {
+  if (seconds < 60) return `${Math.round(seconds)}s`;
+  const m = Math.floor(seconds / 60);
+  const s = Math.round(seconds % 60);
+  return `${m}m${s}s`;
+}
+
+// 進度條顏色
+const progressBarClass = computed(() => {
+  if (graphStore.importStatus === 'done') return 'bg-emerald-500';
+  if (graphStore.importStatus === 'error') return 'bg-red-500';
+  return 'bg-blue-500';
+});
+
+// 是否顯示進度區塊
+const showProgress = computed(() => {
+  return ['running', 'done', 'error'].includes(graphStore.importStatus);
+});
 </script>
 
 <template>
@@ -153,9 +221,66 @@ function isNodeSelected(file) {
           📝 <strong>單一節點模式：</strong>將檔案作為一個節點導入圖譜
         </span>
         <span v-else>
-          📋 <strong>多個節點模式：</strong>讀取 Excel 檔案，每一列資料創建獨立節點
+          📋 <strong>多個節點模式：</strong>讀取 Excel 檔案，每一列資料創建獨立節點（支援 3000+ 筆）
         </span>
       </p>
+    </div>
+    
+    <!-- ===== Excel 匯入進度條 ===== -->
+    <div 
+      v-if="showProgress" 
+      class="mb-4 px-3 py-3 rounded-lg border transition-all duration-300"
+      :class="{
+        'bg-blue-900/20 border-blue-700': graphStore.importStatus === 'running',
+        'bg-emerald-900/20 border-emerald-700': graphStore.importStatus === 'done',
+        'bg-red-900/20 border-red-700': graphStore.importStatus === 'error',
+      }"
+    >
+      <!-- 標題行 -->
+      <div class="flex items-center justify-between mb-2">
+        <span class="text-xs font-medium" :class="{
+          'text-blue-300': graphStore.importStatus === 'running',
+          'text-emerald-300': graphStore.importStatus === 'done',
+          'text-red-300': graphStore.importStatus === 'error',
+        }">
+          {{ graphStore.importDetail.filename || 'Excel 匯入' }}
+        </span>
+        <span class="text-[10px] font-mono" :class="{
+          'text-blue-400': graphStore.importStatus === 'running',
+          'text-emerald-400': graphStore.importStatus === 'done',
+          'text-red-400': graphStore.importStatus === 'error',
+        }">
+          {{ Math.round(graphStore.importProgress) }}%
+        </span>
+      </div>
+      
+      <!-- 進度條 -->
+      <div class="w-full h-2 bg-white/10 rounded-full overflow-hidden mb-2">
+        <div 
+          class="h-full rounded-full transition-all duration-500 ease-out"
+          :class="progressBarClass"
+          :style="{ width: graphStore.importProgress + '%' }"
+        ></div>
+      </div>
+      
+      <!-- 狀態文字 -->
+      <p class="text-[10px] text-gray-400">
+        {{ progressText }}
+      </p>
+      
+      <!-- ETA + 吞吐量 + 批次 -->
+      <p v-if="etaText" class="text-[10px] text-gray-500 mt-0.5">
+        {{ etaText }}
+      </p>
+      
+      <!-- 跑步中的動畫指示器 -->
+      <div v-if="graphStore.importStatus === 'running'" class="flex items-center gap-1 mt-1">
+        <span class="inline-block w-1.5 h-1.5 bg-blue-400 rounded-full animate-pulse"></span>
+        <span class="text-[10px] text-blue-400">
+          AI 正在分析資料...
+          <span v-if="modeLabel" class="ml-1 text-amber-400">{{ modeLabel }}</span>
+        </span>
+      </div>
     </div>
     
     <!-- 上傳區域 -->
@@ -164,6 +289,7 @@ function isNodeSelected(file) {
       @dragover="handleDragOver"
       @drop="handleDrop"
       class="border-2 border-dashed border-white/20 rounded-lg p-4 flex flex-col items-center justify-center cursor-pointer hover:bg-blue-900/20 hover:border-blue-400 transition-colors mb-4"
+      :class="{ 'opacity-50 pointer-events-none': graphStore.importStatus === 'running' }"
     >
       <span class="text-2xl mb-1">＋</span>
       <span class="text-xs text-gray-400">點擊或拖放 PDF, Excel, PPT</span>
@@ -225,5 +351,22 @@ function isNodeSelected(file) {
 <style scoped>
 .import-dashboard {
   position: relative;
+}
+
+/* 進度條閃爍動畫 */
+@keyframes progress-shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+.bg-blue-500 {
+  background-image: linear-gradient(
+    90deg,
+    rgba(59, 130, 246, 0.8) 0%,
+    rgba(96, 165, 250, 1) 50%,
+    rgba(59, 130, 246, 0.8) 100%
+  );
+  background-size: 200% 100%;
+  animation: progress-shimmer 2s ease-in-out infinite;
 }
 </style>
