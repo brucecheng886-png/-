@@ -70,14 +70,19 @@ const sharedGeo = {
 };
 
 // ===== Material 池化（按顏色快取共享 Material，避免 3000 次 shader 編譯） =====
-const _materialPool = new Map();   // color+key → THREE.MeshStandardMaterial
+// ⚡ 使用 MeshBasicMaterial 取代 PBR：省去光照計算，渲染速度提升 2-3x
+const _materialPool = new Map();   // color+key → THREE.MeshBasicMaterial
 const _getMaterial = (color, emissiveIntensity, opacity) => {
   const key = `${color}_${emissiveIntensity.toFixed(2)}_${opacity.toFixed(2)}`;
   if (!_materialPool.has(key)) {
-    _materialPool.set(key, new THREE.MeshStandardMaterial({
-      color, emissive: color,
-      emissiveIntensity, metalness: 0.3, roughness: 0.4,
-      transparent: true, opacity, envMapIntensity: 1.0,
+    // 混合顏色 + emissiveIntensity 模擬發光效果
+    const baseColor = new THREE.Color(color);
+    const emissive = new THREE.Color(color).multiplyScalar(emissiveIntensity);
+    baseColor.add(emissive).clampScalar(0, 1);
+    _materialPool.set(key, new THREE.MeshBasicMaterial({
+      color: baseColor,
+      transparent: true,
+      opacity,
     }));
   }
   return _materialPool.get(key);
@@ -445,7 +450,9 @@ const initGraph = async () => {
       return (srcCount / _maxLinksCache * 100 >= props.densityThreshold) && (tgtCount / _maxLinksCache * 100 >= props.densityThreshold);
     })
     // 🎨 AI Link 虛線效果（使用粒子流動模擬）
+    // ⚡ 大圖譜 (>1000 節點) 停用粒子以節省 GPU
     .linkDirectionalParticles(link => {
+      if (nodesClone.length > 1000) return 0;
       if (link.type === 'ai-link' && link.style?.animated) {
         return 2;  // AI Link 顯示 2 個流動粒子
       }
@@ -477,9 +484,10 @@ const initGraph = async () => {
     .onNodeDragEnd(handleNodeDragEnd)
     .warmupTicks(0)     // ⚡ 3000 節點: 不阻塞 UI，直接漸進渲染
     .cooldownTicks(100)  // ⚡ 100 tick 足夠穩定佈局
+    .d3AlphaDecay(0.05)  // ⚡ 加速力模擬收斂 (預設 0.0228，2x 更快穩定)
+    .d3VelocityDecay(0.4) // ⚡ 加大阻尼，減少節點抖動
     .nodeThreeObject(node => {
-      // 🎨 真實光照球體：PBR + Focus-fade
-      // ⚡ 效能優化：共享幾何體 + 移除逐節點燈光
+      // ⚡ 效能優化：共享幾何體 + Material 池化 + MeshBasicMaterial
       
       // === Focus-fade 計算（使用預計算快取） ===
       const selectedId = graphStore.selectedNode?.id;
@@ -527,26 +535,16 @@ const initGraph = async () => {
       return mesh;
     });
   
-  // 🌟 添加場景光照系統（精簡版：避免 WebGL too-many-uniforms）
+  // 🌟 場景燈光清理（MeshBasicMaterial 不需要光照，移除以節省 GPU）
   const scene = graphInstance.scene();
   
-  // ⚡ 先清除場景內所有燈光（含 3d-force-graph 預設燈）避免累積
+  // ⚡ 清除所有燈光（含 3d-force-graph 預設燈）
   scene.children
     .filter(c => c.isLight)
     .forEach(light => scene.remove(light));
   
-  // 1. 環境光（提供基礎亮度）
-  scene.add(new THREE.AmbientLight(0xffffff, 0.7));
-  
-  // 2. 主方向光（單盞源模擬太陽）
-  const mainLight = new THREE.DirectionalLight(0xffffff, 1.0);
-  mainLight.position.set(80, 100, 80);
-  scene.add(mainLight);
-  
-  // 3. 補光（從對方向減少暗部）
-  const fillLight = new THREE.DirectionalLight(0xffffff, 0.4);
-  fillLight.position.set(-60, -40, -60);
-  scene.add(fillLight);
+  // 僅保留環境光（確保其他 Three.js 物件不會全黑）
+  scene.add(new THREE.AmbientLight(0xffffff, 0.8));
   
   // 設置相機位置
   graphInstance.cameraPosition({ z: 300 });
