@@ -541,7 +541,7 @@ async def upload_file(
                         doc_ids = [d["id"] for d in uploaded_docs if "id" in d]
                         if doc_ids:
                             import httpx
-                            async with httpx.AsyncClient(timeout=60) as parse_client:
+                            async with httpx.AsyncClient(timeout=300) as parse_client:
                                 parse_resp = await parse_client.post(
                                     f"{ragflow_api_url}/datasets/{ragflow_dataset_id}/chunks",
                                     headers={

@@ -114,14 +114,15 @@ class Settings(BaseSettings):
     MINIO_ROOT_PASSWORD: str = ""
 
     # 超時設置（秒）
-    REQUEST_TIMEOUT: int = 30
+    REQUEST_TIMEOUT: int = 120
+    UPLOAD_TIMEOUT: int = 300      # 檔案上傳專用（大檔）
 
     # 認證
     BRUV_AUTH_ENABLED: bool = True
     BRUV_API_TOKEN: str = ""
 
-    # 上傳限制 (bytes) — 預設 100 MB
-    MAX_UPLOAD_SIZE: int = 100 * 1024 * 1024
+    # 上傳限制 (bytes) — 預設 500 MB
+    MAX_UPLOAD_SIZE: int = 500 * 1024 * 1024
 
     model_config = {
         "env_file": ".env",

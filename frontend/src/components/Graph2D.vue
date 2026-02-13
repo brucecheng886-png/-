@@ -25,6 +25,17 @@ const props = defineProps({
   densityThreshold: { type: Number, default: 0 },   // 0~100 密度過濾
   focusFade: { type: Boolean, default: true },       // 聚焦時淡化無關節點
   clusterEnabled: { type: Boolean, default: true },  // 語義聚合叢集
+  nodeSpacing: { type: Number, default: 50 },        // 0~100 節點間距（控制疏密）
+});
+
+// ===== 節點間距計算（0~100 映射到物理參數） =====
+const spacingValues = computed(() => {
+  const t = props.nodeSpacing / 100; // 0~1
+  return {
+    linkDist: 60 + t * 300,       // 60~360（連接距離）
+    collideRadius: 15 + t * 40,   // 15~55（碰撞半徑）
+    radialRadius: 150 + t * 500,  // 150~650（圓形布局半徑）
+  };
 });
 
 // ===== State =====
@@ -158,7 +169,7 @@ const updateGraphData = debounce(() => {
   }
 }, 150); // 150ms 防抖延遲
 
-// ===== Watch: 監聽 Store 數據變更（簡化版，無 deep watch）=====
+// ===== Watch: 監聯 Store 數據變更（簡化版，無 deep watch）=====
 watch(
   () => ({
     nodeCount: graphStore.nodes.length,
@@ -178,6 +189,23 @@ watch(
     )) {
       updateGraphData();
     }
+  }
+);
+
+// ===== Watch: 節點間距變更，即時更新物理力場 =====
+watch(
+  () => props.nodeSpacing,
+  () => {
+    if (!graphInstance) return;
+    const sv = spacingValues.value;
+    graphInstance
+      .d3Force('link', d3.forceLink().distance(sv.linkDist).strength(0.1))
+      .d3Force('collide', d3.forceCollide().radius(sv.collideRadius).strength(0.5))
+      .d3Force('radial', d3.forceRadial(node => {
+        const isCentralNode = graphStore.getNodeLinks(node.id).length > 10;
+        return isCentralNode ? 0 : sv.radialRadius;
+      }, 0, 0).strength(0.8));
+    graphInstance.d3ReheatSimulation();
   }
 );
 
@@ -575,12 +603,12 @@ const initGraph = async () => {
       if (props.clusterEnabled) computeClusterCenters();
     })
     .d3Force('charge', null)  // 🔧 停用斥力，使用固定圓形布局
-    .d3Force('link', d3.forceLink().distance(150).strength(0.1))  // 🔧 弱連接力，保持結構但不干擾圓形
-    .d3Force('collide', d3.forceCollide().radius(25).strength(0.5))  // 🔧 防止節點重疊
+    .d3Force('link', d3.forceLink().distance(spacingValues.value.linkDist).strength(0.1))  // 🔧 弱連接力
+    .d3Force('collide', d3.forceCollide().radius(spacingValues.value.collideRadius).strength(0.5))  // 🔧 防止節點重疊
     .d3Force('radial', d3.forceRadial(node => {
       // 🎯 圓形布局：中心節點在原點，其他節點在圓周上
       const isCentralNode = graphStore.getNodeLinks(node.id).length > 10; // 連接數多的是中心
-      return isCentralNode ? 0 : 280; // 中心半徑0，外圍半徑280
+      return isCentralNode ? 0 : spacingValues.value.radialRadius; // 中心半徑0，外圍半徑動態調整
     }, 0, 0).strength(0.8))  // 🔧 強力徑向布局
     .d3VelocityDecay(0.3)
     .warmupTicks(100)

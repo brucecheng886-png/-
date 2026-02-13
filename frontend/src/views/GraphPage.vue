@@ -57,6 +57,7 @@ let zoomPollTimer = null;
 // 密度過濾 / 叢集控制
 const densityThreshold = ref(0);
 const clusterEnabled = ref(true);
+const nodeSpacing = ref(50);    // 0~100 節點間距
 
 // 星系圖片設定面板
 const showClusterSettings = ref(false);
@@ -1117,6 +1118,7 @@ onUnmounted(() => {
           :density-threshold="densityThreshold"
           :focus-fade="isFocusMode || !!graphStore.selectedNode"
           :cluster-enabled="clusterEnabled"
+          :node-spacing="nodeSpacing"
         />
       </keep-alive>
 
@@ -1131,6 +1133,25 @@ onUnmounted(() => {
           @zoom-reset="handleZoomReset"
           @toggle-layout="toggleViewMode"
         />
+        <!-- 節點間距滑桿 -->
+        <div class="spacing-slider-panel" v-if="graphStore.viewMode !== '3d'">
+          <div class="spacing-label">
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
+              <circle cx="4" cy="8" r="2.5" stroke="currentColor" stroke-width="1.2"/>
+              <circle cx="12" cy="8" r="2.5" stroke="currentColor" stroke-width="1.2"/>
+              <path d="M6.5 8h3" stroke="currentColor" stroke-width="1.2" stroke-dasharray="1.5 1.5"/>
+            </svg>
+            <span>間距</span>
+          </div>
+          <input 
+            type="range" 
+            min="0" max="100" step="1"
+            v-model.number="nodeSpacing"
+            class="spacing-range"
+            title="節點間距"
+          />
+          <div class="spacing-value">{{ nodeSpacing }}%</div>
+        </div>
       </div>
 
       <!-- 搜尋框 (右下角) -->
@@ -2605,5 +2626,74 @@ onUnmounted(() => {
   font-size: 9px;
   color: rgba(255, 255, 255, 0.5);
   pointer-events: none;
+}
+
+/* ===== 節點間距滑桿面板 ===== */
+.spacing-slider-panel {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 8px;
+  border-radius: 14px;
+  background: rgba(10, 14, 39, 0.85);
+  backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+}
+
+.spacing-label {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  color: rgba(229, 229, 229, 0.6);
+  user-select: none;
+}
+
+.spacing-range {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 32px;
+  height: 100px;
+  writing-mode: vertical-lr;
+  direction: rtl;
+  background: transparent;
+  cursor: pointer;
+}
+
+.spacing-range::-webkit-slider-runnable-track {
+  width: 4px;
+  height: 100%;
+  background: linear-gradient(to top, rgba(59, 130, 246, 0.3), rgba(139, 92, 246, 0.3));
+  border-radius: 2px;
+}
+
+.spacing-range::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #3b82f6, #8b5cf6);
+  border: 2px solid rgba(255, 255, 255, 0.3);
+  box-shadow: 0 2px 8px rgba(99, 102, 241, 0.4);
+  margin-left: -6px;
+  cursor: pointer;
+  transition: transform 0.15s, box-shadow 0.15s;
+}
+
+.spacing-range::-webkit-slider-thumb:hover {
+  transform: scale(1.2);
+  box-shadow: 0 2px 12px rgba(99, 102, 241, 0.6);
+}
+
+.spacing-value {
+  font-size: 10px;
+  font-weight: 600;
+  color: rgba(229, 229, 229, 0.45);
+  font-family: 'JetBrains Mono', monospace;
+  user-select: none;
 }
 </style>

@@ -50,7 +50,7 @@ class RAGFlowClient:
         content = fp.read_bytes()
         files = {'file': (fp.name, content, self._get_mime_type(fp))}
 
-        async with httpx.AsyncClient(timeout=60) as client:
+        async with httpx.AsyncClient(timeout=300) as client:
             resp = await client.post(url, headers=self._headers, files=files)
             resp.raise_for_status()
             return self._check_response(resp.json())
@@ -58,7 +58,7 @@ class RAGFlowClient:
     async def async_list_documents(self, dataset_id: str) -> Dict[str, Any]:
         """非同步列出知識庫中的所有文件"""
         url = f"{self.base_url}/datasets/{dataset_id}/documents"
-        async with httpx.AsyncClient(timeout=30) as client:
+        async with httpx.AsyncClient(timeout=120) as client:
             resp = await client.get(url, headers=self._headers)
             resp.raise_for_status()
             return self._check_response(resp.json())
@@ -69,7 +69,7 @@ class RAGFlowClient:
         import json as _json
         headers = {**self._headers, 'Content-Type': 'application/json'}
         body = _json.dumps({'ids': [document_id]}).encode('utf-8')
-        async with httpx.AsyncClient(timeout=30) as client:
+        async with httpx.AsyncClient(timeout=120) as client:
             resp = await client.request("DELETE", url, headers=headers, content=body)
             resp.raise_for_status()
             return self._check_response(resp.json())
@@ -80,7 +80,7 @@ class RAGFlowClient:
         import json as _json
         headers = {**self._headers, 'Content-Type': 'application/json'}
         body = _json.dumps({'ids': [dataset_id]}).encode('utf-8')
-        async with httpx.AsyncClient(timeout=30) as client:
+        async with httpx.AsyncClient(timeout=120) as client:
             resp = await client.request("DELETE", url, headers=headers, content=body)
             resp.raise_for_status()
             return self._check_response(resp.json())
@@ -103,14 +103,14 @@ class RAGFlowClient:
         content = fp.read_bytes()
         files = {'file': (fp.name, content, self._get_mime_type(fp))}
 
-        with httpx.Client(timeout=60, headers=self._headers) as client:
+        with httpx.Client(timeout=300, headers=self._headers) as client:
             resp = client.post(url, files=files)
             resp.raise_for_status()
             return self._check_response(resp.json())
 
     def list_documents(self, dataset_id: str) -> Dict[str, Any]:
         url = f"{self.base_url}/datasets/{dataset_id}/documents"
-        with httpx.Client(timeout=30, headers=self._headers) as client:
+        with httpx.Client(timeout=120, headers=self._headers) as client:
             resp = client.get(url)
             resp.raise_for_status()
             return self._check_response(resp.json())
@@ -120,7 +120,7 @@ class RAGFlowClient:
         import json as _json
         headers = {**self._headers, 'Content-Type': 'application/json'}
         body = _json.dumps({'ids': [document_id]}).encode('utf-8')
-        with httpx.Client(timeout=30) as client:
+        with httpx.Client(timeout=120) as client:
             resp = client.request("DELETE", url, headers=headers, content=body)
             resp.raise_for_status()
             return self._check_response(resp.json())
@@ -138,7 +138,7 @@ class RAGFlowClient:
         url = (f"{self.base_url}/datasets/{dataset_id}"
                f"/documents/{document_id}/chunks"
                f"?page={page}&page_size={page_size}")
-        async with httpx.AsyncClient(timeout=30) as client:
+        async with httpx.AsyncClient(timeout=120) as client:
             resp = await client.get(url, headers=self._headers)
             resp.raise_for_status()
             return self._check_response(resp.json())
@@ -154,7 +154,7 @@ class RAGFlowClient:
         url = (f"{self.base_url}/datasets/{dataset_id}"
                f"/documents/{document_id}/chunks"
                f"?page={page}&page_size={page_size}")
-        with httpx.Client(timeout=30, headers=self._headers) as client:
+        with httpx.Client(timeout=120, headers=self._headers) as client:
             resp = client.get(url)
             resp.raise_for_status()
             return self._check_response(resp.json())
@@ -224,7 +224,7 @@ class RAGFlowClient:
             payload["rerank_id"] = rerank_id
 
         url = f"{self.base_url}/retrieval"
-        async with httpx.AsyncClient(timeout=30) as client:
+        async with httpx.AsyncClient(timeout=120) as client:
             resp = await client.post(url, headers=self._headers, json=payload)
             resp.raise_for_status()
             return self._check_response(resp.json())
