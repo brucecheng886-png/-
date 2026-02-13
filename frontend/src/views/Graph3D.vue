@@ -64,6 +64,15 @@ const linkParticleColor = computed(() => {
 let graphInstance = null;
 let animationFrameId = null;
 
+// ===== 共享幾何體（效能關鍵：所有節點重用同一份頂點數據） =====
+const sharedGeo = {
+  main:      new THREE.SphereGeometry(1, 32, 32),   // 主球體（unit sphere，渲染時用 scale 控制大小）
+  mainLarge: new THREE.SphereGeometry(1, 32, 32),   // 選中放大版（同 geometry）
+  glow:      new THREE.SphereGeometry(1.15, 16, 16), // 外發光層（低精度即可）
+  pulse:     new THREE.SphereGeometry(1.6, 16, 16),  // 脈衝光暈
+  highlight: new THREE.SphereGeometry(0.3, 8, 8),    // 高光反射點
+};
+
 // 節點類型配置
 const nodeTypes = [
   { type: 'Person', color: '#3b82f6', icon: '👤' },
@@ -104,6 +113,10 @@ const updateGraphData = debounce(() => {
     
     graphData.value = { nodes: nodesClone, links: linksClone };
     graphInstance.graphData(graphData.value);
+    
+    // ⚡ 資料變更時重建效能快取
+    _rebuildMaxLinksCache();
+    
     graphInstance.d3ReheatSimulation();
   } finally {
     isUpdating.value = false;
@@ -176,16 +189,8 @@ watch(() => graphStore.selectedNode, (newNode) => {
   const selectedId = newNode?.id;
   const graphNodes = graphInstance.graphData().nodes;
   
-  // 預計算鄰居集合
-  const neighborIds = new Set();
-  if (selectedId) {
-    graphStore.links.forEach(l => {
-      const src = typeof l.source === 'object' ? l.source.id : l.source;
-      const tgt = typeof l.target === 'object' ? l.target.id : l.target;
-      if (src === selectedId) neighborIds.add(tgt);
-      if (tgt === selectedId) neighborIds.add(src);
-    });
-  }
+  // ⚡ 使用預計算鄰居快取
+  _rebuildNeighborCache();
   
   // 直接修改 Three.js 物件（效能優化，不重建節點）
   graphNodes.forEach(node => {
@@ -196,16 +201,16 @@ watch(() => graphStore.selectedNode, (newNode) => {
     let fadeAlpha = 1;
     
     if (props.focusFade && selectedId && !isSelected) {
-      fadeAlpha = neighborIds.has(node.id) ? 0.85 : 0.12;
+      fadeAlpha = _neighborCache.has(node.id) ? 0.85 : 0.12;
     }
     
-    // 更新主體材質透明度和自發光
+    // 更新主體材質透明度和自發光（與 nodeThreeObject 一致）
     obj.material.opacity = 0.95 * fadeAlpha;
-    obj.material.emissiveIntensity = isSelected ? 0.4 : 0.1 * fadeAlpha;
+    obj.material.emissiveIntensity = isSelected ? 0.5 : 0.2 * fadeAlpha;
     obj.material.needsUpdate = true;
     
-    // 選中節點放大
-    const targetScale = isSelected ? 1.4 : 1.0;
+    // 選中節點放大（共享幾何體 radius=1，scale 即為實際大小）
+    const targetScale = isSelected ? 7 : 5;
     obj.scale.set(targetScale, targetScale, targetScale);
   });
 });
@@ -312,6 +317,29 @@ const generateGraphData = (nodeCount = 50) => {
   return { nodes, links };
 };
 
+// ===== 效能快取（避免在每幀 callback 中重複計算） =====
+let _neighborCache = new Set();       // 當前選中節點的鄰居 ID Set
+let _maxLinksCache = 1;               // 最大連結數快取
+const _emojiTextureCache = new Map(); // emoji → THREE.CanvasTexture
+
+// 預計算鄰居快取（選中節點改變時更新）
+const _rebuildNeighborCache = () => {
+  _neighborCache = new Set();
+  const selectedId = graphStore.selectedNode?.id;
+  if (!selectedId) return;
+  graphStore.links.forEach(l => {
+    const src = typeof l.source === 'object' ? l.source.id : l.source;
+    const tgt = typeof l.target === 'object' ? l.target.id : l.target;
+    if (src === selectedId) _neighborCache.add(tgt);
+    if (tgt === selectedId) _neighborCache.add(src);
+  });
+};
+
+// 預計算 maxLinks（資料變化時更新）
+const _rebuildMaxLinksCache = () => {
+  _maxLinksCache = Math.max(1, ...graphStore.nodes.map(n => graphStore.getNodeLinks(n.id).length));
+};
+
 // 初始化 3D 圖表
 const initGraph = async () => {
   if (!graphContainer.value) return;
@@ -334,17 +362,20 @@ const initGraph = async () => {
     links: linksClone
   };
   
+  // ⚡ 初始化效能快取
+  _rebuildNeighborCache();
+  _rebuildMaxLinksCache();
+  
   graphInstance = ForceGraph3D()(graphContainer.value)
     .graphData(graphData.value)
     .nodeLabel('name')
     .nodeColor(node => node.color || '#448aff')
     .nodeVal(() => 10)  // 統一節點大小
     .nodeVisibility(node => {
-      // 密度過濾（同 2D 模式）
+      // 密度過濾（同 2D 模式）— 使用預計算快取
       if (props.densityThreshold > 0) {
         const linkCount = graphStore.getNodeLinks(node.id).length;
-        const maxLinks = Math.max(1, ...graphStore.nodes.map(n => graphStore.getNodeLinks(n.id).length));
-        const normalised = (linkCount / maxLinks) * 100;
+        const normalised = (linkCount / _maxLinksCache) * 100;
         if (normalised < props.densityThreshold) return false;
       }
       return true;
@@ -379,8 +410,7 @@ const initGraph = async () => {
       const tgt = typeof link.target === 'object' ? link.target.id : link.target;
       const srcCount = graphStore.getNodeLinks(src).length;
       const tgtCount = graphStore.getNodeLinks(tgt).length;
-      const maxLinks = Math.max(1, ...graphStore.nodes.map(n => graphStore.getNodeLinks(n.id).length));
-      return (srcCount / maxLinks * 100 >= props.densityThreshold) && (tgtCount / maxLinks * 100 >= props.densityThreshold);
+      return (srcCount / _maxLinksCache * 100 >= props.densityThreshold) && (tgtCount / _maxLinksCache * 100 >= props.densityThreshold);
     })
     // 🎨 AI Link 虛線效果（使用粒子流動模擬）
     .linkDirectionalParticles(link => {
@@ -413,110 +443,97 @@ const initGraph = async () => {
     .onNodeHover(handleNodeHover)
     .onNodeDrag(handleNodeDrag)
     .onNodeDragEnd(handleNodeDragEnd)
-    .warmupTicks(100)  // 效能優化: 預跑 100 次物理模擬
-    .cooldownTicks(300)  // 效能優化: 300 tick 後自動停止
+    .warmupTicks(50)   // 效能優化: 預跑 50 次物理模擬（減少初始阻塞）
+    .cooldownTicks(200)  // 效能優化: 200 tick 後自動停止
     .nodeThreeObject(node => {
-      // 🎨 真實光照球體：PBR + Focus-fade（同 2D 模式）
+      // 🎨 真實光照球體：PBR + Focus-fade
+      // ⚡ 效能優化：共享幾何體 + 移除逐節點燈光
       
-      // === Focus-fade 計算 ===
+      // === Focus-fade 計算（使用預計算快取） ===
       const selectedId = graphStore.selectedNode?.id;
       const isSelected = selectedId === node.id;
       let fadeAlpha = 1;
 
       if (props.focusFade && selectedId && !isSelected) {
-        const neighborIds = new Set();
-        graphStore.links.forEach(l => {
-          const src = typeof l.source === 'object' ? l.source.id : l.source;
-          const tgt = typeof l.target === 'object' ? l.target.id : l.target;
-          if (src === selectedId) neighborIds.add(tgt);
-          if (tgt === selectedId) neighborIds.add(src);
-        });
-        fadeAlpha = neighborIds.has(node.id) ? 0.85 : 0.12;
+        fadeAlpha = _neighborCache.has(node.id) ? 0.85 : 0.12;
       }
       
-      const nodeSize = isSelected ? 7 : 5;  // 選中節點放大
+      const nodeSize = isSelected ? 7 : 5;
       
-      // 1. 創建高精度球體幾何體
-      const geometry = new THREE.SphereGeometry(nodeSize, 64, 64);
-      
-      // 2. 使用標準材質（PBR）+ focus-fade 透明度
-      const material = new THREE.MeshStandardMaterial({
-        color: node.color || '#448aff',
-        emissive: node.color || '#448aff',
-        emissiveIntensity: isSelected ? 0.4 : 0.1 * fadeAlpha,
-        metalness: 0.3,
-        roughness: 0.4,
-        transparent: true,
-        opacity: 0.95 * fadeAlpha,
-        envMapIntensity: 1.0
-      });
-      
-      const mesh = new THREE.Mesh(geometry, material);
-      
-      // 3. 添加點光源
-      const pointLight = new THREE.PointLight(
-        node.color || '#448aff',
-        isSelected ? 1.5 : 0.8 * fadeAlpha,
-        nodeSize * 4
-      );
-      pointLight.position.set(0, 0, 0);
-      mesh.add(pointLight);
-      
-      // 4. 添加環境光反射
-      const ambientLight = new THREE.AmbientLight(0xffffff, 0.3);
-      mesh.add(ambientLight);
-      
-      // 5. 外發光層（Rim Light 效果）
-      const glowGeometry = new THREE.SphereGeometry(nodeSize * 1.15, 32, 32);
-      const glowMaterial = new THREE.MeshBasicMaterial({
-        color: node.color || '#448aff',
-        transparent: true,
-        opacity: (isSelected ? 0.25 : 0.1) * fadeAlpha,
-        side: THREE.BackSide,
-        blending: THREE.AdditiveBlending
-      });
-      const glowMesh = new THREE.Mesh(glowGeometry, glowMaterial);
-      mesh.add(glowMesh);
-      
-      // 🌟 選中節點：額外脈衝光暈
-      if (isSelected) {
-        const pulseGeometry = new THREE.SphereGeometry(nodeSize * 1.6, 32, 32);
-        const pulseMaterial = new THREE.MeshBasicMaterial({
-          color: '#fbbf24',
+      // 1. 使用共享幾何體（⚡ 關鍵：避免重複建立頂點數據）
+      const mesh = new THREE.Mesh(
+        sharedGeo.main,
+        new THREE.MeshStandardMaterial({
+          color: node.color || '#448aff',
+          emissive: node.color || '#448aff',
+          emissiveIntensity: isSelected ? 0.5 : 0.2 * fadeAlpha,  // 提高自發光補償移除的燈
+          metalness: 0.3,
+          roughness: 0.4,
           transparent: true,
-          opacity: 0.15,
+          opacity: 0.95 * fadeAlpha,
+          envMapIntensity: 1.0
+        })
+      );
+      mesh.scale.set(nodeSize, nodeSize, nodeSize);
+      
+      // 2. 外發光層（共享幾何體）
+      const glowMesh = new THREE.Mesh(
+        sharedGeo.glow,
+        new THREE.MeshBasicMaterial({
+          color: node.color || '#448aff',
+          transparent: true,
+          opacity: (isSelected ? 0.25 : 0.1) * fadeAlpha,
           side: THREE.BackSide,
           blending: THREE.AdditiveBlending
-        });
-        const pulseMesh = new THREE.Mesh(pulseGeometry, pulseMaterial);
+        })
+      );
+      glowMesh.scale.set(nodeSize, nodeSize, nodeSize);
+      mesh.add(glowMesh);
+      
+      // 🌟 選中節點：額外脈衝光暈（共享幾何體）
+      if (isSelected) {
+        const pulseMesh = new THREE.Mesh(
+          sharedGeo.pulse,
+          new THREE.MeshBasicMaterial({
+            color: '#fbbf24',
+            transparent: true,
+            opacity: 0.15,
+            side: THREE.BackSide,
+            blending: THREE.AdditiveBlending
+          })
+        );
+        pulseMesh.scale.set(nodeSize, nodeSize, nodeSize);
         mesh.add(pulseMesh);
       }
       
-      // 6. 添加高光反射點
-      const highlightGeometry = new THREE.SphereGeometry(nodeSize * 0.3, 16, 16);
-      const highlightMaterial = new THREE.MeshBasicMaterial({
-        color: 0xffffff,
-        transparent: true,
-        opacity: 0.6 * fadeAlpha
-      });
-      const highlight = new THREE.Mesh(highlightGeometry, highlightMaterial);
+      // 3. 高光反射點（共享幾何體）
+      const highlight = new THREE.Mesh(
+        sharedGeo.highlight,
+        new THREE.MeshBasicMaterial({
+          color: 0xffffff,
+          transparent: true,
+          opacity: 0.6 * fadeAlpha
+        })
+      );
+      highlight.scale.set(nodeSize, nodeSize, nodeSize);
       highlight.position.set(nodeSize * 0.3, nodeSize * 0.3, nodeSize * 0.3);
       mesh.add(highlight);
       
-      // 7. 添加圖標標記（使用 Sprite）
+      // 4. 添加圖標標記（使用快取的 Sprite 紋理）
       if (node.emoji) {
-        const canvas = document.createElement('canvas');
-        canvas.width = 64;
-        canvas.height = 64;
-        const ctx = canvas.getContext('2d');
-        ctx.font = 'bold 48px Arial';
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-        ctx.fillText(node.emoji, 32, 32);
-        
-        const texture = new THREE.CanvasTexture(canvas);
+        if (!_emojiTextureCache.has(node.emoji)) {
+          const canvas = document.createElement('canvas');
+          canvas.width = 64;
+          canvas.height = 64;
+          const ctx = canvas.getContext('2d');
+          ctx.font = 'bold 48px Arial';
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.fillText(node.emoji, 32, 32);
+          _emojiTextureCache.set(node.emoji, new THREE.CanvasTexture(canvas));
+        }
         const spriteMaterial = new THREE.SpriteMaterial({ 
-          map: texture,
+          map: _emojiTextureCache.get(node.emoji),
           transparent: true,
           opacity: fadeAlpha
         });
@@ -529,28 +546,33 @@ const initGraph = async () => {
       return mesh;
     });
   
-  // 🌟 添加場景光照系統（真實光照環境）
+  // 🌟 添加場景光照系統（增強版：補償移除的逐節點燈光）
   const scene = graphInstance.scene();
   
-  // 1. 環境光（提供基礎亮度）
-  const ambientLight = new THREE.AmbientLight(0xffffff, 0.4);
+  // 1. 環境光（提供基礎亮度，提高強度補償移除的逐節點光）
+  const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
   scene.add(ambientLight);
   
   // 2. 主方向光（模擬太陽光）
-  const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
+  const directionalLight = new THREE.DirectionalLight(0xffffff, 1.0);
   directionalLight.position.set(100, 100, 100);
   scene.add(directionalLight);
   
-  // 3. 補充方向光（減少陰影）
-  const fillLight = new THREE.DirectionalLight(0xffffff, 0.4);
+  // 3. 補充方向光（減少陰影，多角度補光）
+  const fillLight = new THREE.DirectionalLight(0xffffff, 0.5);
   fillLight.position.set(-50, -50, -50);
   scene.add(fillLight);
   
-  // 4. 半球光（天空和地面的顏色漸變）
+  // 4. 第三補光（從下方/側面填充暗部）
+  const rimLight = new THREE.DirectionalLight(0x6688ff, 0.3);
+  rimLight.position.set(0, -80, 60);
+  scene.add(rimLight);
+  
+  // 5. 半球光（天空和地面的顏色漸變）
   const hemisphereLight = new THREE.HemisphereLight(
     0x4466ff,  // 天空顏色
     0x080820,  // 地面顏色
-    0.5
+    0.6
   );
   scene.add(hemisphereLight);
   
@@ -914,6 +936,11 @@ onUnmounted(() => {
     graphInstance._destructor();
     graphInstance = null;
   }
+  
+  // ⚡ 釋放共享幾何體 & 紋理快取
+  Object.values(sharedGeo).forEach(g => g.dispose());
+  _emojiTextureCache.forEach(t => t.dispose());
+  _emojiTextureCache.clear();
 });
 </script>
 
