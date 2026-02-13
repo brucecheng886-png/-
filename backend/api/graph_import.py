@@ -257,18 +257,68 @@ def parse_llm_response(llm_output: str) -> Dict[str, Any]:
 
 async def call_llm_analysis(prompt: str) -> Dict[str, Any]:
     """
-    調用 LLM 進行內容分析
-    TODO: 整合實際的 LLM API（OpenAI、Claude、Dify 等）
+    調用 Dify LLM 進行內容分析
+    使用 Dify /chat-messages API（blocking 模式）
     """
-    # 這裡應該調用實際的 LLM API
-    # 目前先返回模擬數據
-    logger.warning("⚠️ LLM 功能尚未整合，使用模擬回應")
-    
+    from backend.core.config import get_current_api_keys, settings
+    import httpx
+
+    api_keys = get_current_api_keys()
+    dify_api_key = api_keys.get('DIFY_API_KEY', '')
+    dify_api_url = api_keys.get('DIFY_API_URL', settings.DIFY_API_URL)
+
+    if not dify_api_key:
+        logger.warning("⚠️ Dify API Key 未配置，使用預設回應")
+        return {
+            "label": "待配置 LLM",
+            "description": "Dify API Key 尚未設定，請至系統設定頁面配置後重新匯入。",
+            "type": "未分類",
+            "links": [],
+            "metadata": {"confidence": 0.0, "keywords": [], "language": "zh-TW"}
+        }
+
+    try:
+        async with httpx.AsyncClient(timeout=120) as client:
+            resp = await client.post(
+                f"{dify_api_url}/chat-messages",
+                headers={
+                    "Authorization": f"Bearer {dify_api_key}",
+                    "Content-Type": "application/json"
+                },
+                json={
+                    "query": prompt,
+                    "user": "graph-import-system",
+                    "inputs": {},
+                    "response_mode": "blocking"
+                }
+            )
+            resp.raise_for_status()
+            result = resp.json()
+
+        # 從 Dify 回應中提取 LLM 文字
+        answer = result.get("answer", "")
+        if not answer:
+            raise ValueError("Dify 回應為空")
+
+        logger.info(f"✅ Dify LLM 回應（前 200 字）: {answer[:200]}")
+
+        # 解析 LLM 輸出為結構化資料
+        return parse_llm_response(answer)
+
+    except httpx.HTTPStatusError as e:
+        logger.error(f"❌ Dify API HTTP 錯誤 {e.response.status_code}: {e.response.text[:300]}")
+    except httpx.TimeoutException:
+        logger.error("❌ Dify API 請求超時 (120s)")
+    except Exception as e:
+        logger.error(f"❌ LLM 分析失敗: {e}")
+
+    # 任何錯誤都回退為預設
     return {
-        "label": "待整合 LLM 分析",
-        "description": "此節點正在等待 LLM 服務整合。完成後將自動生成深度描述，包含內容背景、核心結論與應用場景。",
+        "label": "LLM 分析失敗",
+        "description": "自動分析過程發生錯誤，請手動編輯此節點。",
         "type": "未分類",
-        "links": []
+        "links": [],
+        "metadata": {"confidence": 0.0, "keywords": [], "language": "zh-TW"}
     }
 
 
