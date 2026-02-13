@@ -53,6 +53,7 @@ class GraphMetadataCreate(BaseModel):
     icon: Optional[str] = "🌐"
     color: Optional[str] = "#3b82f6"
     cover_image: Optional[str] = ""
+    ragflow_dataset_id: Optional[str] = ""
 
 
 class GraphMetadataUpdate(BaseModel):
@@ -343,7 +344,8 @@ async def create_graph(request: Request, graph_data: GraphMetadataCreate):
             description=graph_data.description or "",
             icon=graph_data.icon or "🌐",
             color=graph_data.color or "#3b82f6",
-            cover_image=graph_data.cover_image or ""
+            cover_image=graph_data.cover_image or "",
+            ragflow_dataset_id=graph_data.ragflow_dataset_id or ""
         )
         
         if not success:
@@ -485,6 +487,45 @@ async def delete_graph(request: Request, graph_id: str, cascade: bool = False):
         if not existing:
             raise HTTPException(status_code=404, detail=f"圖譜 {graph_id} 不存在")
         
+        # ── 階段 1: 刪除 RAGFlow 知識庫資料 ──
+        ragflow_dataset_id = existing.get('ragflow_dataset_id', '')
+        ragflow_cleanup_msg = ""
+        if ragflow_dataset_id:
+            try:
+                from backend.core.config import get_current_api_keys
+                from backend.rag_client import RAGFlowClient
+                api_keys = get_current_api_keys()
+                if api_keys.get('RAGFLOW_API_KEY'):
+                    rag_client = RAGFlowClient(
+                        api_key=api_keys['RAGFLOW_API_KEY'],
+                        base_url=api_keys['RAGFLOW_API_URL']
+                    )
+                    # 先列出該 dataset 中的所有文檔
+                    docs_result = await rag_client.async_list_documents(ragflow_dataset_id)
+                    docs = docs_result.get('data', {}).get('docs', [])
+                    if docs:
+                        doc_ids = [d['id'] for d in docs if 'id' in d]
+                        for doc_id in doc_ids:
+                            try:
+                                await rag_client.async_delete_document(ragflow_dataset_id, doc_id)
+                            except Exception as doc_err:
+                                logger.warning(f"⚠️ 刪除 RAGFlow 文檔失敗 {doc_id}: {doc_err}")
+                        logger.info(f"🗑️ 已刪除 RAGFlow dataset {ragflow_dataset_id} 中的 {len(doc_ids)} 個文檔")
+                    # 刪除整個 dataset
+                    try:
+                        await rag_client.async_delete_dataset(ragflow_dataset_id)
+                        ragflow_cleanup_msg = f"，已清除 RAGFlow 知識庫"
+                        logger.info(f"✅ 已刪除 RAGFlow dataset: {ragflow_dataset_id}")
+                    except Exception as ds_err:
+                        ragflow_cleanup_msg = f"，RAGFlow 文檔已清除（知識庫刪除失敗: {ds_err}）"
+                        logger.warning(f"⚠️ 刪除 RAGFlow dataset 失敗: {ds_err}")
+                else:
+                    logger.warning("⚠️ RAGFlow API Key 未配置，跳過 RAGFlow 清理")
+            except Exception as e:
+                ragflow_cleanup_msg = f"（RAGFlow 清理失敗: {e}）"
+                logger.warning(f"⚠️ RAGFlow 清理失敗（繼續刪除圖譜）: {e}")
+        
+        # ── 階段 2: 刪除 KuzuDB 圖譜數據 ──
         success = kuzu_manager.delete_graph_metadata(graph_id, cascade=cascade)
         
         if not success:
@@ -493,9 +534,10 @@ async def delete_graph(request: Request, graph_id: str, cascade: bool = False):
         cascade_msg = "（含所有節點與連線）" if cascade else ""
         return {
             "success": True,
-            "message": f"圖譜「{existing.get('name', graph_id)}」已刪除{cascade_msg}",
+            "message": f"圖譜「{existing.get('name', graph_id)}」已刪除{cascade_msg}{ragflow_cleanup_msg}",
             "deleted_graph_id": graph_id,
-            "cascade": cascade
+            "cascade": cascade,
+            "ragflow_cleaned": bool(ragflow_dataset_id)
         }
         
     except HTTPException:

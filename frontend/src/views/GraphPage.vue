@@ -805,12 +805,18 @@ const handleDeleteGraph = async () => {
   const nodeCount = graphStore.nodeCount;
   const linkCount = graphStore.linkCount;
   
+  // 檢查是否有 RAGFlow 知識庫關聯
+  const ragflowInfo = graph?.ragflow_dataset_id 
+    ? `• RAGFlow 知識庫中的所有文件\n\n` 
+    : '\n';
+
   try {
     await ElMessageBox.confirm(
       `確定要刪除圖譜「${graphName}」嗎？\n\n` +
       `此操作將永久刪除：\n` +
       `• ${nodeCount} 個節點\n` +
-      `• ${linkCount} 條連線\n\n` +
+      `• ${linkCount} 條連線\n` +
+      ragflowInfo +
       `⚠️ 此操作無法復原！`,
       '刪除圖譜',
       {

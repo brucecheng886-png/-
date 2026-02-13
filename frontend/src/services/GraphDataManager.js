@@ -297,7 +297,8 @@ class GraphDataManager {
           description: graphData.description || `自定義圖譜：${graphData.name}`,
           icon: graphData.icon || '🌐',
           color: graphData.color || '#3b82f6',
-          cover_image: graphData.cover_image || ''
+          cover_image: graphData.cover_image || '',
+          ragflow_dataset_id: graphData.ragflow_dataset_id || ''
         })
       });
       

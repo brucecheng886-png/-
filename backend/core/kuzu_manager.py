@@ -74,6 +74,15 @@ class KuzuDBManager:
                 )
             """)
             
+            # 擴展 GraphMetadata：增加 ragflow_dataset_id 欄位（向下相容）
+            try:
+                self.conn.execute("""
+                    ALTER TABLE GraphMetadata ADD ragflow_dataset_id STRING DEFAULT ''
+                """)
+                logger.info("📌 GraphMetadata 新增 ragflow_dataset_id 欄位")
+            except Exception:
+                pass  # 欄位已存在則忽略
+
             # 創建節點表 - 實體（增加 graph_id 支持多圖譜）
             self.conn.execute("""
                 CREATE NODE TABLE IF NOT EXISTS Entity(
@@ -300,7 +309,8 @@ class KuzuDBManager:
     # ===== 圖譜元數據管理 =====
     
     def create_graph_metadata(self, graph_id: str, name: str, description: str = "", 
-                              icon: str = "🌐", color: str = "#3b82f6", cover_image: str = "") -> bool:
+                              icon: str = "🌐", color: str = "#3b82f6", cover_image: str = "",
+                              ragflow_dataset_id: str = "") -> bool:
         """創建圖譜元數據
         
         Args:
@@ -310,6 +320,7 @@ class KuzuDBManager:
             icon: 圖標 emoji
             color: 主題顏色
             cover_image: 封面圖片（base64 DataURL 或 URL）
+            ragflow_dataset_id: 關聯的 RAGFlow 知識庫 ID
         
         Returns:
             是否創建成功
@@ -329,7 +340,8 @@ class KuzuDBManager:
                     created_at: $created_at,
                     updated_at: $updated_at,
                     node_count: $node_count,
-                    link_count: $link_count
+                    link_count: $link_count,
+                    ragflow_dataset_id: $ragflow_dataset_id
                 })
             """, parameters={
                 "id": graph_id,
@@ -341,7 +353,8 @@ class KuzuDBManager:
                 "created_at": now,
                 "updated_at": now,
                 "node_count": 0,
-                "link_count": 0
+                "link_count": 0,
+                "ragflow_dataset_id": ragflow_dataset_id
             })
             
             logger.info(f"✅ 圖譜元數據創建成功: {name} (ID: {graph_id})")

@@ -569,6 +569,19 @@ async def upload_file(
         with open(metadata_file, 'w', encoding='utf-8') as f:
             json.dump(metadata, f, ensure_ascii=False, indent=2)
         
+        # ── 階段 3.5: 將 ragflow_dataset_id 回寫到圖譜元數據 ──
+        if ai_enabled and ragflow_dataset_id and graph_id:
+            try:
+                from backend.api.graph import get_kuzu_manager
+                kuzu_mgr = get_kuzu_manager()
+                if kuzu_mgr:
+                    existing_meta = kuzu_mgr.get_graph_metadata(graph_id)
+                    if existing_meta and not existing_meta.get('ragflow_dataset_id'):
+                        kuzu_mgr.update_graph_metadata(graph_id, ragflow_dataset_id=ragflow_dataset_id)
+                        logger.info(f"📌 已將 ragflow_dataset_id={ragflow_dataset_id} 寫入圖譜 {graph_id}")
+            except Exception as e:
+                logger.warning(f"⚠️ 回寫 ragflow_dataset_id 失敗（不影響上傳）: {e}")
+        
         # ── 階段 4: 最後寫入主檔案（觸發 Watcher，此時 meta.json 已就緒）──
         with open(file_path, "wb") as buffer:
             buffer.write(content)

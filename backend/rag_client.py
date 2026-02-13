@@ -74,6 +74,17 @@ class RAGFlowClient:
             resp.raise_for_status()
             return self._check_response(resp.json())
 
+    async def async_delete_dataset(self, dataset_id: str) -> Dict[str, Any]:
+        """非同步刪除整個知識庫 (dataset)"""
+        url = f"{self.base_url}/datasets"
+        import json as _json
+        headers = {**self._headers, 'Content-Type': 'application/json'}
+        body = _json.dumps({'ids': [dataset_id]}).encode('utf-8')
+        async with httpx.AsyncClient(timeout=30) as client:
+            resp = await client.request("DELETE", url, headers=headers, content=body)
+            resp.raise_for_status()
+            return self._check_response(resp.json())
+
     # ---------- 同步方法（向下相容，供 WatcherService 線程使用） ----------
 
     def upload_file(

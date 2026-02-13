@@ -446,7 +446,12 @@ const handleCreateGraph = async () => {
   }
   isCreating.value = true;
   try {
-    const createdGraph = await graphStore.createGraph(newGraphData.value);
+    // 將 RAGFlow dataset ID 附加到圖譜元數據
+    const graphPayload = { ...newGraphData.value };
+    if (useRAGFlow.value && selectedDataset.value) {
+      graphPayload.ragflow_dataset_id = selectedDataset.value;
+    }
+    const createdGraph = await graphStore.createGraph(graphPayload);
     ElMessage.success(`✅ 圖譜「${createdGraph.name}」創建成功！`);
     // 切換到新建的圖譜
     graphStore.currentGraphId = createdGraph.id;
