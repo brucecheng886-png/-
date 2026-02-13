@@ -68,8 +68,8 @@ let animationFrameId = null;
 const sharedGeo = {
   main:      new THREE.SphereGeometry(1, 32, 32),   // 主球體（unit sphere，渲染時用 scale 控制大小）
   mainLarge: new THREE.SphereGeometry(1, 32, 32),   // 選中放大版（同 geometry）
-  glow:      new THREE.SphereGeometry(1.15, 16, 16), // 外發光層（低精度即可）
-  pulse:     new THREE.SphereGeometry(1.6, 16, 16),  // 脈衝光暈
+  glow:      new THREE.SphereGeometry(1.08, 16, 16), // 外發光層（縮小避免重疊）
+  pulse:     new THREE.SphereGeometry(1.25, 16, 16), // 脈衝光暈（僅選中節點）
   highlight: new THREE.SphereGeometry(0.3, 8, 8),    // 高光反射點
 };
 
@@ -205,12 +205,12 @@ watch(() => graphStore.selectedNode, (newNode) => {
     }
     
     // 更新主體材質透明度和自發光（與 nodeThreeObject 一致）
-    obj.material.opacity = 0.95 * fadeAlpha;
-    obj.material.emissiveIntensity = isSelected ? 0.5 : 0.2 * fadeAlpha;
+    obj.material.opacity = 0.9 * fadeAlpha;
+    obj.material.emissiveIntensity = isSelected ? 0.5 : 0.15 * fadeAlpha;
     obj.material.needsUpdate = true;
     
-    // 選中節點放大（共享幾何體 radius=1，scale 即為實際大小）
-    const targetScale = isSelected ? 7 : 5;
+    // 共享幾何體 radius=1，scale 即為實際大小
+    const targetScale = isSelected ? 5 : 3.5;
     obj.scale.set(targetScale, targetScale, targetScale);
   });
 });
@@ -458,7 +458,7 @@ const initGraph = async () => {
         fadeAlpha = _neighborCache.has(node.id) ? 0.85 : 0.12;
       }
       
-      const nodeSize = isSelected ? 7 : 5;
+      const nodeSize = isSelected ? 5 : 3.5;
       
       // 1. 使用共享幾何體（⚡ 關鍵：避免重複建立頂點數據）
       const mesh = new THREE.Mesh(
@@ -466,23 +466,23 @@ const initGraph = async () => {
         new THREE.MeshStandardMaterial({
           color: node.color || '#448aff',
           emissive: node.color || '#448aff',
-          emissiveIntensity: isSelected ? 0.5 : 0.2 * fadeAlpha,  // 提高自發光補償移除的燈
+          emissiveIntensity: isSelected ? 0.5 : 0.15 * fadeAlpha,
           metalness: 0.3,
           roughness: 0.4,
           transparent: true,
-          opacity: 0.95 * fadeAlpha,
+          opacity: 0.9 * fadeAlpha,
           envMapIntensity: 1.0
         })
       );
       mesh.scale.set(nodeSize, nodeSize, nodeSize);
       
-      // 2. 外發光層（共享幾何體）
+      // 2. 外發光層（縮小並降低透明度，避免重疊成藍色一片）
       const glowMesh = new THREE.Mesh(
         sharedGeo.glow,
         new THREE.MeshBasicMaterial({
           color: node.color || '#448aff',
           transparent: true,
-          opacity: (isSelected ? 0.25 : 0.1) * fadeAlpha,
+          opacity: (isSelected ? 0.15 : 0.04) * fadeAlpha,
           side: THREE.BackSide,
           blending: THREE.AdditiveBlending
         })
@@ -570,6 +570,16 @@ const initGraph = async () => {
   // 設置相機位置
   graphInstance.cameraPosition({ z: 300 });
   
+  // ⚡ 配置力佈局（展開節點，避免擠成一團）
+  graphInstance.d3Force('charge').strength(-150);          // 排斥力
+  graphInstance.d3Force('link').distance(40);               // 連結距離
+  if (!graphInstance.d3Force('collide')) {
+    // 3d-force-graph 預設無碰撞力，手動添加
+    import('d3-force-3d').then(d3 => {
+      graphInstance.d3Force('collide', d3.forceCollide().radius(8));
+    });
+  }
+  
   // 啟用自動旋轉
   if (autoRotate.value) {
     startAutoRotate();
@@ -591,7 +601,7 @@ const handleNodeDrag = (node) => {
 // 節點拖曳結束 (恢復物理參數)
 const handleNodeDragEnd = (node) => {
   if (graphInstance) {
-    graphInstance.d3Force('charge').strength(-120);
+    graphInstance.d3Force('charge').strength(-150);
   }
 };
 
