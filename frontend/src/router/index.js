@@ -10,7 +10,6 @@ const GraphPage = () => import('@/views/GraphPage.vue');
 const CrossGraphPage = () => import('@/views/CrossGraphPage.vue');
 const NexusPage = () => import('@/views/NexusPage.vue');
 const SystemMonitorPage = () => import('@/views/SystemMonitorPage.vue');
-const ImportPage = () => import('@/views/ImportPage.vue');
 const FileImport = () => import('@/views/FileImport.vue');
 const TimelinePage = () => import('@/views/TimelinePage.vue');
 const ChatPage = () => import('@/views/ChatPage.vue');
@@ -59,15 +58,7 @@ const routes = [
       icon: '🌐'
     }
   },
-  {
-    path: '/import',
-    name: 'Import',
-    component: ImportPage,
-    meta: {
-      title: '資料導入',
-      icon: '📥'
-    }
-  },
+
   {
     path: '/cross-graph',
     name: 'CrossGraph',

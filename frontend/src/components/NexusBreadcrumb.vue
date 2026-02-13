@@ -71,7 +71,6 @@ const graphStore = useGraphStore();
 const routeBreadcrumbMap = {
   '/nexus':        { label: '主頁', parent: null },
   '/graph-page':   { label: '圖譜工作台', parent: '/nexus' },
-  '/import':       { label: '資料導入', parent: '/graph-page' },
   '/file-import':  { label: '檔案上傳', parent: '/graph-page' },
   '/cross-graph':  { label: '跨圖譜連接', parent: '/nexus' },
   '/graph-3d':     { label: '3D 圖譜', parent: '/graph-page' },
@@ -109,7 +108,7 @@ const breadcrumbs = computed(() => {
 
 // 當前圖譜名稱
 const currentGraphName = computed(() => {
-  const graphPages = ['/graph-page', '/graph-3d', '/import', '/file-import', '/cross-graph'];
+  const graphPages = ['/graph-page', '/graph-3d', '/file-import', '/cross-graph'];
   if (!graphPages.includes(route.path)) return null;
   
   // 嘗試從 graphMetadataList 取得名稱
