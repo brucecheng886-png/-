@@ -9,6 +9,7 @@ import os
 import re
 import logging
 import shutil
+import asyncio
 from pathlib import Path
 from datetime import datetime
 from backend.core.config import load_config_from_file, save_config_to_file, get_current_api_keys, settings
@@ -540,8 +541,10 @@ async def upload_file(
                     if uploaded_docs:
                         doc_ids = [d["id"] for d in uploaded_docs if "id" in d]
                         if doc_ids:
-                            # ✨ 解析前先設定 chunk 大小（避免超過 embedding 模型上下文長度）
                             chunk_token_num = settings.RAGFLOW_CHUNK_TOKEN_NUM
+                            logger.info(f"📋 準備設定 {len(doc_ids)} 份文檔 chunk_token_num={chunk_token_num}")
+
+                            # ── 步驟 1: 設定每份文檔的解析器參數 ──
                             for doc_id in doc_ids:
                                 try:
                                     await rag_client.async_update_document(
@@ -554,6 +557,30 @@ async def upload_file(
                                 except Exception as cfg_err:
                                     logger.warning(f"⚠️ 設定 parser_config 失敗: {cfg_err}")
 
+                            # ── 步驟 2: 驗證設定是否生效 ──
+                            await asyncio.sleep(2)  # 等待 RAGFlow 落盤
+                            for doc_id in doc_ids:
+                                try:
+                                    doc_status = await rag_client.async_get_document_status(
+                                        dataset_id=ragflow_dataset_id,
+                                        document_id=doc_id
+                                    )
+                                    actual_config = doc_status.get('parser_config', {})
+                                    actual_chunk = actual_config.get('chunk_token_num', '未知')
+                                    logger.info(f"🔍 驗證文檔 {doc_id}: chunk_token_num={actual_chunk} (預期={chunk_token_num})")
+                                    if actual_chunk != chunk_token_num and actual_chunk != '未知':
+                                        logger.warning(f"⚠️ chunk_token_num 不符! 重試設定...")
+                                        await rag_client.async_update_document(
+                                            dataset_id=ragflow_dataset_id,
+                                            document_id=doc_id,
+                                            chunk_method="naive",
+                                            parser_config={"chunk_token_num": chunk_token_num}
+                                        )
+                                        await asyncio.sleep(1)
+                                except Exception as verify_err:
+                                    logger.warning(f"⚠️ 驗證 parser_config 失敗: {verify_err}")
+
+                            # ── 步驟 3: 觸發解析 ──
                             import httpx
                             async with httpx.AsyncClient(timeout=300) as parse_client:
                                 parse_resp = await parse_client.post(
@@ -565,7 +592,7 @@ async def upload_file(
                                     json={"document_ids": doc_ids}
                                 )
                                 parse_resp.raise_for_status()
-                                logger.info(f"✅ 已觸發 RAGFlow 文檔解析: {doc_ids}")
+                                logger.info(f"✅ 已觸發 RAGFlow 文檔解析: {doc_ids} (chunk_token_num={chunk_token_num})")
                                 ragflow_doc_ids = doc_ids
             except Exception as e:
                 logger.warning(f"⚠️ RAGFlow 上傳失敗（繼續處理）: {e}")
