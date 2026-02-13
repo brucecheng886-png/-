@@ -780,7 +780,7 @@ const handleCreateGraph = async () => {
             customClass: 'dark-message-box'
           }
         );
-        router.push({ path: '/file-import', query: { graphId: newGraph.id } });
+        router.push({ path: '/import', query: { graphId: newGraph.id } });
       } catch {
         // 使用者選擇稍後再說，留在當前頁面
       }
