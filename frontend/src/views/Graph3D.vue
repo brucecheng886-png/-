@@ -67,10 +67,6 @@ let animationFrameId = null;
 // ===== 共享幾何體（效能關鍵：所有節點重用同一份頂點數據） =====
 const sharedGeo = {
   main:      new THREE.SphereGeometry(1, 32, 32),   // 主球體（unit sphere，渲染時用 scale 控制大小）
-  mainLarge: new THREE.SphereGeometry(1, 32, 32),   // 選中放大版（同 geometry）
-  glow:      new THREE.SphereGeometry(1.08, 16, 16), // 外發光層（縮小避免重疊）
-  pulse:     new THREE.SphereGeometry(1.25, 16, 16), // 脈衝光暈（僅選中節點）
-  highlight: new THREE.SphereGeometry(0.3, 8, 8),    // 高光反射點
 };
 
 // 節點類型配置
@@ -475,49 +471,6 @@ const initGraph = async () => {
         })
       );
       mesh.scale.set(nodeSize, nodeSize, nodeSize);
-      
-      // 2. 外發光層（縮小並降低透明度，避免重疊成藍色一片）
-      const glowMesh = new THREE.Mesh(
-        sharedGeo.glow,
-        new THREE.MeshBasicMaterial({
-          color: node.color || '#448aff',
-          transparent: true,
-          opacity: (isSelected ? 0.15 : 0.04) * fadeAlpha,
-          side: THREE.BackSide,
-          blending: THREE.AdditiveBlending
-        })
-      );
-      glowMesh.scale.set(nodeSize, nodeSize, nodeSize);
-      mesh.add(glowMesh);
-      
-      // 🌟 選中節點：額外脈衝光暈（共享幾何體）
-      if (isSelected) {
-        const pulseMesh = new THREE.Mesh(
-          sharedGeo.pulse,
-          new THREE.MeshBasicMaterial({
-            color: '#fbbf24',
-            transparent: true,
-            opacity: 0.15,
-            side: THREE.BackSide,
-            blending: THREE.AdditiveBlending
-          })
-        );
-        pulseMesh.scale.set(nodeSize, nodeSize, nodeSize);
-        mesh.add(pulseMesh);
-      }
-      
-      // 3. 高光反射點（共享幾何體）
-      const highlight = new THREE.Mesh(
-        sharedGeo.highlight,
-        new THREE.MeshBasicMaterial({
-          color: 0xffffff,
-          transparent: true,
-          opacity: 0.6 * fadeAlpha
-        })
-      );
-      highlight.scale.set(nodeSize, nodeSize, nodeSize);
-      highlight.position.set(nodeSize * 0.3, nodeSize * 0.3, nodeSize * 0.3);
-      mesh.add(highlight);
       
       // 4. 添加圖標標記（使用快取的 Sprite 紋理）
       if (node.emoji) {
