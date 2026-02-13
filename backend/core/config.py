@@ -31,7 +31,7 @@ def load_config_from_file() -> Dict[str, Any]:
     with _config_lock:
         if CONFIG_FILE_PATH.exists():
             try:
-                with open(CONFIG_FILE_PATH, 'r', encoding='utf-8') as f:
+                with open(CONFIG_FILE_PATH, 'r', encoding='utf-8-sig') as f:
                     config = json.load(f)
                     logger.debug(f"從 {CONFIG_FILE_PATH} 載入配置")
                     return config
@@ -50,7 +50,7 @@ def save_config_to_file(config: Dict[str, Any]) -> bool:
             existing = {}
             if CONFIG_FILE_PATH.exists():
                 try:
-                    with open(CONFIG_FILE_PATH, 'r', encoding='utf-8') as f:
+                    with open(CONFIG_FILE_PATH, 'r', encoding='utf-8-sig') as f:
                         existing = json.load(f)
                 except Exception:
                     pass
