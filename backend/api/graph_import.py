@@ -42,6 +42,27 @@ CHECKPOINT_DIR.mkdir(parents=True, exist_ok=True)
 
 # ===== 全域任務追蹤器 =====
 _import_tasks: Dict[str, Dict[str, Any]] = {}
+_TASK_EXPIRY_SECONDS = 3600  # 完成的任務保留 1 小時後自動清理
+
+
+def _cleanup_expired_tasks():
+    """清理已過期的完成任務（釋放記憶體，特別是 3000 節點的 nodes 陣列）"""
+    now = datetime.now()
+    expired = []
+    for tid, task in _import_tasks.items():
+        if task.get("status") in ("done", "error"):
+            finished_str = task.get("finished_at")
+            if finished_str:
+                try:
+                    finished = datetime.fromisoformat(finished_str)
+                    if (now - finished).total_seconds() > _TASK_EXPIRY_SECONDS:
+                        expired.append(tid)
+                except (ValueError, TypeError):
+                    pass
+    for tid in expired:
+        del _import_tasks[tid]
+    if expired:
+        logger.info(f"🗑️ 已清理 {len(expired)} 個過期任務")
 
 
 # ===== Token 估算 & 自適應批次大小 =====
@@ -573,7 +594,10 @@ async def _run_import(
                     "size": 20,
                     "keywords": llm.get("keywords", []),
                     "suggested_links": llm.get("suggested_links", []),
-                    "raw_data": df.iloc[global_i].to_dict(),
+                    "raw_data": {
+                        k: (None if pd.isna(v) else v)
+                        for k, v in df.iloc[global_i].to_dict().items()
+                    },
                 }
                 nodes.append(node)
         
@@ -936,6 +960,9 @@ async def get_import_status(task_id: str):
     - nodes: 完整節點結果 (僅在 status=done 時回傳)
     - error: 錯誤訊息 (僅在 status=error 時回傳)
     """
+    # 每次查詢時順便清理過期任務
+    _cleanup_expired_tasks()
+    
     task = _import_tasks.get(task_id)
     if not task:
         raise HTTPException(status_code=404, detail="任務不存在或已過期")

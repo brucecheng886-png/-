@@ -700,6 +700,150 @@ const clearFiles = () => {
   uploadStatus.value = 'ready';
 };
 
+/**
+ * 判斷是否為 Excel/CSV 檔案
+ */
+const isExcelFile = (filename) => {
+  const ext = filename.toLowerCase().split('.').pop();
+  return ['xlsx', 'xls', 'csv'].includes(ext);
+};
+
+/**
+ * Excel/CSV 批次匯入 — 走 graph_import.py 的背景任務流程
+ * 每行獨立建成圖譜節點 + 獨立上傳 RAGFlow (解決 bge-m3 長度限制)
+ */
+const handleExcelBatchImport = async (file) => {
+  const graphId = selectedGraphId.value;
+  const datasetId = (enableAILink.value && selectedDatasetId.value) ? selectedDatasetId.value : '';
+  
+  console.log(`📊 [Excel批次] 開始匯入: ${file.name}, graph_id=${graphId}, ragflow=${datasetId}`);
+  currentProcessingFile.value = file.name;
+  processingStage.value = '📤 正在上傳 Excel 至批次處理引擎...';
+  
+  // 構建 FormData
+  const formData = new FormData();
+  formData.append('file', file);
+  if (graphId) formData.append('graph_id', graphId);
+  if (datasetId) formData.append('ragflow_dataset_id', datasetId);
+  
+  try {
+    const response = await authFetch('/api/graph/import/excel', {
+      method: 'POST',
+      body: formData
+    });
+    
+    const result = await response.json();
+    
+    if (result.task_id) {
+      processingStage.value = `⏳ 背景任務已啟動 (${result.total} 筆資料)...`;
+      
+      // 加入結果列表
+      const resultIndex = uploadResults.value.length;
+      uploadResults.value.push({
+        success: true,
+        filename: file.name,
+        message: `📊 Excel 批次匯入已啟動 (${result.total} 筆)`,
+        processingProgress: '5%',
+        processingStage: `🤖 AI 分析中 (0/${result.total})...`,
+        stage1Done: true,
+        stage2Done: false,
+        stage3Done: false,
+        isBatchImport: true,
+        taskId: result.task_id,
+        totalRows: result.total
+      });
+      
+      // 啟動進度輪詢
+      pollBatchProgress(resultIndex, result.task_id);
+    } else {
+      throw new Error(result.detail || '批次匯入啟動失敗');
+    }
+  } catch (error) {
+    console.error('❌ Excel 批次匯入錯誤:', error);
+    uploadResults.value.push({
+      success: false,
+      filename: file.name,
+      error: error.message || '批次匯入失敗'
+    });
+  }
+};
+
+/**
+ * 輪詢批次匯入進度 (graph_import.py 背景任務)
+ */
+const pollBatchProgress = async (resultIndex, taskId) => {
+  const maxAttempts = 600; // 最多 30 分鐘 (每 3 秒一次)
+  let attempts = 0;
+  
+  while (attempts < maxAttempts) {
+    await new Promise(resolve => setTimeout(resolve, 3000));
+    attempts++;
+    
+    if (!uploadResults.value[resultIndex]) break;
+    
+    try {
+      const response = await authFetch(`/api/graph/import/status/${taskId}`);
+      const status = await response.json();
+      
+      const pct = Math.round(status.progress_pct || 0);
+      const completed = status.completed || 0;
+      const total = status.total || 1;
+      const failed = status.failed || 0;
+      
+      // 更新進度 (LLM 分析佔 0-80%, KuzuDB+RAGFlow 佔 80-100%)
+      const displayPct = Math.min(pct * 0.8, 80);
+      uploadResults.value[resultIndex].processingProgress = `${displayPct}%`;
+      
+      // 構建帶 ETA 的進度文字
+      let stageText = `🤖 AI 分析中 (${completed}/${total})`;
+      const etaParts = [];
+      if (status.eta_seconds != null && status.eta_seconds > 0) {
+        const eta = status.eta_seconds;
+        etaParts.push(eta < 60 ? `剩余 ${Math.round(eta)}s` : `剩余 ${Math.floor(eta/60)}m${Math.round(eta%60)}s`);
+      }
+      if (status.rows_per_sec > 0) etaParts.push(`${status.rows_per_sec} 筆/秒`);
+      if (status.total_batches > 0) etaParts.push(`批次 ${status.completed_batches || 0}/${status.total_batches}`);
+      if (etaParts.length > 0) stageText += ` · ${etaParts.join(' · ')}`;
+      if (status.fast_mode) stageText += ' ⚡';
+      uploadResults.value[resultIndex].processingStage = stageText + '...';
+      
+      if (status.status === 'done') {
+        const kuzuSaved = status.kuzu_saved || completed;
+        const ragflowUploaded = status.ragflow_uploaded || 0;
+        
+        uploadResults.value[resultIndex].processingProgress = '100%';
+        uploadResults.value[resultIndex].processingStage = 
+          `✅ 完成！${kuzuSaved} 個圖譜節點` + 
+          (ragflowUploaded > 0 ? `，${ragflowUploaded} 筆知識上傳 RAGFlow` : '');
+        uploadResults.value[resultIndex].stage2Done = true;
+        uploadResults.value[resultIndex].stage3Done = true;
+        uploadResults.value[resultIndex].message = 
+          `✅ ${uploadResults.value[resultIndex].filename} 匯入完成 (${kuzuSaved} 節點, ${failed} 失敗)`;
+        
+        console.log(`🎉 批次匯入完成: ${kuzuSaved} 節點, ${ragflowUploaded} RAGFlow, ${failed} 失敗`);
+        
+        // 刷新圖譜數據
+        try {
+          if (selectedGraphId.value) {
+            await graphStore.fetchGraphData(selectedGraphId.value);
+          }
+        } catch (e) {
+          console.warn('⚠️ 刷新圖譜失敗:', e);
+        }
+        break;
+      } else if (status.status === 'error') {
+        uploadResults.value[resultIndex].processingProgress = '100%';
+        uploadResults.value[resultIndex].processingStage = `❌ 匯入失敗: ${status.error || '未知錯誤'}`;
+        uploadResults.value[resultIndex].success = false;
+        uploadResults.value[resultIndex].stage2Done = true;
+        break;
+      }
+    } catch (error) {
+      console.warn('⚠️ 進度查詢失敗:', error);
+    }
+  }
+};
+
 const uploadFiles = async () => {
   if (files.value.length === 0 || uploadStatus.value === 'uploading') return;
 
@@ -733,6 +877,17 @@ const uploadFiles = async () => {
     for (let i = 0; i < files.value.length; i++) {
       const file = files.value[i];
       currentProcessingFile.value = file.name;
+      
+      // ===== Excel/CSV 走批次匯入流程 =====
+      if (isExcelFile(file.name)) {
+        processingStage.value = '📊 偵測到 Excel，啟動批次匯入...';
+        await handleExcelBatchImport(file);
+        uploadedCount.value++;
+        uploadProgress.value = (uploadedCount.value / files.value.length) * 100;
+        continue;  // Excel 有自己的進度輪詢，不走下面的邏輯
+      }
+      
+      // ===== 非 Excel 走原有 /api/system/upload 流程 =====
       processingStage.value = '📤 正在上傳檔案到伺服器...';
       
       try {
