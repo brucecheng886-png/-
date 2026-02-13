@@ -95,7 +95,7 @@ class Settings(BaseSettings):
 
     RAGFLOW_API_URL: str = "http://localhost:9380/api/v1"
     RAGFLOW_API_KEY: str = ""
-    RAGFLOW_CHUNK_TOKEN_NUM: int = 128   # RAGFlow 分塊大小（防 embedding 超限，128 適合多數本地模型）
+    RAGFLOW_CHUNK_TOKEN_NUM: int = 256   # RAGFlow 分塊大小（256 兼顧上下文完整性與 embedding 限制）
 
     # 資料目錄
     BRUV_DATA_DIR: str = Field(default_factory=lambda: str(_DATA_DIR))

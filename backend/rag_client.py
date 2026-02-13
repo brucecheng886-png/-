@@ -212,9 +212,9 @@ class RAGFlowClient:
         dataset_ids: list[str],
         page: int = 1,
         page_size: int = 10,
-        similarity_threshold: float = 0.2,
-        vector_similarity_weight: float = 0.3,
-        top_k: int = 1024,
+        similarity_threshold: float = 0.4,
+        vector_similarity_weight: float = 0.6,
+        top_k: int = 256,
         rerank_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """混合檢索 (Hybrid Search) + 可選 Rerank
@@ -223,9 +223,9 @@ class RAGFlowClient:
             question: 查詢問題
             dataset_ids: 目標知識庫 ID 列表
             page / page_size: 分頁參數
-            similarity_threshold: 最低相似度門檻
-            vector_similarity_weight: 向量 vs 關鍵字 權重 (0~1，越大越偏向量)
-            top_k: 初篩範圍（擴大可提升召回率）
+            similarity_threshold: 最低相似度門檻 (0.4 過濾低品質結果)
+            vector_similarity_weight: 向量 vs 關鍵字 權重 (0~1，0.6 偏語意搜尋)
+            top_k: 初篩範圍 (256 適合中小型知識庫)
             rerank_id: Rerank 模型 ID（傳 None 則不啟用重排序）
         """
         payload: Dict[str, Any] = {

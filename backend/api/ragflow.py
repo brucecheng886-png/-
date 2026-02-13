@@ -31,9 +31,9 @@ class RAGFlowQuery(BaseModel):
     dataset_ids: List[str] = []
     page: int = 1
     page_size: int = 10
-    similarity_threshold: float = 0.2
-    vector_similarity_weight: float = 0.3
-    top_k: int = 1024
+    similarity_threshold: float = 0.4    # ↑ 0.2→0.4 過濾低品質結果
+    vector_similarity_weight: float = 0.6  # ↑ 0.3→0.6 偏向語意搜尋
+    top_k: int = 256                       # ↓ 1024→256 降低延遲
     rerank_id: Optional[str] = None
 
 
