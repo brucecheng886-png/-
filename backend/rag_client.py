@@ -85,6 +85,23 @@ class RAGFlowClient:
             resp.raise_for_status()
             return self._check_response(resp.json())
 
+    async def async_update_document(
+        self,
+        dataset_id: str,
+        document_id: str,
+        chunk_method: str = "naive",
+        parser_config: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
+        """非同步更新文檔的解析器設定（chunk_method / parser_config）"""
+        url = f"{self.base_url}/datasets/{dataset_id}/documents/{document_id}"
+        payload: Dict[str, Any] = {"chunk_method": chunk_method}
+        if parser_config:
+            payload["parser_config"] = parser_config
+        async with httpx.AsyncClient(timeout=30) as client:
+            resp = await client.put(url, headers={**self._headers, 'Content-Type': 'application/json'}, json=payload)
+            resp.raise_for_status()
+            return self._check_response(resp.json())
+
     # ---------- 同步方法（向下相容，供 WatcherService 線程使用） ----------
 
     def upload_file(

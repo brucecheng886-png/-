@@ -540,6 +540,20 @@ async def upload_file(
                     if uploaded_docs:
                         doc_ids = [d["id"] for d in uploaded_docs if "id" in d]
                         if doc_ids:
+                            # ✨ 解析前先設定 chunk 大小（避免超過 embedding 模型上下文長度）
+                            chunk_token_num = settings.RAGFLOW_CHUNK_TOKEN_NUM
+                            for doc_id in doc_ids:
+                                try:
+                                    await rag_client.async_update_document(
+                                        dataset_id=ragflow_dataset_id,
+                                        document_id=doc_id,
+                                        chunk_method="naive",
+                                        parser_config={"chunk_token_num": chunk_token_num}
+                                    )
+                                    logger.info(f"✅ 已設定文檔 {doc_id} chunk_token_num={chunk_token_num}")
+                                except Exception as cfg_err:
+                                    logger.warning(f"⚠️ 設定 parser_config 失敗: {cfg_err}")
+
                             import httpx
                             async with httpx.AsyncClient(timeout=300) as parse_client:
                                 parse_resp = await parse_client.post(

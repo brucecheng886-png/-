@@ -546,35 +546,26 @@ const initGraph = async () => {
       return mesh;
     });
   
-  // 🌟 添加場景光照系統（增強版：補償移除的逐節點燈光）
+  // 🌟 添加場景光照系統（精簡版：避免 WebGL too-many-uniforms）
   const scene = graphInstance.scene();
   
-  // 1. 環境光（提供基礎亮度，提高強度補償移除的逐節點光）
-  const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
-  scene.add(ambientLight);
+  // ⚡ 先清除場景內所有燈光（含 3d-force-graph 預設燈）避免累積
+  scene.children
+    .filter(c => c.isLight)
+    .forEach(light => scene.remove(light));
   
-  // 2. 主方向光（模擬太陽光）
-  const directionalLight = new THREE.DirectionalLight(0xffffff, 1.0);
-  directionalLight.position.set(100, 100, 100);
-  scene.add(directionalLight);
+  // 1. 環境光（提供基礎亮度）
+  scene.add(new THREE.AmbientLight(0xffffff, 0.7));
   
-  // 3. 補充方向光（減少陰影，多角度補光）
-  const fillLight = new THREE.DirectionalLight(0xffffff, 0.5);
-  fillLight.position.set(-50, -50, -50);
+  // 2. 主方向光（單盞源模擬太陽）
+  const mainLight = new THREE.DirectionalLight(0xffffff, 1.0);
+  mainLight.position.set(80, 100, 80);
+  scene.add(mainLight);
+  
+  // 3. 補光（從對方向減少暗部）
+  const fillLight = new THREE.DirectionalLight(0xffffff, 0.4);
+  fillLight.position.set(-60, -40, -60);
   scene.add(fillLight);
-  
-  // 4. 第三補光（從下方/側面填充暗部）
-  const rimLight = new THREE.DirectionalLight(0x6688ff, 0.3);
-  rimLight.position.set(0, -80, 60);
-  scene.add(rimLight);
-  
-  // 5. 半球光（天空和地面的顏色漸變）
-  const hemisphereLight = new THREE.HemisphereLight(
-    0x4466ff,  // 天空顏色
-    0x080820,  // 地面顏色
-    0.6
-  );
-  scene.add(hemisphereLight);
   
   // 設置相機位置
   graphInstance.cameraPosition({ z: 300 });
