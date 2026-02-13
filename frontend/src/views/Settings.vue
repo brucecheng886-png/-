@@ -428,13 +428,17 @@ const loadConfig = async () => {
   }
 };
 
+// 檢測是否為遮罩後的 API Key（包含連續 ***）
+const isMaskedKey = (key) => key && key.includes('***');
+
 // 儲存配置
 const saveConfig = async () => {
   saving.value = true;
   try {
     const payload = {};
-    if (config.value.dify_key) payload.dify_key = config.value.dify_key;
-    if (config.value.ragflow_key) payload.ragflow_key = config.value.ragflow_key;
+    // 跳過遮罩 key（代表使用者未修改，不應回傳覆蓋真實金鑰）
+    if (config.value.dify_key && !isMaskedKey(config.value.dify_key)) payload.dify_key = config.value.dify_key;
+    if (config.value.ragflow_key && !isMaskedKey(config.value.ragflow_key)) payload.ragflow_key = config.value.ragflow_key;
     if (config.value.dify_api_url) payload.dify_api_url = config.value.dify_api_url;
     if (config.value.ragflow_api_url) payload.ragflow_api_url = config.value.ragflow_api_url;
     

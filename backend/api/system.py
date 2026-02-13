@@ -53,6 +53,13 @@ def mask_api_key(key: Optional[str]) -> str:
     return f"{key[:5]}{'*' * (len(key) - 5)}"
 
 
+def is_masked_key(key: Optional[str]) -> bool:
+    """檢測是否為遮罩後的 API Key（包含連續 * 號）"""
+    if not key:
+        return False
+    return '***' in key
+
+
 def read_env_file() -> dict:
     """讀取 .env 檔案內容"""
     env_path = get_env_file_path()
@@ -200,14 +207,20 @@ async def update_config(request: ConfigUpdateRequest):
     try:
         config_updates = {}
         
-        # 準備要更新的配置
+        # 準備要更新的配置（跳過遮罩值，防止前端將 masked key 存回）
         if request.dify_key:
-            config_updates['dify_api_key'] = request.dify_key
-            logger.info("準備更新 dify_api_key")
+            if is_masked_key(request.dify_key):
+                logger.warning("忽略遮罩的 dify_api_key，不更新")
+            else:
+                config_updates['dify_api_key'] = request.dify_key
+                logger.info("準備更新 dify_api_key")
         
         if request.ragflow_key:
-            config_updates['ragflow_api_key'] = request.ragflow_key
-            logger.info("準備更新 ragflow_api_key")
+            if is_masked_key(request.ragflow_key):
+                logger.warning("忽略遮罩的 ragflow_api_key，不更新")
+            else:
+                config_updates['ragflow_api_key'] = request.ragflow_key
+                logger.info("準備更新 ragflow_api_key")
         
         if request.dify_api_url:
             config_updates['dify_api_url'] = request.dify_api_url
