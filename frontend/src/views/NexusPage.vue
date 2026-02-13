@@ -90,23 +90,21 @@
                 </div>
               </div>
             </template>
+            <template #footer>
+              <div 
+                @click="createNewGraph"
+                class="group relative bg-nexus-surface/30 rounded-2xl p-6 border-2 border-dashed border-white/10 hover:border-neon-blue/50 transition-all duration-300 cursor-pointer flex flex-col items-center justify-center gap-4 min-h-[280px]"
+              >
+                <div class="w-16 h-16 rounded-full bg-white/5 group-hover:bg-neon-blue/10 border border-white/10 group-hover:border-neon-blue/30 flex items-center justify-center transition-all duration-300">
+                  <span class="text-3xl text-text-tertiary group-hover:text-neon-blue transition-colors">+</span>
+                </div>
+                <div class="text-center">
+                  <h3 class="text-base font-medium text-white mb-1">Create New Universe</h3>
+                  <p class="text-sm text-text-tertiary">Start a fresh knowledge graph</p>
+                </div>
+              </div>
+            </template>
           </draggable>
-
-          <!-- 新建卡片（獨立於拖拽列表之外） -->
-          <div class="mt-6 grid grid-cols-1 md:grid-cols-2 gap-6">
-            <div 
-              @click="createNewGraph"
-              class="group relative bg-nexus-surface/30 rounded-2xl p-6 border-2 border-dashed border-white/10 hover:border-neon-blue/50 transition-all duration-300 cursor-pointer flex flex-col items-center justify-center gap-4 min-h-[280px]"
-            >
-              <div class="w-16 h-16 rounded-full bg-white/5 group-hover:bg-neon-blue/10 border border-white/10 group-hover:border-neon-blue/30 flex items-center justify-center transition-all duration-300">
-                <span class="text-3xl text-text-tertiary group-hover:text-neon-blue transition-colors">+</span>
-              </div>
-              <div class="text-center">
-                <h3 class="text-base font-medium text-white mb-1">Create New Universe</h3>
-                <p class="text-sm text-text-tertiary">Start a fresh knowledge graph</p>
-              </div>
-            </div>
-          </div>
         </div>
       </div>
 
