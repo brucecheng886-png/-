@@ -16,11 +16,16 @@ echo.
 REM 切換到腳本所在目錄
 cd /d "%~dp0"
 
-REM 檢查虛擬環境
+REM 檢查虛擬環境（先找本目錄，再找上層，相容舊安裝）
 echo [1/4] 檢查 Python 環境...
-set VENV_PATH=%~dp0..\..\..\.venv\Scripts\python.exe
+set VENV_PATH=%~dp0.venv\Scripts\python.exe
 if not exist "%VENV_PATH%" (
-    echo ❌ 找不到虛擬環境，請先安裝：
+    set VENV_PATH=%~dp0..\.venv\Scripts\python.exe
+)
+if not exist "%VENV_PATH%" (
+    echo ❌ 找不到虛擬環境，請先執行安裝腳本：
+    echo    INSTALL.bat
+    echo 或手動安裝：
     echo    python -m venv .venv
     echo    .venv\Scripts\activate
     echo    pip install -r requirements.txt
@@ -28,6 +33,9 @@ if not exist "%VENV_PATH%" (
     exit /b 1
 )
 echo ✅ Python 環境正常
+
+REM 設定 activate 路徑（從 VENV_PATH 推導）
+for %%P in ("%VENV_PATH%") do set VENV_ACTIVATE=%%~dpPactivate.bat
 
 REM 檢查 Docker
 echo.
@@ -89,7 +97,7 @@ echo.
 
 REM 啟動後端
 echo 🚀 啟動後端服務...
-start "BruV Backend" cmd /k "cd /d %~dp0 && call %~dp0..\..\..\.venv\Scripts\activate && python -m uvicorn app_anytype:app --host 127.0.0.1 --port 8000 --reload"
+start "BruV Backend" cmd /k "cd /d %~dp0 && call "%VENV_ACTIVATE%" && python -m uvicorn app_anytype:app --host 127.0.0.1 --port 8000 --reload"
 timeout /t 3 >nul
 
 REM 啟動前端
@@ -122,7 +130,7 @@ goto END
 echo.
 echo [4/4] 啟動後端服務...
 echo.
-start "BruV Backend" cmd /k "cd /d %~dp0 && call %~dp0..\..\..\.venv\Scripts\activate && python -m uvicorn app_anytype:app --host 0.0.0.0 --port 8000 --reload"
+start "BruV Backend" cmd /k "cd /d %~dp0 && call "%VENV_ACTIVATE%" && python -m uvicorn app_anytype:app --host 0.0.0.0 --port 8000 --reload"
 timeout /t 5 >nul
 start http://localhost:8000/docs
 echo ✅ 後端已啟動: http://localhost:8000
@@ -140,7 +148,7 @@ timeout /t 5 >nul
 
 REM 啟動後端
 echo 🚀 啟動後端服務...
-start "BruV Backend" cmd /k "cd /d %~dp0 && call %~dp0..\..\..\.venv\Scripts\activate && python -m uvicorn app_anytype:app --host 127.0.0.1 --port 8000 --reload"
+start "BruV Backend" cmd /k "cd /d %~dp0 && call "%VENV_ACTIVATE%" && python -m uvicorn app_anytype:app --host 127.0.0.1 --port 8000 --reload"
 timeout /t 3 >nul
 
 REM 啟動前端

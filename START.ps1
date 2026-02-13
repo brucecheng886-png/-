@@ -17,18 +17,25 @@ Set-Location $scriptPath
 
 # [1/4] 檢查 Python 環境
 Write-Host "[1/4] 檢查 Python 環境..." -ForegroundColor Yellow
-$venvPython = Join-Path (Split-Path -Parent (Split-Path -Parent $scriptPath)) ".venv\Scripts\python.exe"
+
+# 搜尋 .venv：先找本目錄，再找上層（相容舊安裝）
+$venvPython = Join-Path $scriptPath ".venv\Scripts\python.exe"
+if (-not (Test-Path $venvPython)) {
+    $venvPython = Join-Path (Split-Path -Parent $scriptPath) ".venv\Scripts\python.exe"
+}
 
 if (-not (Test-Path $venvPython)) {
     Write-Host "❌ 找不到虛擬環境" -ForegroundColor Red
-    Write-Host "請先執行以下命令安裝：" -ForegroundColor Yellow
+    Write-Host "請先執行安裝腳本：" -ForegroundColor Yellow
+    Write-Host "  .\INSTALL.bat" -ForegroundColor White
+    Write-Host "或手動安裝：" -ForegroundColor Yellow
     Write-Host "  python -m venv .venv" -ForegroundColor White
     Write-Host "  .venv\Scripts\activate" -ForegroundColor White
     Write-Host "  pip install -r requirements.txt" -ForegroundColor White
     pause
     exit 1
 }
-Write-Host "✅ Python 環境正常" -ForegroundColor Green
+Write-Host "✅ Python 環境: $venvPython" -ForegroundColor Green
 
 # [2/4] 檢查 Docker
 Write-Host ""
