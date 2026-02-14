@@ -596,6 +596,9 @@ export const useGraphStore = defineStore('graph', () => {
 
     const stats = { success: 0, skipped: 0, failed: 0, lastNodeId: null };
     const newNodes = [];
+    
+    // 使用 Set 做 O(1) 去重（而非 O(N) 遍歷）
+    const existingIds = new Set(nodes.value.map(n => n.id));
 
     nodeArray.forEach(node => {
       try {
@@ -605,9 +608,7 @@ export const useGraphStore = defineStore('graph', () => {
           return;
         }
 
-        const exists = nodes.value.some(n => n.id === node.id);
-        if (exists) {
-          console.warn('⚠️ 節點已存在，跳過:', node.id);
+        if (existingIds.has(node.id)) {
           stats.skipped++;
           return;
         }
@@ -860,21 +861,26 @@ export const useGraphStore = defineStore('graph', () => {
           importStatus.value = 'done';
           cancelImportPoll();
           
-          // 將結果節點加入圖譜
-          if (Array.isArray(data.nodes) && data.nodes.length > 0) {
-            const stats = addBatchNodes(data.nodes);
-            console.log(`🎉 Excel 匯入完成: ${stats.success} 個節點已加入圖譜`);
-            
-            // 加入匯入檔案列表
-            importedFiles.value.unshift({
-              id: Date.now(),
-              nodeId: data.nodes[0]?.id,
-              name: data.filename || 'Excel 匯入',
-              ext: 'XLSX',
-              status: `✅ ${stats.success} 個節點`,
-              timestamp: Date.now()
-            });
+          // 從 KuzuDB 重新載入圖譜（而非從 status API 讀取 3000 節點 JSON）
+          const graphId = data.graph_id;
+          if (graphId) {
+            try {
+              await fetchGraphData(graphId);
+              console.log(`🎉 Excel 匯入完成: ${data.node_count || data.completed || 0} 個節點已載入圖譜`);
+            } catch (fetchErr) {
+              console.warn('⚠️ 刷新圖譜失敗:', fetchErr);
+            }
           }
+            
+          // 加入匯入檔案列表
+          importedFiles.value.unshift({
+            id: Date.now(),
+            nodeId: null,
+            name: data.filename || 'Excel 匯入',
+            ext: 'XLSX',
+            status: `✅ ${data.node_count || data.completed || 0} 個節點`,
+            timestamp: Date.now()
+          });
           
           // 5 秒後自動重置進度狀態
           setTimeout(() => {

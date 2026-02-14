@@ -772,7 +772,7 @@ const handleExcelBatchImport = async (file) => {
  * 輪詢批次匯入進度 (graph_import.py 背景任務)
  */
 const pollBatchProgress = async (resultIndex, taskId) => {
-  const maxAttempts = 600; // 最多 30 分鐘 (每 3 秒一次)
+  const maxAttempts = 2400; // 最多 2 小時 (每 3 秒一次, 支援 3000+ 筆資料)
   let attempts = 0;
   
   while (attempts < maxAttempts) {

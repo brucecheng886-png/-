@@ -6,9 +6,11 @@ v5.0 — 3000 筆一次性分析:
 - 自適應批次大小: 根據文字長度動態調整 BATCH_SIZE (5~50)
 - 大量模式: >100 筆啟用 fast-mode prompt (省略 suggested_links, 精簡輸出)
 - 文字截斷: 每筆 ≤500 字送 LLM，原文保留在 raw_data
-- 高併發: MAX_CONCURRENCY=8, BATCH_DELAY=0.3s
+- 並發控制: MAX_CONCURRENCY=2 (本地 Ollama GPU), BATCH_DELAY=1.0s
 - ETA 追蹤: 即時回報預計剩餘時間 + 吞吐量
 - 背景任務 + 斷點續傳 + 指數退避重試
+- 記憶體管理: 完成後釋放 nodes 陣列，前端透過 fetchGraphData 載入
+- RAGFlow 合併上傳: 按類型分組 + 自動分割 >200KB 文件
 """
 from fastapi import APIRouter, HTTPException, UploadFile, File, Form, Request
 from typing import List, Dict, Any, Optional
@@ -42,7 +44,8 @@ CHECKPOINT_DIR.mkdir(parents=True, exist_ok=True)
 
 # ===== 全域任務追蹤器 =====
 _import_tasks: Dict[str, Dict[str, Any]] = {}
-_TASK_EXPIRY_SECONDS = 3600  # 完成的任務保留 1 小時後自動清理
+_TASK_EXPIRY_SECONDS = 7200  # 完成的任務保留 2 小時後自動清理
+MAX_RAGFLOW_FILE_BYTES = 200_000  # 合併 RAGFlow 文件大小上限 (超過則分割)
 
 
 def _cleanup_expired_tasks():
@@ -699,7 +702,7 @@ async def _run_import(
                     )
                     ragflow_api_url = api_keys.get('RAGFLOW_API_URL', 'http://localhost:9380/api/v1')
                     
-                    logger.info(f"📚 合併 {len(nodes)} 個節點為單一文件上傳 RAGFlow...")
+                    logger.info(f"📚 合併 {len(row_texts)} 個節點為單一文件上傳 RAGFlow...")
                     task["ragflow_stage"] = "uploading"
                     
                     # ---- 按類型分組，每組合併為一個 Markdown 文件 ----
@@ -729,40 +732,60 @@ async def _run_import(
                                 section += f"**原始資料**: {row_text}\n\n---\n"
                                 sections.append(section)
                             
-                            # 檔名使用原始 Excel 名 + 類型
+                            # ---- 按大小分割：超過 MAX_RAGFLOW_FILE_BYTES 自動拆分 ----
                             original_name = task.get("filename", "import").rsplit(".", 1)[0]
                             safe_type = type_name.replace("/", "_").replace("\\", "_")[:20]
-                            merged_filename = f"{original_name}_{safe_type}_{len(group_items)}筆.md"
                             
-                            merged_content = f"# {original_name} — {type_name}\n\n"
-                            merged_content += f"> 共 {len(group_items)} 筆資料，來源: Excel 批次匯入\n\n"
-                            merged_content += "\n".join(sections)
+                            chunks = []
+                            current_chunk = []
+                            current_size = 0
+                            for sec in sections:
+                                sec_bytes = len(sec.encode('utf-8'))
+                                if current_size + sec_bytes > MAX_RAGFLOW_FILE_BYTES and current_chunk:
+                                    chunks.append(current_chunk)
+                                    current_chunk = []
+                                    current_size = 0
+                                current_chunk.append(sec)
+                                current_size += sec_bytes
+                            if current_chunk:
+                                chunks.append(current_chunk)
                             
-                            tmp_file = temp_dir / merged_filename
-                            tmp_file.write_text(merged_content, encoding='utf-8')
-                            
-                            try:
-                                upload_result = await rag_client.async_upload_file(
-                                    dataset_id=ragflow_dataset_id,
-                                    file_path=str(tmp_file)
-                                )
-                                ragflow_uploaded += len(group_items)
+                            for chunk_idx, chunk_sections in enumerate(chunks):
+                                chunk_count = len(chunk_sections)
+                                suffix = f"_part{chunk_idx + 1}" if len(chunks) > 1 else ""
+                                merged_filename = f"{original_name}_{safe_type}_{chunk_count}筆{suffix}.md"
                                 
-                                # 提取 document_id
-                                docs = upload_result.get('data', [])
-                                if isinstance(docs, list):
-                                    for doc in docs:
-                                        if isinstance(doc, dict) and doc.get('id'):
-                                            uploaded_doc_ids.append(doc['id'])
-                                elif isinstance(docs, dict) and docs.get('id'):
-                                    uploaded_doc_ids.append(docs['id'])
+                                merged_content = f"# {original_name} — {type_name}"
+                                if len(chunks) > 1:
+                                    merged_content += f" (Part {chunk_idx + 1}/{len(chunks)})"
+                                merged_content += f"\n\n> 共 {chunk_count} 筆資料，來源: Excel 批次匯入\n\n"
+                                merged_content += "\n".join(chunk_sections)
+                            
+                                tmp_file = temp_dir / merged_filename
+                                tmp_file.write_text(merged_content, encoding='utf-8')
                                 
-                                logger.info(
-                                    f"📄 已上傳: {merged_filename} "
-                                    f"({len(group_items)} 筆, {len(merged_content)} 字)"
-                                )
-                            except Exception as e:
-                                logger.warning(f"⚠️ RAGFlow 合併文件上傳失敗 ({type_name}): {e}")
+                                try:
+                                    upload_result = await rag_client.async_upload_file(
+                                        dataset_id=ragflow_dataset_id,
+                                        file_path=str(tmp_file)
+                                    )
+                                    ragflow_uploaded += chunk_count
+                                    
+                                    # 提取 document_id
+                                    docs = upload_result.get('data', [])
+                                    if isinstance(docs, list):
+                                        for doc in docs:
+                                            if isinstance(doc, dict) and doc.get('id'):
+                                                uploaded_doc_ids.append(doc['id'])
+                                    elif isinstance(docs, dict) and docs.get('id'):
+                                        uploaded_doc_ids.append(docs['id'])
+                                    
+                                    logger.info(
+                                        f"📄 已上傳: {merged_filename} "
+                                        f"({chunk_count} 筆, {len(merged_content)} 字)"
+                                    )
+                                except Exception as e:
+                                    logger.warning(f"⚠️ RAGFlow 合併文件上傳失敗 ({type_name}{suffix}): {e}")
                         
                         # 觸發所有已上傳文件的解析
                         if uploaded_doc_ids:
@@ -778,13 +801,13 @@ async def _run_import(
                                     )
                                 logger.info(
                                     f"🔄 已觸發 {len(uploaded_doc_ids)} 個合併文件的解析 "
-                                    f"(原 {len(nodes)} 行 → {len(uploaded_doc_ids)} 個文件)"
+                                    f"(原 {len(row_texts)} 行 → {len(uploaded_doc_ids)} 個文件)"
                                 )
                             except Exception as parse_err:
                                 logger.warning(f"⚠️ 觸發解析失敗: {parse_err}")
                         
                         logger.info(
-                            f"✅ RAGFlow 合併上傳完成: {len(nodes)} 行 → "
+                            f"✅ RAGFlow 合併上傳完成: {len(row_texts)} 行 → "
                             f"{len(uploaded_doc_ids)} 個文件 (按類型分組)"
                         )
                     finally:
@@ -796,6 +819,14 @@ async def _run_import(
             except Exception as e:
                 logger.error(f"❌ RAGFlow 逐行上傳失敗: {e}")
         
+        # ---- 釋放記憶體：只保留節點 ID + 摘要，不保留完整 raw_data ----
+        node_count = len(nodes)
+        node_summaries = [
+            {"id": n["id"], "label": n.get("label", ""), "type": n.get("type", "")}
+            for n in nodes
+        ]
+        del nodes  # 釋放完整節點陣列（已寫入 KuzuDB，前端用 fetchGraphData 載入）
+        
         # ---- 更新任務狀態為完成 ----
         total_elapsed = time.monotonic() - task_start_time
         task.update({
@@ -803,7 +834,8 @@ async def _run_import(
             "completed": len(row_texts),
             "failed": failed_count,
             "progress_pct": 100.0,
-            "nodes": nodes,
+            "node_count": node_count,
+            "node_summaries": node_summaries,
             "kuzu_saved": kuzu_saved,
             "ragflow_uploaded": ragflow_uploaded,
             "finished_at": datetime.now().isoformat(),
@@ -817,7 +849,7 @@ async def _run_import(
         
         logger.info(
             f"🎉 任務 {task_id[:8]}... 完成: "
-            f"{len(nodes)} 個節點, {kuzu_saved} 寫入 KuzuDB, "
+            f"{node_count} 個節點, {kuzu_saved} 寫入 KuzuDB, "
             f"{ragflow_uploaded} 上傳 RAGFlow, {failed_count} 個失敗"
         )
         
@@ -915,7 +947,6 @@ async def import_excel(
             "finished_at": None,
             "filename": file.filename,
             "graph_id": graph_id,
-            "nodes": None,
             "error": None,
             # v5.0 新欄位
             "batch_size": est_batch_size,
@@ -1011,8 +1042,10 @@ async def get_import_status(task_id: str):
         "elapsed_seconds": task.get("elapsed_seconds"),
     }
     
-    if task["status"] == "done" and task.get("nodes"):
-        response["nodes"] = task["nodes"]
+    # 完成時不再回傳完整 nodes（3000 節點 JSON 太大）
+    # 前端透過 fetchGraphData(graph_id) 從 KuzuDB 載入
+    if task["status"] == "done":
+        response["node_count"] = task.get("node_count", 0)
     
     if task["status"] == "error":
         response["error"] = task.get("error", "未知錯誤")
