@@ -3,7 +3,9 @@
 整合 LLM 進行自動化標題生成、描述撰寫與關係推薦
 
 v5.0 — 3000 筆一次性分析:
-- 自適應批次大小: 根據文字長度動態調整 BATCH_SIZE (5~50)
+- 欄位智能提取: 匹配已知欄位名免 LLM（如「標題」→ label）100% 省時
+- LLM 結果快取: 相同內容跨批次去重，只呼叫一次 LLM
+- 自適應大批次: Fast mode 用 TARGET_BATCH_TOKENS_FAST=6000 加大每批筆數
 - 大量模式: >100 筆啟用 fast-mode prompt (省略 suggested_links, 精簡輸出)
 - 文字截斷: 每筆 ≤500 字送 LLM，原文保留在 raw_data
 - 並發控制: MAX_CONCURRENCY=2 (本地 Ollama GPU), BATCH_DELAY=1.0s
@@ -22,6 +24,7 @@ import asyncio
 import random
 import uuid
 import time
+import hashlib
 from datetime import datetime
 from pathlib import Path
 
@@ -37,6 +40,7 @@ BATCH_DELAY = 1.0       # 批次間延遲 (秒), 讓 GPU 喘口氣
 MAX_TEXT_LEN = 500      # 每筆送 LLM 的最大字數 (原文保留在 raw_data)
 FAST_MODE_THRESHOLD = 100  # 資料筆數超過此值啟用 fast-mode prompt
 TARGET_BATCH_TOKENS = 2000  # 每批目標 input token 數 (小批次避免 GPU OOM)
+TARGET_BATCH_TOKENS_FAST = 6000  # Fast mode 每批目標 token 數 (qwen2.5:14b 128K context)
 
 # ===== Checkpoint 路徑 =====
 CHECKPOINT_DIR = Path(__file__).resolve().parent.parent.parent / "data" / "import_checkpoints"
@@ -99,6 +103,103 @@ def _truncate_text(text: str, max_len: int = MAX_TEXT_LEN) -> str:
     if len(text) <= max_len:
         return text
     return text[:max_len] + "..."
+
+
+# ===== 策略 1: 欄位智能提取 (免 LLM) =====
+
+_COLUMN_ALIASES = {
+    'label': {'標題', '名稱', 'title', 'name', '主題', 'subject', '項目', '名字', '姓名'},
+    'type': {'類型', 'type', '分類', 'category', '類別', 'class', '種類'},
+    'description': {'描述', 'description', '內容', 'content', '說明', '摘要',
+                     'summary', '備註', 'note', 'notes', 'abstract'},
+    'keywords': {'關鍵詞', 'keywords', 'tags', '標籤', '關鍵字', '標記'},
+}
+
+
+def _try_extract_from_columns(df: pd.DataFrame) -> List[Optional[Dict]]:
+    """
+    嘗試從 Excel 欄位名稱直接提取節點資料（免 LLM）
+
+    若 DataFrame 欄位名稱匹配已知別名（如「標題」→ label），
+    直接提取該欄位值作為節點屬性，完全跳過 LLM。
+    至少需要匹配到 label 欄位才啟用。
+
+    Returns:
+        List[Optional[Dict]] — 與 df 行數相同
+        - Dict: 已提取的節點
+        - None: 此行需要 LLM
+    """
+    import re as _re
+
+    col_strip = {col: col.strip().lower() for col in df.columns}
+    field_map: Dict[str, str] = {}
+
+    for field, aliases in _COLUMN_ALIASES.items():
+        for col, lower in col_strip.items():
+            if lower in aliases:
+                field_map[field] = col
+                break
+
+    if 'label' not in field_map:
+        return [None] * len(df)
+
+    logger.info(f"📋 欄位智能匹配: {', '.join(f'{k}→{v}' for k, v in field_map.items())}")
+
+    results: List[Optional[Dict]] = []
+    for _, row in df.iterrows():
+        label_val = row.get(field_map['label'], '')
+        if pd.isna(label_val) or not str(label_val).strip():
+            results.append(None)
+            continue
+
+        node: Dict[str, Any] = {
+            'label': str(label_val).strip()[:50],
+            'description': '',
+            'type': '未分類',
+            'keywords': [],
+            'suggested_links': [],
+        }
+
+        if 'type' in field_map:
+            t = row.get(field_map['type'], '')
+            if pd.notna(t) and str(t).strip():
+                node['type'] = str(t).strip()[:20]
+
+        if 'description' in field_map:
+            d = row.get(field_map['description'], '')
+            if pd.notna(d) and str(d).strip():
+                node['description'] = str(d).strip()[:500]
+
+        if 'keywords' in field_map:
+            kw = row.get(field_map['keywords'], '')
+            if pd.notna(kw) and str(kw).strip():
+                node['keywords'] = [
+                    k.strip() for k in _re.split(r'[,;，；、\s]+', str(kw).strip()) if k.strip()
+                ][:5]
+
+        results.append(node)
+
+    return results
+
+
+# ===== 策略 2: LLM 結果快取 (跨批次去重) =====
+
+_llm_result_cache: Dict[str, Dict] = {}
+_LLM_CACHE_MAX = 10000
+
+
+def _get_cache_key(text: str) -> str:
+    """MD5 hash 作為快取鍵"""
+    return hashlib.md5(text.strip().encode('utf-8')).hexdigest()
+
+
+def _cache_llm_result(text: str, result: Dict):
+    """存入快取（超過上限清掉前半）"""
+    if len(_llm_result_cache) >= _LLM_CACHE_MAX:
+        keys = list(_llm_result_cache.keys())
+        for k in keys[:len(keys) // 2]:
+            del _llm_result_cache[k]
+    _llm_result_cache[_get_cache_key(text)] = result
 
 
 # ===== LLM Prompt 配置 =====
@@ -473,10 +574,10 @@ async def _run_import(
     背景執行 Excel 匯入 — 分批呼叫 LLM + 逐批更新進度
     
     策略:
-    - 用 Semaphore 控制最大併發數
-    - 每批完成後更新 _import_tasks 進度
-    - 每批完成後寫入 checkpoint
-    - 批次間加入延遲防止 rate limit
+    1. 欄位智能提取: 匹配已知欄位名免 LLM（如「標題」→ label）
+    2. LLM 結果快取: 相同內容跨批次去重，只呼叫一次 LLM
+    3. 自適應大批次: Fast mode 加大每批筆數 (TARGET_BATCH_TOKENS_FAST)
+    4. Semaphore 併發控制 + 斷點續傳 + 指數退避重試
     """
     task = _import_tasks[task_id]
     semaphore = asyncio.Semaphore(MAX_CONCURRENCY)
@@ -484,24 +585,44 @@ async def _run_import(
     try:
         total_rows = len(row_texts)
         
-        # ---- 自適應批次大小 ----
-        batch_size = _compute_adaptive_batch_size(row_texts)
+        # ==== 策略 1: 欄位智能提取 (免 LLM) ====
+        pre_extracted = _try_extract_from_columns(df)
+        extracted_count = sum(1 for p in pre_extracted if p is not None)
+        llm_indices = [i for i in range(total_rows) if pre_extracted[i] is None]
+        llm_row_count = len(llm_indices)
+        
+        if extracted_count > 0:
+            logger.info(
+                f"📋 欄位智能提取: {extracted_count}/{total_rows} 行免 LLM，"
+                f"僅 {llm_row_count} 行需要 LLM 分析"
+            )
+            task["extracted_count"] = extracted_count
+        
+        # ---- 文字截斷 (送 LLM 的版本) ----
+        truncated_texts = [_truncate_text(t, MAX_TEXT_LEN) for t in row_texts]
         
         # ---- 大量模式判定 ----
         fast_mode = total_rows > FAST_MODE_THRESHOLD
         mode_label = "⚡ Fast" if fast_mode else "📝 Full"
         
-        # ---- 文字截斷 (送 LLM 的版本) ----
-        truncated_texts = [_truncate_text(t, MAX_TEXT_LEN) for t in row_texts]
+        # ==== 策略 3: 自適應批次大小 (僅計算 LLM 行) ====
+        if llm_row_count > 0:
+            llm_sample = [row_texts[i] for i in llm_indices[:50]]
+            avg_tokens = sum(_estimate_tokens(t[:MAX_TEXT_LEN]) for t in llm_sample) / len(llm_sample)
+            target_tokens = TARGET_BATCH_TOKENS_FAST if fast_mode else TARGET_BATCH_TOKENS
+            batch_size = max(5, min(50, int(target_tokens / max(avg_tokens, 10))))
+        else:
+            batch_size = 10
         
-        # ---- 分批 ----
+        # ---- 分批 (僅 LLM 需要的行) ----
         batches: List[List[int]] = []
-        for i in range(0, total_rows, batch_size):
-            batches.append(list(range(i, min(i + batch_size, total_rows))))
+        for i in range(0, llm_row_count, batch_size):
+            batches.append(llm_indices[i:min(i + batch_size, llm_row_count)])
         
         total_batches = len(batches)
         logger.info(
-            f"📦 任務 {task_id[:8]}... {mode_label} 模式: {total_rows} 行 → "
+            f"📦 任務 {task_id[:8]}... {mode_label} 模式: {total_rows} 行 "
+            f"({extracted_count} 免 LLM + {llm_row_count} 行 LLM) → "
             f"{total_batches} 批 (batch_size={batch_size}, concurrency={MAX_CONCURRENCY})"
         )
         
@@ -512,6 +633,12 @@ async def _run_import(
         task["fast_mode"] = fast_mode
         task["eta_seconds"] = None
         task["rows_per_sec"] = 0
+        
+        # ---- 初始進度 (欄位提取的行直接算完成) ----
+        initial_completed = extracted_count
+        task["completed"] = initial_completed
+        if total_rows > 0:
+            task["progress_pct"] = round(initial_completed / total_rows * 100, 1)
         
         # ---- 載入 checkpoint (斷點續傳) ----
         completed_batches = _load_checkpoint(task_id)
@@ -538,19 +665,61 @@ async def _run_import(
                     await asyncio.sleep(BATCH_DELAY)
                 
                 texts = [truncated_texts[i] for i in indices]
-                
                 batch_start = time.monotonic()
-                result = await call_llm_batch_with_retry(
-                    texts, existing_names, fast_mode=fast_mode
-                )
+                
+                if fast_mode:
+                    # ==== 策略 2: Fast mode 開啟 LLM 快取去重 ====
+                    cached_results: Dict[int, Dict] = {}
+                    uncached_pairs: List[tuple] = []  # (local_i, text)
+                    
+                    for local_i, text in enumerate(texts):
+                        cache_key = _get_cache_key(text)
+                        cached = _llm_result_cache.get(cache_key)
+                        if cached is not None:
+                            cached_results[local_i] = cached
+                        else:
+                            uncached_pairs.append((local_i, text))
+                    
+                    cache_hits = len(cached_results)
+                    
+                    if uncached_pairs:
+                        uncached_texts = [t for _, t in uncached_pairs]
+                        llm_response = await call_llm_batch_with_retry(
+                            uncached_texts, existing_names, fast_mode=True
+                        )
+                        # 存入快取
+                        for ui, (local_i, text) in enumerate(uncached_pairs):
+                            if ui < len(llm_response):
+                                _cache_llm_result(text, llm_response[ui])
+                    else:
+                        llm_response = []
+                    
+                    # 合併: 快取 + LLM 回應
+                    result: List[Dict] = [dict(_DEFAULT_NODE)] * len(texts)
+                    for local_i, cached in cached_results.items():
+                        result[local_i] = cached
+                    for ui, (local_i, _) in enumerate(uncached_pairs):
+                        if ui < len(llm_response):
+                            result[local_i] = llm_response[ui]
+                    for i in range(len(result)):
+                        if result[i] is _DEFAULT_NODE or result[i].get("label") is None:
+                            result[i] = dict(_DEFAULT_NODE)
+                    
+                    llm_results[batch_idx] = result
+                else:
+                    # Full mode: 完整送 LLM (保留 suggested_links 語義)
+                    result = await call_llm_batch_with_retry(
+                        texts, existing_names, fast_mode=False
+                    )
+                    llm_results[batch_idx] = result
+                    cache_hits = 0
+                
                 batch_elapsed = time.monotonic() - batch_start
                 batch_times.append(batch_elapsed)
                 
-                llm_results[batch_idx] = result
-                
                 # 更新進度
                 completed_batches.add(batch_idx)
-                completed_count = sum(
+                completed_count = initial_completed + sum(
                     len(batches[bi]) for bi in completed_batches
                 )
                 task["completed"] = completed_count
@@ -563,7 +732,6 @@ async def _run_import(
                 if batch_times:
                     avg_batch_time = sum(batch_times) / len(batch_times)
                     remaining_batches = total_batches - len(completed_batches)
-                    # 考慮併發: 每輪跑 MAX_CONCURRENCY 個批次
                     remaining_rounds = max(1, remaining_batches / MAX_CONCURRENCY)
                     eta = avg_batch_time * remaining_rounds
                     task["eta_seconds"] = round(eta, 1)
@@ -576,63 +744,82 @@ async def _run_import(
                 # 儲存 checkpoint
                 _save_checkpoint(task_id, completed_batches, [])
                 
+                cache_info = f", {cache_hits} 快取命中" if cache_hits else ""
                 logger.info(
                     f"✅ 批次 {batch_idx + 1}/{total_batches} 完成 "
                     f"({batch_elapsed:.1f}s, 進度: {task['progress_pct']}%, "
-                    f"ETA: {task.get('eta_seconds', '?')}s)"
+                    f"ETA: {task.get('eta_seconds', '?')}s{cache_info})"
                 )
         
         # ---- 並行執行批次 (Semaphore 限制併發) ----
-        tasks = [process_batch(bi, idxs) for bi, idxs in enumerate(batches)]
-        await asyncio.gather(*tasks)
+        if batches:
+            tasks = [process_batch(bi, idxs) for bi, idxs in enumerate(batches)]
+            await asyncio.gather(*tasks)
         
-        # ---- 組裝節點 ----
-        nodes: List[Dict[str, Any]] = []
-        ts = datetime.now().timestamp()
+        # ---- 組裝節點 (合併: 欄位提取 + LLM 結果) ----
+        row_results: List[Optional[Dict]] = list(pre_extracted)  # 複製欄位提取結果
         
+        # 填入 LLM 結果
         for batch_idx, indices in enumerate(batches):
             batch_results = llm_results[batch_idx] or []
             for local_i, global_i in enumerate(indices):
                 if local_i < len(batch_results):
-                    llm = batch_results[local_i]
-                else:
-                    llm = dict(_DEFAULT_NODE)
-                
-                node = {
-                    "id": f"node_{ts}_{global_i}",
-                    "name": row_names[global_i],
-                    "label": llm.get("label", "未命名"),
-                    "description": llm.get("description", ""),
-                    "type": llm.get("type", "未分類"),
-                    "group": 1,
-                    "size": 20,
-                    "keywords": llm.get("keywords", []),
-                    "suggested_links": llm.get("suggested_links", []),
-                    "raw_data": {
-                        k: (None if pd.isna(v) else v)
-                        for k, v in df.iloc[global_i].to_dict().items()
-                    },
-                }
-                nodes.append(node)
+                    row_results[global_i] = batch_results[local_i]
+        
+        # 補齊遺漏的行
+        for i in range(total_rows):
+            if row_results[i] is None:
+                row_results[i] = dict(_DEFAULT_NODE)
+        
+        nodes: List[Dict[str, Any]] = []
+        ts = datetime.now().timestamp()
+        
+        for global_i in range(total_rows):
+            llm = row_results[global_i] or dict(_DEFAULT_NODE)
+            node = {
+                "id": f"node_{ts}_{global_i}",
+                "name": row_names[global_i],
+                "label": llm.get("label", "未命名"),
+                "description": llm.get("description", ""),
+                "type": llm.get("type", "未分類"),
+                "group": 1,
+                "size": 20,
+                "keywords": llm.get("keywords", []),
+                "suggested_links": llm.get("suggested_links", []),
+                "raw_data": {
+                    k: (None if pd.isna(v) else v)
+                    for k, v in df.iloc[global_i].to_dict().items()
+                },
+            }
+            nodes.append(node)
         
         # ---- 將 suggested_links 的 batch-local index 轉為全域 node id ----
+        # (僅 LLM 批次有 suggested_links，欄位提取的行 suggested_links 為空)
         for batch_idx, indices in enumerate(batches):
-            offset = indices[0]  # 此批次在全域 nodes 中的起始位置
             for local_i, global_i in enumerate(indices):
                 node = nodes[global_i]
                 resolved_links = []
                 for link in node.get("suggested_links", []):
                     target_idx = link.get("target_index")
                     if target_idx is not None and isinstance(target_idx, int):
-                        abs_idx = offset + target_idx
-                        if 0 <= abs_idx < len(nodes) and abs_idx != global_i:
-                            resolved_links.append({
-                                "target_id": nodes[abs_idx]["id"],
-                                "target_name": nodes[abs_idx]["name"],
-                                "relation": link.get("relation", "complement"),
-                                "reason": link.get("reason", ""),
-                            })
+                        # target_idx 是批次內的 local index → 轉為全域
+                        if 0 <= target_idx < len(indices) and target_idx != local_i:
+                            target_global = indices[target_idx]
+                            if 0 <= target_global < len(nodes):
+                                resolved_links.append({
+                                    "target_id": nodes[target_global]["id"],
+                                    "target_name": nodes[target_global]["name"],
+                                    "relation": link.get("relation", "complement"),
+                                    "reason": link.get("reason", ""),
+                                })
                 node["links"] = resolved_links
+                if "suggested_links" in node:
+                    del node["suggested_links"]
+        
+        # 清理未經 LLM 批次處理的行的 suggested_links
+        for node in nodes:
+            if "suggested_links" in node:
+                node["links"] = []
                 del node["suggested_links"]
         
         # ---- 計算失敗數 ----
@@ -1040,6 +1227,7 @@ async def get_import_status(task_id: str):
         "completed_batches": task.get("completed_batches", 0),
         "fast_mode": task.get("fast_mode", False),
         "elapsed_seconds": task.get("elapsed_seconds"),
+        "extracted_count": task.get("extracted_count", 0),
     }
     
     # 完成時不再回傳完整 nodes（3000 節點 JSON 太大）

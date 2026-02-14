@@ -797,9 +797,10 @@ const pollBatchProgress = async (resultIndex, taskId) => {
       // 構建帶 ETA 的進度文字
       let stageText = `🤖 AI 分析中 (${completed}/${total})`;
       const etaParts = [];
+      if (status.extracted_count > 0) etaParts.push(`📋 ${status.extracted_count} 筆免LLM`);
       if (status.eta_seconds != null && status.eta_seconds > 0) {
         const eta = status.eta_seconds;
-        etaParts.push(eta < 60 ? `剩余 ${Math.round(eta)}s` : `剩余 ${Math.floor(eta/60)}m${Math.round(eta%60)}s`);
+        etaParts.push(eta < 60 ? `剩餘 ${Math.round(eta)}s` : `剩餘 ${Math.floor(eta/60)}m${Math.round(eta%60)}s`);
       }
       if (status.rows_per_sec > 0) etaParts.push(`${status.rows_per_sec} 筆/秒`);
       if (status.total_batches > 0) etaParts.push(`批次 ${status.completed_batches || 0}/${status.total_batches}`);
