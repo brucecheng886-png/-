@@ -682,7 +682,7 @@ async def _run_import(
             if links_created:
                 logger.info(f"🔗 已建立 {links_created} 條連線")
         
-        # ---- 階段: 逐行上傳 RAGFlow ----
+        # ---- 階段: 合併上傳 RAGFlow ----
         ragflow_uploaded = 0
         if ragflow_dataset_id:
             try:
@@ -699,34 +699,54 @@ async def _run_import(
                     )
                     ragflow_api_url = api_keys.get('RAGFLOW_API_URL', 'http://localhost:9380/api/v1')
                     
-                    logger.info(f"📚 開始逐行上傳 RAGFlow ({len(row_texts)} 行)...")
+                    logger.info(f"📚 合併 {len(nodes)} 個節點為單一文件上傳 RAGFlow...")
                     task["ragflow_stage"] = "uploading"
                     
-                    # 將每行組合成獨立的文字檔上傳
-                    temp_dir = Path(tempfile.gettempdir()) / f"ragflow_rows_{task_id[:8]}"
-                    temp_dir.mkdir(exist_ok=True)
+                    # ---- 按類型分組，每組合併為一個 Markdown 文件 ----
+                    from collections import defaultdict
+                    type_groups = defaultdict(list)
+                    for ri, (row_text, node) in enumerate(zip(row_texts, nodes)):
+                        node_type = node.get("type", "未分類")
+                        type_groups[node_type].append((ri, row_text, node))
                     
-                    # 收集所有已上傳的 document_ids
+                    temp_dir = Path(tempfile.gettempdir()) / f"ragflow_merged_{task_id[:8]}"
+                    temp_dir.mkdir(exist_ok=True)
                     uploaded_doc_ids = []
                     
                     try:
-                        for ri, (row_text, node) in enumerate(zip(row_texts, nodes)):
-                            label = node.get("label", f"row_{ri}")
-                            # 構建每行的知識內容
-                            content = f"# {label}\n\n{node.get('description', '')}\n\n原始資料:\n{row_text}"
+                        for type_name, group_items in type_groups.items():
+                            # 構建合併 Markdown 內容
+                            sections = []
+                            for ri, row_text, node in group_items:
+                                label = node.get("label", f"row_{ri}")
+                                desc = node.get("description", "")
+                                keywords = ", ".join(node.get("keywords", []))
+                                section = f"## {label}\n\n"
+                                if desc:
+                                    section += f"{desc}\n\n"
+                                if keywords:
+                                    section += f"**關鍵詞**: {keywords}\n\n"
+                                section += f"**原始資料**: {row_text}\n\n---\n"
+                                sections.append(section)
                             
-                            # 寫入臨時 txt 檔
-                            safe_name = f"row_{ri:04d}_{label[:20]}.txt"
-                            safe_name = safe_name.replace('/', '_').replace('\\', '_')
-                            tmp_file = temp_dir / safe_name
-                            tmp_file.write_text(content, encoding='utf-8')
+                            # 檔名使用原始 Excel 名 + 類型
+                            original_name = task.get("filename", "import").rsplit(".", 1)[0]
+                            safe_type = type_name.replace("/", "_").replace("\\", "_")[:20]
+                            merged_filename = f"{original_name}_{safe_type}_{len(group_items)}筆.md"
+                            
+                            merged_content = f"# {original_name} — {type_name}\n\n"
+                            merged_content += f"> 共 {len(group_items)} 筆資料，來源: Excel 批次匯入\n\n"
+                            merged_content += "\n".join(sections)
+                            
+                            tmp_file = temp_dir / merged_filename
+                            tmp_file.write_text(merged_content, encoding='utf-8')
                             
                             try:
                                 upload_result = await rag_client.async_upload_file(
                                     dataset_id=ragflow_dataset_id,
                                     file_path=str(tmp_file)
                                 )
-                                ragflow_uploaded += 1
+                                ragflow_uploaded += len(group_items)
                                 
                                 # 提取 document_id
                                 docs = upload_result.get('data', [])
@@ -736,32 +756,15 @@ async def _run_import(
                                             uploaded_doc_ids.append(doc['id'])
                                 elif isinstance(docs, dict) and docs.get('id'):
                                     uploaded_doc_ids.append(docs['id'])
-                                    
+                                
+                                logger.info(
+                                    f"📄 已上傳: {merged_filename} "
+                                    f"({len(group_items)} 筆, {len(merged_content)} 字)"
+                                )
                             except Exception as e:
-                                logger.warning(f"⚠️ RAGFlow 行 {ri} 上傳失敗: {e}")
-                            
-                            # 每 50 個文件觸發一次解析，避免累積太多未解析文件
-                            if len(uploaded_doc_ids) >= 50:
-                                try:
-                                    async with httpx.AsyncClient(timeout=300) as parse_client:
-                                        await parse_client.post(
-                                            f"{ragflow_api_url}/datasets/{ragflow_dataset_id}/chunks",
-                                            headers={
-                                                "Authorization": f"Bearer {api_keys['RAGFLOW_API_KEY']}",
-                                                "Content-Type": "application/json"
-                                            },
-                                            json={"document_ids": uploaded_doc_ids}
-                                        )
-                                    logger.info(f"🔄 已觸發解析 {len(uploaded_doc_ids)} 個文檔")
-                                    uploaded_doc_ids = []
-                                except Exception as parse_err:
-                                    logger.warning(f"⚠️ 觸發解析失敗: {parse_err}")
-                            
-                            # 每 10 行暫停一下，避免 RAGFlow 過載
-                            if (ri + 1) % 10 == 0:
-                                await asyncio.sleep(0.5)
+                                logger.warning(f"⚠️ RAGFlow 合併文件上傳失敗 ({type_name}): {e}")
                         
-                        # 觸發剩餘文件的解析
+                        # 觸發所有已上傳文件的解析
                         if uploaded_doc_ids:
                             try:
                                 async with httpx.AsyncClient(timeout=300) as parse_client:
@@ -773,11 +776,17 @@ async def _run_import(
                                         },
                                         json={"document_ids": uploaded_doc_ids}
                                     )
-                                logger.info(f"🔄 已觸發最後 {len(uploaded_doc_ids)} 個文檔的解析")
+                                logger.info(
+                                    f"🔄 已觸發 {len(uploaded_doc_ids)} 個合併文件的解析 "
+                                    f"(原 {len(nodes)} 行 → {len(uploaded_doc_ids)} 個文件)"
+                                )
                             except Exception as parse_err:
-                                logger.warning(f"⚠️ 觸發最終解析失敗: {parse_err}")
+                                logger.warning(f"⚠️ 觸發解析失敗: {parse_err}")
                         
-                        logger.info(f"✅ RAGFlow 上傳+解析完成: {ragflow_uploaded}/{len(row_texts)} 行")
+                        logger.info(
+                            f"✅ RAGFlow 合併上傳完成: {len(nodes)} 行 → "
+                            f"{len(uploaded_doc_ids)} 個文件 (按類型分組)"
+                        )
                     finally:
                         # 清理臨時目錄
                         import shutil
