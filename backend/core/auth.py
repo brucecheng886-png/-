@@ -17,8 +17,9 @@ from starlette.responses import JSONResponse
 
 logger = logging.getLogger(__name__)
 
-# Token 配置檔案路徑
-TOKEN_FILE_PATH = Path("C:/BruV_Data/auth_token.json")
+# Token 配置檔案路徑（與 config.py 統一使用 BRUV_DATA_DIR）
+_DATA_DIR = Path(os.environ.get("BRUV_DATA_DIR", str(Path.home() / "BruV_Data")))
+TOKEN_FILE_PATH = _DATA_DIR / "auth_token.json"
 
 # 不需要認證的路徑白名單
 PUBLIC_PATHS = {
