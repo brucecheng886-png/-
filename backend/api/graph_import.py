@@ -27,14 +27,14 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 # ===== 可調參數 =====
-MAX_CONCURRENCY = 8     # 最大並行 LLM 請求數
-LLM_TIMEOUT = 180       # 單次 LLM 呼叫超時 (秒)
+MAX_CONCURRENCY = 2     # 最大並行 LLM 請求數 (本地 Ollama 單 GPU: 2 即可)
+LLM_TIMEOUT = 300       # 單次 LLM 呼叫超時 (秒, 本地模型較慢需加長)
 MAX_RETRIES = 3         # 每批最大重試次數
-RETRY_BASE_DELAY = 2    # 重試基礎延遲 (秒)
-BATCH_DELAY = 0.3       # 批次間延遲 (秒), 防止 rate limit
+RETRY_BASE_DELAY = 3    # 重試基礎延遲 (秒)
+BATCH_DELAY = 1.0       # 批次間延遲 (秒), 讓 GPU 喘口氣
 MAX_TEXT_LEN = 500      # 每筆送 LLM 的最大字數 (原文保留在 raw_data)
 FAST_MODE_THRESHOLD = 100  # 資料筆數超過此值啟用 fast-mode prompt
-TARGET_BATCH_TOKENS = 4000  # 每批目標 input token 數
+TARGET_BATCH_TOKENS = 2000  # 每批目標 input token 數 (小批次避免 GPU OOM)
 
 # ===== Checkpoint 路徑 =====
 CHECKPOINT_DIR = Path(__file__).resolve().parent.parent.parent / "data" / "import_checkpoints"
@@ -229,9 +229,16 @@ def _extract_json(text: str):
 
 def _validate_node(data: Dict[str, Any]) -> Dict[str, Any]:
     """驗證並清洗單一節點資料"""
+    # 嘗試從常見別名提取 label（LLM 可能回傳不同欄位名）
+    if 'label' not in data:
+        for alt in ['title', 'name', '標題', '名稱']:
+            if alt in data and data[alt]:
+                data['label'] = str(data[alt])[:50]
+                break
+    
     required = ['label', 'description', 'type']
     for f in required:
-        if f not in data:
+        if f not in data or not data[f]:
             data[f] = "未提供" if f != 'type' else "未分類"
     
     # description 截斷
@@ -336,8 +343,12 @@ async def call_llm_batch(
         if not answer:
             raise ValueError("Dify 回應為空")
 
-        logger.info(f"Dify LLM 回應（前 200 字）: {answer[:200]}")
+        logger.info(f"Dify LLM 回應（前 300 字）: {answer[:300]}")
         results = parse_llm_response(answer)
+        
+        # 統計解析後的有效 label 數
+        valid_labels = sum(1 for r in results if r.get("label") not in ("未提供", None, ""))
+        logger.info(f"📊 批次解析結果: {len(results)} 個節點, {valid_labels} 個有效 label")
 
         # 若 LLM 回傳數量不足，補齊預設
         while len(results) < len(rows):
