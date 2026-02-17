@@ -16,12 +16,20 @@ class RAGFlowAPIError(Exception):
 
 
 class RAGFlowClient:
-    """RAGFlow Server API 客戶端（非同步）"""
+    """RAGFlow Server API 客戶端（非同步）
 
-    def __init__(self, api_key: str, base_url: str = "http://localhost:9380/api/v1"):
+    Args:
+        api_key: RAGFlow API Key
+        base_url: RAGFlow API base URL
+        http_client: 共享 httpx.AsyncClient（可選，若提供則 async 方法不再每次新建客戶端）
+    """
+
+    def __init__(self, api_key: str, base_url: str = "http://localhost:9380/api/v1",
+                 http_client: "httpx.AsyncClient | None" = None):
         self.api_key = api_key
         self.base_url = base_url.rstrip('/')
         self._headers = {'Authorization': f'Bearer {api_key}'}
+        self._shared_client = http_client  # 共享連線池 (v5.3)
 
     @staticmethod
     def _check_response(result: dict) -> dict:
@@ -31,6 +39,16 @@ class RAGFlowClient:
             msg = result.get('message', 'unknown error')
             raise RAGFlowAPIError(code, msg)
         return result
+
+    def _get_async_client(self, timeout: int = 120):
+        """取得非同步 HTTP 客端：優先使用共享連線池，否則建立臨時客戶端
+        
+        Returns:
+            tuple(client, should_close): should_close=True 時呼叫端需自行關閉
+        """
+        if self._shared_client is not None:
+            return self._shared_client, False
+        return httpx.AsyncClient(timeout=timeout), True
 
     # ---------- 非同步方法（推薦在 FastAPI 路由中使用） ----------
 
@@ -50,18 +68,26 @@ class RAGFlowClient:
         content = fp.read_bytes()
         files = {'file': (fp.name, content, self._get_mime_type(fp))}
 
-        async with httpx.AsyncClient(timeout=300) as client:
+        client, should_close = self._get_async_client(timeout=300)
+        try:
             resp = await client.post(url, headers=self._headers, files=files)
             resp.raise_for_status()
             return self._check_response(resp.json())
+        finally:
+            if should_close:
+                await client.aclose()
 
     async def async_list_documents(self, dataset_id: str) -> Dict[str, Any]:
         """非同步列出知識庫中的所有文件"""
         url = f"{self.base_url}/datasets/{dataset_id}/documents"
-        async with httpx.AsyncClient(timeout=120) as client:
+        client, should_close = self._get_async_client(timeout=120)
+        try:
             resp = await client.get(url, headers=self._headers)
             resp.raise_for_status()
             return self._check_response(resp.json())
+        finally:
+            if should_close:
+                await client.aclose()
 
     async def async_delete_document(self, dataset_id: str, document_id: str) -> Dict[str, Any]:
         """非同步刪除指定文件"""
@@ -69,10 +95,14 @@ class RAGFlowClient:
         import json as _json
         headers = {**self._headers, 'Content-Type': 'application/json'}
         body = _json.dumps({'ids': [document_id]}).encode('utf-8')
-        async with httpx.AsyncClient(timeout=120) as client:
+        client, should_close = self._get_async_client(timeout=120)
+        try:
             resp = await client.request("DELETE", url, headers=headers, content=body)
             resp.raise_for_status()
             return self._check_response(resp.json())
+        finally:
+            if should_close:
+                await client.aclose()
 
     async def async_delete_dataset(self, dataset_id: str) -> Dict[str, Any]:
         """非同步刪除整個知識庫 (dataset)"""
@@ -80,10 +110,14 @@ class RAGFlowClient:
         import json as _json
         headers = {**self._headers, 'Content-Type': 'application/json'}
         body = _json.dumps({'ids': [dataset_id]}).encode('utf-8')
-        async with httpx.AsyncClient(timeout=120) as client:
+        client, should_close = self._get_async_client(timeout=120)
+        try:
             resp = await client.request("DELETE", url, headers=headers, content=body)
             resp.raise_for_status()
             return self._check_response(resp.json())
+        finally:
+            if should_close:
+                await client.aclose()
 
     async def async_update_document(
         self,
@@ -97,10 +131,14 @@ class RAGFlowClient:
         payload: Dict[str, Any] = {"chunk_method": chunk_method}
         if parser_config:
             payload["parser_config"] = parser_config
-        async with httpx.AsyncClient(timeout=30) as client:
+        client, should_close = self._get_async_client(timeout=30)
+        try:
             resp = await client.put(url, headers={**self._headers, 'Content-Type': 'application/json'}, json=payload)
             resp.raise_for_status()
             return self._check_response(resp.json())
+        finally:
+            if should_close:
+                await client.aclose()
 
     # ---------- 同步方法（向下相容，供 WatcherService 線程使用） ----------
 
@@ -155,10 +193,14 @@ class RAGFlowClient:
         url = (f"{self.base_url}/datasets/{dataset_id}"
                f"/documents/{document_id}/chunks"
                f"?page={page}&page_size={page_size}")
-        async with httpx.AsyncClient(timeout=120) as client:
+        client, should_close = self._get_async_client(timeout=120)
+        try:
             resp = await client.get(url, headers=self._headers)
             resp.raise_for_status()
             return self._check_response(resp.json())
+        finally:
+            if should_close:
+                await client.aclose()
 
     def get_chunks(
         self,
@@ -183,12 +225,16 @@ class RAGFlowClient:
     ) -> Dict[str, Any]:
         """非同步取得文件解析狀態"""
         url = f"{self.base_url}/datasets/{dataset_id}/documents?id={document_id}"
-        async with httpx.AsyncClient(timeout=15) as client:
+        client, should_close = self._get_async_client(timeout=15)
+        try:
             resp = await client.get(url, headers=self._headers)
             resp.raise_for_status()
             result = self._check_response(resp.json())
             docs = result.get('data', {}).get('docs', [])
             return docs[0] if docs else {}
+        finally:
+            if should_close:
+                await client.aclose()
 
     def get_document_status(
         self,
@@ -241,10 +287,14 @@ class RAGFlowClient:
             payload["rerank_id"] = rerank_id
 
         url = f"{self.base_url}/retrieval"
-        async with httpx.AsyncClient(timeout=120) as client:
+        client, should_close = self._get_async_client(timeout=120)
+        try:
             resp = await client.post(url, headers=self._headers, json=payload)
             resp.raise_for_status()
             return self._check_response(resp.json())
+        finally:
+            if should_close:
+                await client.aclose()
 
     # ---------- 工具方法 ----------
 

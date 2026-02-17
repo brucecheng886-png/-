@@ -147,6 +147,10 @@ const formatMessage = (content) => {
     // 代碼塊（簡化版）
     .replace(/```(\w+)?\n([\s\S]*?)```/g, '<pre><code>$2</code></pre>');
   
+  // DOMPurify 消毒以防止 XSS
+  if (typeof window !== 'undefined' && window.DOMPurify) {
+    return window.DOMPurify.sanitize(formatted);
+  }
   return formatted;
 };
 

@@ -1,8 +1,12 @@
 import { defineStore } from 'pinia';
 import { ref, computed } from 'vue';
-import crossGraphData from '../data/crossGraphTestData.js';
 import graphDataManager from '../services/GraphDataManager.js';
 import { authFetch, apiGet, apiPost, apiPut, apiDelete, apiPostForm } from '../services/apiClient';
+
+// 拆分的 Composable 模組
+import { useImportFeatures } from './importComposable.js';
+import { useCrossGraphFeatures } from './crossGraphComposable.js';
+import { useRagflowFeatures } from './ragflowComposable.js';
 
 /**
  * Graph Store - 圖譜數據管理
@@ -74,55 +78,7 @@ export const useGraphStore = defineStore('graph', () => {
    * @type {import('vue').Ref<string>}
    */
   const filterMode = ref('all');
-  
-  /**
-   * 跨圖譜功能 - 圖譜元數據列表（從後端 API 加載）
-   * @type {import('vue').Ref<Array<Object>>}
-   */
-  const graphMetadataList = ref([]);
-  
-  /**
-   * 跨圖譜功能 - AI Link 連接列表
-   * @type {import('vue').Ref<Array<Object>>}
-   */
-  const aiLinks = ref([]);
-  
-  /**
-   * 跨圖譜功能 - 當前顯示的圖譜 ID 列表
-   * @type {import('vue').Ref<Array<string>>}
-   */
-  const activeGraphIds = ref([]);
-  
-  /**
-   * 跨圖譜功能 - 是否啟用跨圖譜模式
-   * @type {import('vue').Ref<boolean>}
-   */
-  const isCrossGraphMode = ref(false);
-  
-  /**
-   * RAGFlow 知識庫列表（集中管理，避免各頁面重複抓取）
-   * @type {import('vue').Ref<Array<Object>>}
-   */
-  const ragflowDatasets = ref([]);
-  
-  /**
-   * 已匯入的檔案列表
-   * @type {import('vue').Ref<Array<Object>>}
-   */
-  const importedFiles = ref([]);
-  
-  // ===== Excel 匯入進度追蹤 =====
-  const importTaskId = ref(null);
-  const importStatus = ref('idle');  // idle | running | done | error
-  const importProgress = ref(0);     // 0-100
-  const importDetail = ref({
-    total: 0, completed: 0, failed: 0, filename: '',
-    eta_seconds: null, rows_per_sec: 0,
-    batch_size: 0, total_batches: 0, completed_batches: 0,
-    fast_mode: false, elapsed_seconds: null,
-  });
-  let _importPollTimer = null;
-  
+
   /**
    * 當前選中的圖譜 ID（從 localStorage 恢復，確保跨頁面一致）
    * @type {import('vue').Ref<number|string>}
@@ -141,20 +97,7 @@ export const useGraphStore = defineStore('graph', () => {
    * @type {import('vue').Ref<string>}
    */
   const tagFilterMode = ref('any');
-  
-  // ===== 初始化：加載圖譜列表（使用 Manager）=====
-  const loadGraphMetadataList = async (options = {}) => {
-    try {
-      const graphs = await graphDataManager.loadMetadataList(options);
-      graphMetadataList.value = graphs;
-      console.log(`✅ [Store] 圖譜列表已加載: ${graphs.length} 個`);
-      return graphs;
-    } catch (error) {
-      console.error('❌ [Store] 加載圖譜列表失敗:', error);
-      throw error;
-    }
-  };
-  
+
   // ===== Computed =====
   
   /**
@@ -284,43 +227,6 @@ export const useGraphStore = defineStore('graph', () => {
   /**
    * 跨圖譜功能 - 所有連接（包含 AI Link）
    */
-  const allLinks = computed(() => {
-    if (!isCrossGraphMode.value) {
-      return links.value;
-    }
-    // 合併普通連接和 AI Link
-    return [...links.value, ...aiLinks.value];
-  });
-  
-  /**
-   * 跨圖譜功能 - 按圖譜分組的節點
-   */
-  const nodesByGraph = computed(() => {
-    const groups = {};
-    nodes.value.forEach(node => {
-      const graphId = node.graphId || 'default';
-      if (!groups[graphId]) {
-        groups[graphId] = [];
-      }
-      groups[graphId].push(node);
-    });
-    return groups;
-  });
-  
-  /**
-   * 跨圖譜功能 - 圖譜統計信息
-   */
-  const graphStats = computed(() => {
-    return {
-      totalGraphs: graphMetadataList.value.length,
-      activeGraphs: activeGraphIds.value.length,
-      totalNodes: nodes.value.length,
-      totalLinks: links.value.length,
-      totalAILinks: aiLinks.value.length,
-      isCrossGraphMode: isCrossGraphMode.value
-    };
-  });
-  
   // ===== Actions =====
   
   /**
@@ -843,404 +749,19 @@ export const useGraphStore = defineStore('graph', () => {
     console.log('🏷️ Tag 過濾已設定:', tags, mode);
   };
   
-  /**
-   * 匯入檔案並創建節點
-   * @param {File} file - 要匯入的檔案
-   */
-  const importFile = async (file, mode = 'single') => {
-    try {
-      console.log('📥 開始匯入檔案:', file.name, '模式:', mode);
-      
-      const ext = file.name.split('.').pop()?.toLowerCase();
-      const isExcel = ext === 'xlsx' || ext === 'csv' || ext === 'xls';
-      
-      // Excel/CSV → 使用背景任務 API (支援 3000+ 筆)
-      if (mode === 'multi' && isExcel) {
-        return await importExcelAsync(file);
-      }
-      
-      // 單一節點模式 — 本地建立節點
-      const newNode = {
-        id: `file_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-        name: file.name,
-        label: file.name,
-        group: 'file',
-        type: file.type || 'document',
-        fileType: ext,
-        color: '#3b82f6',
-        size: 1.2,
-        timestamp: Date.now(),
-        aiStatus: 'linked',
-        description: `從檔案 ${file.name} 匯入`
-      };
-      
-      addNode(newNode);
-      importedFiles.value.unshift({
-        id: Date.now(),
-        nodeId: newNode.id,
-        name: file.name,
-        ext: ext?.toUpperCase() || 'FILE',
-        status: 'AI 已關聯',
-        timestamp: Date.now()
-      });
-      selectedNode.value = newNode;
-      console.log('✅ 檔案匯入成功:', file.name, '→', newNode.id);
-      return newNode;
-    } catch (err) {
-      console.error('❌ 檔案匯入失敗:', err);
-      error.value = '檔案匯入失敗: ' + err.message;
-      throw err;
-    }
-  };
+  // ===== 拆分模組初始化 =====
+  const importFeatures = useImportFeatures({
+    addNode, addBatchNodes, fetchGraphData,
+    selectedNode, error, loading, currentGraphId,
+  });
+  const crossGraphFeatures = useCrossGraphFeatures({
+    nodes, links, loading, error, lastUpdate,
+  });
+  const ragflowFeatures = useRagflowFeatures();
+  
+  // 從 crossGraph composable 取出 graphMetadataList 供圖譜 CRUD 使用
+  const { graphMetadataList } = crossGraphFeatures;
 
-  /**
-   * 非同步 Excel 匯入 — 使用背景任務 API
-   * POST 檔案 → 取得 task_id → 輪詢進度 → 完成後加入節點
-   * @param {File} file - Excel/CSV 檔案
-   * @returns {Promise<Object>} { task_id, total }
-   */
-  const importExcelAsync = async (file) => {
-    cancelImportPoll(); // 取消上一次的輪詢
-    
-    importStatus.value = 'running';
-    importProgress.value = 0;
-    importDetail.value = {
-      total: 0, completed: 0, failed: 0, filename: file.name,
-      eta_seconds: null, rows_per_sec: 0,
-      batch_size: 0, total_batches: 0, completed_batches: 0,
-      fast_mode: false, elapsed_seconds: null,
-    };
-    error.value = null;
-    
-    try {
-      console.log('📤 上傳 Excel 到背景任務 API:', file.name);
-      
-      const formData = new FormData();
-      formData.append('file', file);
-      
-      const result = await apiPostForm('/api/graph/import/excel', formData);
-      
-      if (!result.task_id) {
-        throw new Error('伺服器未回傳 task_id');
-      }
-      
-      importTaskId.value = result.task_id;
-      importDetail.value.total = result.total || 0;
-      
-      console.log(`✅ 匯入任務已啟動: task_id=${result.task_id}, total=${result.total}`);
-      
-      // 開始輪詢進度
-      pollImportStatus(result.task_id);
-      
-      return result;
-    } catch (err) {
-      importStatus.value = 'error';
-      error.value = '匯入啟動失敗: ' + err.message;
-      console.error('❌ importExcelAsync 失敗:', err);
-      throw err;
-    }
-  };
-
-  /**
-   * 輪詢匯入任務進度
-   * @param {string} taskId - 任務 ID
-   */
-  const pollImportStatus = (taskId) => {
-    cancelImportPoll();
-    
-    const POLL_INTERVAL = 3000; // 3 秒
-    
-    const poll = async () => {
-      try {
-        const data = await apiGet(`/api/graph/import/status/${taskId}`);
-        
-        importProgress.value = data.progress_pct || 0;
-        importDetail.value = {
-          total: data.total || 0,
-          completed: data.completed || 0,
-          failed: data.failed || 0,
-          filename: data.filename || '',
-          // v5.0 新欄位
-          eta_seconds: data.eta_seconds ?? null,
-          rows_per_sec: data.rows_per_sec || 0,
-          batch_size: data.batch_size || 0,
-          total_batches: data.total_batches || 0,
-          completed_batches: data.completed_batches || 0,
-          fast_mode: data.fast_mode || false,
-          elapsed_seconds: data.elapsed_seconds ?? null,
-        };
-        
-        if (data.status === 'done') {
-          importStatus.value = 'done';
-          cancelImportPoll();
-          
-          // 從 KuzuDB 重新載入圖譜（而非從 status API 讀取 3000 節點 JSON）
-          const graphId = data.graph_id;
-          if (graphId) {
-            try {
-              await fetchGraphData(graphId);
-              console.log(`🎉 Excel 匯入完成: ${data.node_count || data.completed || 0} 個節點已載入圖譜`);
-            } catch (fetchErr) {
-              console.warn('⚠️ 刷新圖譜失敗:', fetchErr);
-            }
-          }
-            
-          // 加入匯入檔案列表
-          importedFiles.value.unshift({
-            id: Date.now(),
-            nodeId: null,
-            name: data.filename || 'Excel 匯入',
-            ext: 'XLSX',
-            status: `✅ ${data.node_count || data.completed || 0} 個節點`,
-            timestamp: Date.now()
-          });
-          
-          // 5 秒後自動重置進度狀態
-          setTimeout(() => {
-            if (importStatus.value === 'done') {
-              importStatus.value = 'idle';
-              importProgress.value = 0;
-            }
-          }, 5000);
-          
-        } else if (data.status === 'error') {
-          importStatus.value = 'error';
-          error.value = data.error || '匯入任務失敗';
-          cancelImportPoll();
-          
-        } else {
-          // 繼續輪詢
-          _importPollTimer = setTimeout(poll, POLL_INTERVAL);
-        }
-        
-      } catch (err) {
-        console.error('⚠️ 輪詢進度失敗:', err);
-        // 網路錯誤不中斷輪詢，繼續嘗試
-        _importPollTimer = setTimeout(poll, POLL_INTERVAL * 2);
-      }
-    };
-    
-    // 立即執行第一次
-    _importPollTimer = setTimeout(poll, 1000);
-  };
-
-  /**
-   * 取消匯入進度輪詢
-   */
-  const cancelImportPoll = () => {
-    if (_importPollTimer) {
-      clearTimeout(_importPollTimer);
-      _importPollTimer = null;
-    }
-  };
-  
-  /**
-   * 批量匯入檔案（統一 API）
-   * @param {Array<File>} files - 檔案陣列
-   * @returns {Promise<Object>} 匯入結果
-   */
-  const importMultipleFiles = async (files) => {
-    if (!Array.isArray(files) || files.length === 0) {
-      throw new Error('檔案陣列不能為空');
-    }
-    
-    loading.value = true;
-    error.value = null;
-    
-    try {
-      console.log(`🔄 正在上傳 ${files.length} 個檔案...`);
-      
-      // 建立 FormData
-      const formData = new FormData();
-      files.forEach(file => formData.append('files', file));
-      
-      const data = await apiPostForm('/api/graph/import/files', formData);
-      
-      // 驗證回傳數據
-      if (!Array.isArray(data)) {
-        throw new Error('伺服器回傳數據格式錯誤');
-      }
-      
-      // 調用 addBatchNodes 添加節點
-      const stats = addBatchNodes(data);
-      
-      console.log(`✅ 檔案匯入成功:`, stats);
-      return stats;
-      
-    } catch (err) {
-      error.value = err.message || '檔案匯入失敗';
-      console.error('❌ 檔案上傳失敗:', err);
-      throw err;
-    } finally {
-      loading.value = false;
-    }
-  };
-  
-  /**
-   * 跨圖譜功能 - 加載多個圖譜數據
-   * @param {Array<string>} graphIds - 圖譜 ID 列表（例如: ['graph-tech', 'graph-learning']）
-   */
-  const loadCrossGraphData = async (graphIds = ['graph-tech', 'graph-learning']) => {
-    loading.value = true;
-    error.value = null;
-    
-    try {
-      console.log('🔄 正在加載跨圖譜數據:', graphIds);
-      
-      // 模擬 API 延遲
-      await new Promise(resolve => setTimeout(resolve, 800));
-      
-      // 如果 graphMetadataList 為空，則初始化測試數據（僅用於首次加載）
-      if (graphMetadataList.value.length === 0) {
-        console.log('⚙️ 初始化圖譜元數據（使用測試數據）');
-        graphMetadataList.value = crossGraphData.metadata;
-        // 圖譜元數據已保存在 KuzuDB
-      }
-      
-      // 如果 aiLinks 為空，則初始化測試 AI Links（僅用於首次加載）
-      if (aiLinks.value.length === 0) {
-        console.log('⚙️ 初始化 AI Links（使用測試數據）');
-        aiLinks.value = crossGraphData.aiLinks;
-      }
-      
-      // 從 crossGraphData 獲取圖譜實際數據（與工作檯共用）
-      const allNodes = [];
-      const allLinks = [];
-      
-      crossGraphData.graphs.forEach(graph => {
-        if (graphIds.includes(graph.id)) {
-          allNodes.push(...graph.nodes);
-          allLinks.push(...graph.links);
-        }
-      });
-      
-      // 更新狀態 - 保留現有節點和連接，合併新加載的
-      nodes.value = allNodes;
-      links.value = allLinks;
-      activeGraphIds.value = graphIds;
-      isCrossGraphMode.value = true;
-      lastUpdate.value = new Date();
-      
-      console.log('📊 跨圖譜數據已加載:', {
-        graphs: graphIds,
-        nodes: allNodes.length,
-        links: allLinks.length,
-        aiLinks: aiLinks.value.length
-      });
-      
-      return {
-        metadata: graphMetadataList.value,
-        nodes: allNodes,
-        links: allLinks,
-        aiLinks: aiLinks.value
-      };
-      
-    } catch (err) {
-      error.value = err.message || '跨圖譜數據加載失敗';
-      console.error('❌ 跨圖譜數據加載錯誤:', err);
-      throw err;
-    } finally {
-      loading.value = false;
-    }
-  };
-  
-  /**
-   * 跨圖譜功能 - 退出跨圖譜模式，返回單圖譜模式
-   */
-  const exitCrossGraphMode = () => {
-    isCrossGraphMode.value = false;
-    aiLinks.value = [];
-    activeGraphIds.value = [];
-    graphMetadataList.value = [];
-    console.log('✅ 已退出跨圖譜模式');
-  };
-  
-  /**
-   * 跨圖譜功能 - 切換圖譜顯示
-   * @param {string} graphId - 圖譜 ID
-   */
-  const toggleGraphVisibility = (graphId) => {
-    const index = activeGraphIds.value.indexOf(graphId);
-    if (index > -1) {
-      // 隱藏圖譜
-      activeGraphIds.value.splice(index, 1);
-    } else {
-      // 顯示圖譜
-      activeGraphIds.value.push(graphId);
-    }
-    
-    // 重新加載數據
-    if (activeGraphIds.value.length > 0) {
-      loadCrossGraphData(activeGraphIds.value);
-    } else {
-      exitCrossGraphMode();
-    }
-  };
-  
-  /**
-   * 跨圖譜功能 - 獲取節點所屬圖譜信息
-   * @param {string} nodeId - 節點 ID
-   * @returns {Object|null}
-   */
-  const getNodeGraph = (nodeId) => {
-    const node = nodes.value.find(n => n.id === nodeId);
-    if (!node || !node.graphId) return null;
-    
-    return graphMetadataList.value.find(g => g.id === node.graphId) || null;
-  };
-  
-  /**
-   * 跨圖譜功能 - 獲取 AI Link 統計
-   * @returns {Object}
-   */
-  const getAILinkStats = () => {
-    const stats = {
-      total: aiLinks.value.length,
-      byConfidence: {
-        high: aiLinks.value.filter(l => l.confidence >= 0.8).length,
-        medium: aiLinks.value.filter(l => l.confidence >= 0.5 && l.confidence < 0.8).length,
-        low: aiLinks.value.filter(l => l.confidence < 0.5).length
-      },
-      avgConfidence: aiLinks.value.reduce((sum, l) => sum + l.confidence, 0) / (aiLinks.value.length || 1)
-    };
-    return stats;
-  };
-  
-  /**
-   * 從工作檯快照當前圖譜數據
-   * @returns {Object} 圖譜快照數據
-   */
-  const snapshotWorkspaceGraph = () => {
-    if (nodes.value.length === 0) {
-      throw new Error('工作檯暫無圖譜數據');
-    }
-    
-    const snapshot = {
-      id: 'workspace-snapshot-' + Date.now(),
-      name: '工作檯快照',
-      description: `包含 ${nodes.value.length} 個節點，${links.value.length} 個連接`,
-      icon: '🌐',
-      color: '#3b82f6',
-      nodeCount: nodes.value.length,
-      linkCount: links.value.length,
-      nodes: JSON.parse(JSON.stringify(nodes.value)),
-      links: JSON.parse(JSON.stringify(links.value)),
-      timestamp: new Date().toISOString()
-    };
-    
-    console.log('📸 工作檯圖譜快照已創建:', snapshot);
-    return snapshot;
-  };
-  
-  /**
-   * 清除所有圖譜元數據（用於重置）
-   */
-  const clearGraphMetadata = () => {
-    graphMetadataList.value = [];
-    localStorage.removeItem('graphMetadataList');
-    console.log('🗑️ 已清除所有圖譜元數據');
-  };
-  
   /**
    * 刪除圖譜（調用後端 API + 同步 store）
    * @param {string} graphId - 圖譜 ID
@@ -1412,31 +933,6 @@ export const useGraphStore = defineStore('graph', () => {
   };
 
   /**
-   * 上傳文件到指定圖譜（統一的上傳接口）
-   * @param {File} file - 文件對象
-   * @param {number|string} graphId - 目標圖譜 ID
-   * @param {string} graphMode - 模式 ('existing' | 'new')
-   * @returns {Promise<Object>} 上傳結果
-   */
-  const uploadFileToGraph = async (file, graphId, graphMode = 'existing') => {
-    const formData = new FormData();
-    formData.append('file', file);
-    formData.append('graph_id', graphId);
-    formData.append('graph_mode', graphMode);
-    try {
-      const result = await apiPostForm('/api/system/upload', formData);
-      if (result.success) {
-        await fetchGraphData(currentGraphId.value);
-        console.log('✅ 文件上傳成功並已重新同步圖譜');
-      }
-      return result;
-    } catch (err) {
-      console.error('❌ uploadFileToGraph 錯誤:', err);
-      throw err;
-    }
-  };
-
-  /**
    * 更新實體節點（調用後端 API + 同步 store）
    * @param {string} nodeId - 節點 ID
    * @param {Object} updates - 要更新的屬性 { name, link, description, image, ... }
@@ -1471,27 +967,9 @@ export const useGraphStore = defineStore('graph', () => {
     }
   };
 
-  /**
-   * 獲取 RAGFlow 知識庫列表（集中管理）
-   * @returns {Promise<Array>} 知識庫列表
-   */
-  const fetchRAGFlowDatasets = async () => {
-    try {
-      const data = await apiGet('/api/ragflow/datasets');
-      if (data && data.code === 0) {
-        ragflowDatasets.value = data.data || [];
-        console.log(`✅ 已加載 ${ragflowDatasets.value.length} 個 RAGFlow 知識庫`);
-      }
-      return ragflowDatasets.value;
-    } catch (err) {
-      console.warn('⚠️ 獲取 RAGFlow 資料集失敗:', err.message);
-      return [];
-    }
-  };
-  
   // ===== 返回 Store API =====
   return {
-    // State
+    // Core State
     nodes,
     nodeVersion,
     links,
@@ -1501,25 +979,11 @@ export const useGraphStore = defineStore('graph', () => {
     error,
     lastUpdate,
     filterMode,
-    importedFiles,
     currentGraphId,
     activeTagFilter,
     tagFilterMode,
     
-    // 匯入進度狀態
-    importTaskId,
-    importStatus,
-    importProgress,
-    importDetail,
-    
-    // 跨圖譜狀態
-    graphMetadataList,
-    aiLinks,
-    activeGraphIds,
-    isCrossGraphMode,
-    ragflowDatasets,
-    
-    // Computed
+    // Core Computed
     nodeCount,
     linkCount,
     hasSelection,
@@ -1531,12 +995,7 @@ export const useGraphStore = defineStore('graph', () => {
     filteredNodes,
     filteredLinks,
     
-    // 跨圖譜 Computed
-    allLinks,
-    nodesByGraph,
-    graphStats,
-    
-    // Actions
+    // Core Actions
     fetchGraphData,
     fetchNeighbors,
     executeCypherQuery,
@@ -1560,30 +1019,17 @@ export const useGraphStore = defineStore('graph', () => {
     removeTagFromNode,
     getAllTagNames,
     setTagFilter,
-    importFile,
-    importExcelAsync,
-    cancelImportPoll,
-    importMultipleFiles,
     
-    // 跨圖譜 Actions
-    loadCrossGraphData,
-    exitCrossGraphMode,
-    toggleGraphVisibility,
-    getNodeGraph,
-    getAILinkStats,
-    snapshotWorkspaceGraph,
-    clearGraphMetadata,
+    // 圖譜 CRUD Actions
     createGraph,
     updateGraph,
-    loadGraphMetadataList,
-    
-    // 統一 API Actions（同步 store）
+    deleteGraph,
     createEntity,
     batchCreateEntities,
-    uploadFileToGraph,
     updateEntity,
     deleteEntity,
-    fetchRAGFlowDatasets,
-    deleteGraph
-  };
-});
+    
+    // 拆分模組（Composable Spread）
+    ...importFeatures,
+    ...crossGraphFeatures,
+    ...ragflowFeatures,

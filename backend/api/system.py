@@ -1,176 +1,49 @@
 """
-系統配置管理 API
-用於動態更新配置（優先使用 config.json，兼容 .env）
+系統 API — 薄路由層
+
+核心邏輯已拆分至:
+  - system_config.py      (配置工具 & Pydantic 模型)
+  - system_upload.py       (檔案上傳管線)
+  - system_connections.py  (連線管理 CRUD + 偵測)
 """
-from fastapi import APIRouter, HTTPException, UploadFile, File, Form
-from pydantic import BaseModel
-from typing import Optional
+from fastapi import APIRouter, HTTPException
 import os
-import re
 import logging
-import shutil
-import asyncio
-from pathlib import Path
-from datetime import datetime
+
 from backend.core.config import (
-    load_config_from_file, save_config_to_file, get_current_api_keys,
-    settings, load_connections, save_connections, generate_connection_id
+    load_config_from_file, save_config_to_file, get_current_api_keys, settings
 )
 from backend.core.circuit_breaker import dify_breaker, ragflow_breaker
+
+# ---- 從拆分模組匯入 ----
+from .system_config import (
+    ConfigUpdateRequest,
+    ConfigResponse,
+    get_env_file_path,
+    mask_api_key,
+    is_masked_key,
+    read_env_file,
+    update_env_file,
+    reload_env_to_os,
+)
+from . import system_upload
+from . import system_connections
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
-
-class ConfigUpdateRequest(BaseModel):
-    """配置更新請求模型"""
-    dify_key: Optional[str] = None
-    ragflow_key: Optional[str] = None
-    dify_api_url: Optional[str] = None
-    ragflow_api_url: Optional[str] = None
+# ---- 包含子模組路由 ----
+router.include_router(system_upload.router)
+router.include_router(system_connections.router)
 
 
-class ConfigResponse(BaseModel):
-    """配置響應模型"""
-    success: bool
-    message: str
-    config: Optional[dict] = None
-
-
-def get_env_file_path() -> Path:
-    """獲取 .env 檔案路徑"""
-    # 從當前工作目錄開始尋找 .env
-    current_dir = Path.cwd()
-    env_path = current_dir / ".env"
-    
-    # 如果當前目錄沒有，嘗試父目錄（適應不同啟動位置）
-    if not env_path.exists():
-        env_path = current_dir.parent / ".env"
-    
-    return env_path
-
-
-def mask_api_key(key: Optional[str]) -> str:
-    """遮蔽 API Key，只顯示前 5 碼"""
-    if not key or len(key) <= 5:
-        return "******"
-    return f"{key[:5]}{'*' * (len(key) - 5)}"
-
-
-def is_masked_key(key: Optional[str]) -> bool:
-    """檢測是否為遮罩後的 API Key（包含連續 * 號）"""
-    if not key:
-        return False
-    return '***' in key
-
-
-def read_env_file() -> dict:
-    """讀取 .env 檔案內容"""
-    env_path = get_env_file_path()
-    
-    if not env_path.exists():
-        logger.warning(f".env 檔案不存在: {env_path}")
-        return {}
-    
-    env_vars = {}
-    try:
-        with open(env_path, 'r', encoding='utf-8') as f:
-            for line in f:
-                line = line.strip()
-                # 跳過註釋和空行
-                if not line or line.startswith('#'):
-                    continue
-                # 解析 KEY=VALUE
-                if '=' in line:
-                    key, value = line.split('=', 1)
-                    env_vars[key.strip()] = value.strip()
-    except Exception as e:
-        logger.error(f"讀取 .env 檔案失敗: {e}")
-    
-    return env_vars
-
-
-def update_env_file(updates: dict) -> bool:
-    """更新 .env 檔案中的變數"""
-    env_path = get_env_file_path()
-    
-    try:
-        # 讀取現有內容
-        if env_path.exists():
-            with open(env_path, 'r', encoding='utf-8') as f:
-                lines = f.readlines()
-        else:
-            logger.info(f"創建新的 .env 檔案: {env_path}")
-            lines = []
-        
-        # 追蹤哪些變數已經更新
-        updated_vars = set()
-        
-        # 處理現有行
-        for i, line in enumerate(lines):
-            original_line = line
-            line_stripped = line.strip()
-            
-            # 跳過註釋和空行
-            if not line_stripped or line_stripped.startswith('#'):
-                continue
-            
-            # 檢查是否需要更新此行
-            for key, value in updates.items():
-                # 使用正則表達式匹配 KEY=...
-                pattern = rf'^{re.escape(key)}\s*=\s*.*$'
-                if re.match(pattern, line_stripped):
-                    lines[i] = f"{key}={value}\n"
-                    updated_vars.add(key)
-                    logger.info(f"更新變數: {key}")
-                    break
-        
-        # 添加未找到的新變數
-        for key, value in updates.items():
-            if key not in updated_vars:
-                lines.append(f"{key}={value}\n")
-                logger.info(f"新增變數: {key}")
-        
-        # 寫回檔案
-        with open(env_path, 'w', encoding='utf-8') as f:
-            f.writelines(lines)
-        
-        logger.info(f"成功更新 .env 檔案: {env_path}")
-        return True
-        
-    except Exception as e:
-        logger.error(f"更新 .env 檔案失敗: {e}")
-        return False
-
-
-def reload_env_to_os() -> None:
-    """重新載入 .env 到 os.environ（嘗試即時生效）"""
-    env_vars = read_env_file()
-    for key, value in env_vars.items():
-        os.environ[key] = value
-        logger.debug(f"載入環境變數: {key}")
-
+# ===== 配置 API =====
 
 @router.get("/config")
 async def get_config():
-    """
-    獲取當前系統配置
-    
-    返回格式:
-    {
-        "success": true,
-        "config": {
-            "dify_key": "app-xxxxxxxx",
-            "ragflow_key": "ragflow-xxxxxxxx",
-            "dify_api_url": "http://localhost:82/v1",
-            "ragflow_api_url": "http://localhost:9380/api/v1"
-        }
-    }
-    """
+    """獲取當前系統配置"""
     try:
-        # 從統一的配置源獲取（config.json 優先，然後是環境變數）
         api_keys = get_current_api_keys()
-        
         return ConfigResponse(
             success=True,
             message="配置獲取成功",
@@ -182,7 +55,6 @@ async def get_config():
                 "config_source": "config.json (C:/BruV_Data/config.json)"
             }
         )
-    
     except Exception as e:
         logger.error(f"獲取配置失敗: {e}")
         raise HTTPException(status_code=500, detail=f"獲取配置失敗: {str(e)}")
@@ -190,63 +62,39 @@ async def get_config():
 
 @router.post("/config")
 async def update_config(request: ConfigUpdateRequest):
-    """
-    更新系統配置（保存到 config.json）
-    
-    請求格式:
-    {
-        "dify_key": "app-xxxxxxxxxxxxxxxx",
-        "ragflow_key": "ragflow-xxxxxxxxxxxxxxxx",
-        "dify_api_url": "http://localhost:82/v1",
-        "ragflow_api_url": "http://localhost:9380/api/v1"
-    }
-    
-    返回格式:
-    {
-        "success": true,
-        "message": "配置更新成功",
-        "config": { ... }
-    }
-    """
+    """更新系統配置（保存到 config.json）"""
     try:
         config_updates = {}
-        
-        # 準備要更新的配置（跳過遮罩值，防止前端將 masked key 存回）
+
         if request.dify_key:
             if is_masked_key(request.dify_key):
                 logger.warning("忽略遮罩的 dify_api_key，不更新")
             else:
                 config_updates['dify_api_key'] = request.dify_key
                 logger.info("準備更新 dify_api_key")
-        
+
         if request.ragflow_key:
             if is_masked_key(request.ragflow_key):
                 logger.warning("忽略遮罩的 ragflow_api_key，不更新")
             else:
                 config_updates['ragflow_api_key'] = request.ragflow_key
                 logger.info("準備更新 ragflow_api_key")
-        
+
         if request.dify_api_url:
             config_updates['dify_api_url'] = request.dify_api_url
             logger.info(f"準備更新 dify_api_url: {request.dify_api_url}")
-        
+
         if request.ragflow_api_url:
             config_updates['ragflow_api_url'] = request.ragflow_api_url
             logger.info(f"準備更新 ragflow_api_url: {request.ragflow_api_url}")
-        
+
         if not config_updates:
-            raise HTTPException(
-                status_code=400, 
-                detail="至少需要提供一個設定項目"
-            )
-        
-        # 保存到 config.json
+            raise HTTPException(status_code=400, detail="至少需要提供一個設定項目")
+
         success = save_config_to_file(config_updates)
-        
         if not success:
             raise HTTPException(status_code=500, detail="更新配置檔案失敗")
-        
-        # 準備回應配置（返回完整 API Key，不遮罩）
+
         response_config = {}
         if request.dify_key:
             response_config['dify_key'] = request.dify_key
@@ -256,13 +104,13 @@ async def update_config(request: ConfigUpdateRequest):
             response_config['dify_api_url'] = request.dify_api_url
         if request.ragflow_api_url:
             response_config['ragflow_api_url'] = request.ragflow_api_url
-        
+
         return ConfigResponse(
             success=True,
             message="✅ 配置已保存到 config.json！修改將立即生效",
             config=response_config
         )
-    
+
     except HTTPException:
         raise
     except Exception as e:
@@ -272,90 +120,48 @@ async def update_config(request: ConfigUpdateRequest):
 
 @router.get("/env-file")
 async def get_env_file_location():
-    """
-    獲取 .env 檔案位置和狀態
-    
-    返回格式:
-    {
-        "success": true,
-        "path": "/path/to/.env",
-        "exists": true,
-        "writable": true
-    }
-    """
+    """獲取 .env 檔案位置和狀態"""
     try:
         env_path = get_env_file_path()
         exists = env_path.exists()
-        writable = os.access(env_path.parent, os.W_OK) if exists else os.access(env_path.parent, os.W_OK)
-        
-        return {
-            "success": True,
-            "path": str(env_path),
-            "exists": exists,
-            "writable": writable
-        }
-    
+        writable = os.access(env_path.parent, os.W_OK)
+        return {"success": True, "path": str(env_path), "exists": exists, "writable": writable}
     except Exception as e:
         logger.error(f"獲取 .env 檔案資訊失敗: {e}")
         raise HTTPException(status_code=500, detail=f"獲取檔案資訊失敗: {str(e)}")
 
 
+# ===== 舊版連線測試 (向下相容) =====
+
 @router.post("/test-connection")
 async def test_connection():
-    """
-    測試 Dify 和 RAGFlow 服務連接
-    
-    返回格式:
-    {
-        "success": true,
-        "dify": {
-            "status": "ok" | "error",
-            "url": "http://localhost:5001/v1",
-            "message": "連接成功" | "錯誤訊息",
-            "api_key_configured": true
-        },
-        "ragflow": {
-            "status": "ok" | "error",
-            "url": "http://localhost:9380/api/v1",
-            "message": "連接成功" | "錯誤訊息",
-            "api_key_configured": true
-        }
-    }
-    """
-    from backend.core.config import get_current_api_keys
+    """測試 Dify 和 RAGFlow 服務連接（舊版）"""
     import httpx
-    
+
     api_keys = get_current_api_keys()
     results = {
         "success": True,
         "dify": {
-            "status": "unknown",
-            "url": api_keys['DIFY_API_URL'],
-            "message": "",
-            "api_key_configured": bool(api_keys['DIFY_API_KEY'])
+            "status": "unknown", "url": api_keys['DIFY_API_URL'],
+            "message": "", "api_key_configured": bool(api_keys['DIFY_API_KEY'])
         },
         "ragflow": {
-            "status": "unknown",
-            "url": api_keys['RAGFLOW_API_URL'],
-            "message": "",
-            "api_key_configured": bool(api_keys['RAGFLOW_API_KEY'])
+            "status": "unknown", "url": api_keys['RAGFLOW_API_URL'],
+            "message": "", "api_key_configured": bool(api_keys['RAGFLOW_API_KEY'])
         }
     }
-    
-    # 測試 Dify 連接
+
+    # 測試 Dify
     try:
         if not api_keys['DIFY_API_KEY']:
             results['dify']['status'] = 'warning'
             results['dify']['message'] = '❌ API Key 未配置'
         else:
             async with httpx.AsyncClient(timeout=5.0) as client:
-                # 簡單測試 Dify API 是否可訪問
                 response = await client.get(
                     api_keys['DIFY_API_URL'],
                     headers={"Authorization": f"Bearer {api_keys['DIFY_API_KEY']}"}
                 )
-                # 任何有效的 HTTP 響應都表示服務在運行
-                # 401/404 都是正常的（服務運行但端點/權限問題）
                 if response.status_code in [200, 401, 404, 422]:
                     results['dify']['status'] = 'ok'
                     results['dify']['message'] = '✅ 連接成功'
@@ -374,15 +180,14 @@ async def test_connection():
     except Exception as e:
         results['dify']['status'] = 'error'
         results['dify']['message'] = f'❌ {str(e)}'
-    
-    # 測試 RAGFlow 連接
+
+    # 測試 RAGFlow
     try:
         if not api_keys['RAGFLOW_API_KEY']:
             results['ragflow']['status'] = 'warning'
             results['ragflow']['message'] = '❌ API Key 未配置'
         else:
             async with httpx.AsyncClient(timeout=5.0) as client:
-                # 測試 RAGFlow datasets 端點
                 response = await client.get(
                     f"{api_keys['RAGFLOW_API_URL'].rstrip('/')}/datasets",
                     headers={"Authorization": f"Bearer {api_keys['RAGFLOW_API_KEY']}"}
@@ -390,7 +195,6 @@ async def test_connection():
                 if response.status_code == 200:
                     results['ragflow']['status'] = 'ok'
                     data = response.json()
-                    # 安全地獲取數據集數量
                     datasets = data.get('data', [])
                     if isinstance(datasets, list):
                         dataset_count = len(datasets)
@@ -412,262 +216,18 @@ async def test_connection():
     except Exception as e:
         results['ragflow']['status'] = 'error'
         results['ragflow']['message'] = f'❌ {str(e)}'
-    
-    # 判斷整體狀態
+
     if results['dify']['status'] == 'error' or results['ragflow']['status'] == 'error':
         results['success'] = False
-    
+
     return results
 
 
-@router.post("/upload")
-async def upload_file(
-    file: UploadFile = File(...),
-    graph_id: str = Form(None),
-    graph_mode: str = Form("existing"),
-    graph_name: str = Form(None),
-    enable_ai_link: str = Form("false"),
-    ragflow_dataset_id: str = Form(None)
-):
-    """
-    上傳檔案到監控資料夾，自動觸發 WatcherService 處理
-    
-    Args:
-        file: 上傳的檔案
-        graph_id: 目標圖譜 ID
-        graph_mode: 圖譜模式 ("new" 或 "existing")
-        graph_name: 新圖譜名稱 (當 graph_mode="new" 時使用)
-        enable_ai_link: 是否啟用 AI 智能連線 ("true" 或 "false")
-        ragflow_dataset_id: RAGFlow 知識庫 ID (當 enable_ai_link="true" 時使用)
-    
-    Returns:
-        上傳結果資訊
-    """
-    try:
-        ai_enabled = enable_ai_link.lower() == "true"
-        ragflow_doc_ids = []
-        logger.info(f"收到文件上傳請求: {file.filename}, graph_mode={graph_mode}, graph_id={graph_id}")
-        
-        # 檔案大小限制檢查
-        content = await file.read()
-        if len(content) > settings.MAX_UPLOAD_SIZE:
-            max_mb = settings.MAX_UPLOAD_SIZE // (1024 * 1024)
-            raise HTTPException(
-                status_code=413,
-                detail=f"檔案大小超過限制（最大 {max_mb} MB）"
-            )
-        
-        # 使用監控資料夾作為上傳目錄（跨平台路徑）
-        upload_dir = Path(settings.AUTO_IMPORT_DIR)
-        
-        # 確保上傳目錄存在
-        upload_dir.mkdir(parents=True, exist_ok=True)
-        
-        # 檢查檔案名稱
-        if not file.filename:
-            raise HTTPException(status_code=400, detail="檔案名稱不能為空")
-        
-        # 清洗檔案名稱，防止路徑遍歷攻擊
-        import re
-        safe_filename = re.sub(r'[\\/:*?"<>|]', '_', Path(file.filename).name)
-        if safe_filename.startswith('.'):
-            safe_filename = '_' + safe_filename
-        
-        # 生成檔案路徑
-        file_path = upload_dir / safe_filename
-        
-        # 如果檔案已存在，添加時間戳
-        if file_path.exists():
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            file_stem = file_path.stem
-            file_suffix = file_path.suffix
-            file_path = upload_dir / f"{file_stem}_{timestamp}{file_suffix}"
-        
-        # ── 階段 1: 先寫 meta.json（確保 Watcher 讀取不會失敗）──
-        # 注意：主檔案尚未寫入，Watcher 不會被觸發
-        import json
-        metadata_file = file_path.with_suffix(file_path.suffix + '.meta.json')
-        metadata = {
-            "graph_id": graph_id,
-            "graph_mode": graph_mode,
-            "graph_name": graph_name,
-            "upload_time": datetime.now().isoformat(),
-            "ai_enabled": ai_enabled,
-            "ragflow_dataset_id": ragflow_dataset_id if ai_enabled else None,
-            "ragflow_result": None,
-            "ragflow_doc_ids": None
-        }
-        with open(metadata_file, 'w', encoding='utf-8') as f:
-            json.dump(metadata, f, ensure_ascii=False, indent=2)
-        logger.info(f"📋 圖譜元數據已預寫入: graph_id={graph_id}, path={metadata_file.name}")
-        
-        # ── 階段 2: RAGFlow 上傳（耗時操作，在主檔案寫入前完成）──
-        # 先用臨時檔寫入 content 供 RAGFlow 上傳，但不放在 Auto_Import 觸發 Watcher
-        ragflow_result = None
-        temp_file_for_ragflow = None
-        if ai_enabled and ragflow_dataset_id:
-            try:
-                logger.info(f"🤖 正在上傳到 RAGFlow 知識庫: {ragflow_dataset_id}")
-                from backend.rag_client import RAGFlowClient
-                from backend.core.config import get_current_api_keys
-                
-                # 動態獲取當前 API Keys
-                api_keys = get_current_api_keys()
-                
-                # 檢查 API Key 是否配置
-                if not api_keys['RAGFLOW_API_KEY']:
-                    logger.warning("⚠️ RAGFlow API Key 未配置，跳過 RAGFlow 上傳")
-                else:
-                    # 將內容寫入臨時檔案供 RAGFlow 上傳（避免觸發 Watcher）
-                    import tempfile
-                    temp_dir = tempfile.gettempdir()
-                    temp_file_for_ragflow = Path(temp_dir) / file_path.name
-                    with open(temp_file_for_ragflow, "wb") as tmp:
-                        tmp.write(content)
-                    
-                    # 使用配置中的 RAGFlow API URL
-                    ragflow_api_url = api_keys['RAGFLOW_API_URL']
-                    rag_client = RAGFlowClient(
-                        api_key=api_keys['RAGFLOW_API_KEY'],
-                        base_url=ragflow_api_url
-                    )
-                    
-                    # 非同步上傳到 RAGFlow（避免阻塞事件迴圈）
-                    ragflow_result = await rag_client.async_upload_file(
-                        dataset_id=ragflow_dataset_id,
-                        file_path=str(temp_file_for_ragflow)
-                    )
-                    logger.info(f"✅ RAGFlow 上傳成功: {ragflow_result}")
-                    
-                    # 自動觸發文檔解析（chunking + embedding）
-                    uploaded_docs = ragflow_result.get("data", [])
-                    if uploaded_docs:
-                        doc_ids = [d["id"] for d in uploaded_docs if "id" in d]
-                        if doc_ids:
-                            chunk_token_num = settings.RAGFLOW_CHUNK_TOKEN_NUM
-                            logger.info(f"📋 準備設定 {len(doc_ids)} 份文檔 chunk_token_num={chunk_token_num}")
-
-                            # ── 步驟 1: 設定每份文檔的解析器參數 ──
-                            for doc_id in doc_ids:
-                                try:
-                                    await rag_client.async_update_document(
-                                        dataset_id=ragflow_dataset_id,
-                                        document_id=doc_id,
-                                        chunk_method="naive",
-                                        parser_config={"chunk_token_num": chunk_token_num}
-                                    )
-                                    logger.info(f"✅ 已設定文檔 {doc_id} chunk_token_num={chunk_token_num}")
-                                except Exception as cfg_err:
-                                    logger.warning(f"⚠️ 設定 parser_config 失敗: {cfg_err}")
-
-                            # ── 步驟 2: 驗證設定是否生效 ──
-                            await asyncio.sleep(2)  # 等待 RAGFlow 落盤
-                            for doc_id in doc_ids:
-                                try:
-                                    doc_status = await rag_client.async_get_document_status(
-                                        dataset_id=ragflow_dataset_id,
-                                        document_id=doc_id
-                                    )
-                                    actual_config = doc_status.get('parser_config', {})
-                                    actual_chunk = actual_config.get('chunk_token_num', '未知')
-                                    logger.info(f"🔍 驗證文檔 {doc_id}: chunk_token_num={actual_chunk} (預期={chunk_token_num})")
-                                    if actual_chunk != chunk_token_num and actual_chunk != '未知':
-                                        logger.warning(f"⚠️ chunk_token_num 不符! 重試設定...")
-                                        await rag_client.async_update_document(
-                                            dataset_id=ragflow_dataset_id,
-                                            document_id=doc_id,
-                                            chunk_method="naive",
-                                            parser_config={"chunk_token_num": chunk_token_num}
-                                        )
-                                        await asyncio.sleep(1)
-                                except Exception as verify_err:
-                                    logger.warning(f"⚠️ 驗證 parser_config 失敗: {verify_err}")
-
-                            # ── 步驟 3: 觸發解析 ──
-                            import httpx
-                            async with httpx.AsyncClient(timeout=300) as parse_client:
-                                parse_resp = await parse_client.post(
-                                    f"{ragflow_api_url}/datasets/{ragflow_dataset_id}/chunks",
-                                    headers={
-                                        "Authorization": f"Bearer {api_keys['RAGFLOW_API_KEY']}",
-                                        "Content-Type": "application/json"
-                                    },
-                                    json={"document_ids": doc_ids}
-                                )
-                                parse_resp.raise_for_status()
-                                logger.info(f"✅ 已觸發 RAGFlow 文檔解析: {doc_ids} (chunk_token_num={chunk_token_num})")
-                                ragflow_doc_ids = doc_ids
-            except Exception as e:
-                logger.warning(f"⚠️ RAGFlow 上傳失敗（繼續處理）: {e}")
-            finally:
-                # 清理臨時檔案
-                if temp_file_for_ragflow and temp_file_for_ragflow.exists():
-                    try:
-                        temp_file_for_ragflow.unlink()
-                    except OSError:
-                        pass
-        
-        # ── 階段 3: 回填 meta.json（補充 RAGFlow 結果）──
-        metadata["ragflow_result"] = ragflow_result
-        metadata["ragflow_doc_ids"] = ragflow_doc_ids if ai_enabled else None
-        with open(metadata_file, 'w', encoding='utf-8') as f:
-            json.dump(metadata, f, ensure_ascii=False, indent=2)
-        
-        # ── 階段 3.5: 將 ragflow_dataset_id 回寫到圖譜元數據 ──
-        if ai_enabled and ragflow_dataset_id and graph_id:
-            try:
-                from backend.api.graph import get_kuzu_manager
-                kuzu_mgr = get_kuzu_manager()
-                if kuzu_mgr:
-                    existing_meta = kuzu_mgr.get_graph_metadata(graph_id)
-                    if existing_meta and not existing_meta.get('ragflow_dataset_id'):
-                        kuzu_mgr.update_graph_metadata(graph_id, ragflow_dataset_id=ragflow_dataset_id)
-                        logger.info(f"📌 已將 ragflow_dataset_id={ragflow_dataset_id} 寫入圖譜 {graph_id}")
-            except Exception as e:
-                logger.warning(f"⚠️ 回寫 ragflow_dataset_id 失敗（不影響上傳）: {e}")
-        
-        # ── 階段 4: 最後寫入主檔案（觸發 Watcher，此時 meta.json 已就緒）──
-        with open(file_path, "wb") as buffer:
-            buffer.write(content)
-        
-        logger.info(f"✅ 檔案上傳成功，已進入監控佇列: {file_path}")
-        logger.info(f"📋 圖譜元數據已保存: {metadata}")
-        
-        message = "檔案已送入神經網路，正在解析中..."
-        if ai_enabled:
-            if ragflow_result:
-                message = "✨ 檔案已上傳到 RAGFlow 並送入神經網路，正在 AI 分析中..."
-            else:
-                message = "⚠️ 檔案已送入神經網路（RAGFlow 上傳失敗），正在解析中..."
-        
-        return {
-            "success": True,
-            "message": message,
-            "filename": file.filename,
-            "saved_path": str(file_path),
-            "size": os.path.getsize(file_path),
-            "upload_time": datetime.now().isoformat(),
-            "ai_enabled": ai_enabled,
-            "ragflow_processed": ragflow_result is not None,
-            "ragflow_dataset_id": ragflow_dataset_id if ai_enabled else None,
-            "ragflow_doc_ids": ragflow_doc_ids if ai_enabled else []
-        }
-        
-    except Exception as e:
-        logger.error(f"❌ 檔案上傳失敗: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"檔案上傳失敗: {str(e)}")
-
-
-# ==================== 斷路器狀態 API ====================
+# ===== 斷路器 / DLQ / 系統維護 =====
 
 @router.get("/circuit-breakers")
 async def get_circuit_breaker_status():
-    """
-    取得所有斷路器狀態
-
-    Returns:
-        各下游服務斷路器的當前狀態、失敗次數、剩餘恢復時間
-    """
+    """取得所有斷路器狀態"""
     return {
         "success": True,
         "data": {
@@ -677,23 +237,13 @@ async def get_circuit_breaker_status():
     }
 
 
-# ==================== DLQ (Dead Letter Queue) API ====================
-
 @router.get("/saga-dlq")
 async def get_saga_dlq():
-    """
-    取得 Saga 死信佇列中的未解決項目
-
-    用途：管理員排查 RAGFlow ↔ KuzuDB 不一致問題
-    """
+    """取得 Saga 死信佇列中的未解決項目"""
     try:
         from backend.services.watcher import dlq
         items = dlq.list_unresolved(limit=50)
-        return {
-            "success": True,
-            "data": items,
-            "total": len(items)
-        }
+        return {"success": True, "data": items, "total": len(items)}
     except Exception as e:
         logger.error(f"DLQ 查詢失敗: {e}")
         raise HTTPException(status_code=500, detail=f"DLQ 查詢失敗: {str(e)}")
@@ -715,35 +265,22 @@ async def resolve_dlq_item(dlq_id: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-# ==================== 系統維護 API ====================
-
 @router.post("/maintenance/cleanup")
 async def system_cleanup(retention_days: int = 7):
-    """
-    清理過期的 SagaLog 與 TaskQueue 記錄
-
-    - SagaLog: 刪除狀態為 completed / compensation_complete 且超過 retention_days 的記錄
-    - TaskQueue: 刪除狀態為 completed / failed 且超過 retention_days 的記錄
-    - DLQ: 保留不動，需人工確認後手動解決
-
-    Args:
-        retention_days: 保留天數，預設 7 天
-    """
+    """清理過期的 SagaLog 與 TaskQueue 記錄"""
     import sqlite3
     from datetime import datetime, timedelta
 
     cutoff = (datetime.now() - timedelta(days=retention_days)).isoformat()
     results = {"saga_deleted": 0, "task_deleted": 0, "retention_days": retention_days, "cutoff": cutoff}
 
-    # ── 清理 SagaLog ──
     try:
         from backend.services.saga import _SAGA_DB_PATH
         if _SAGA_DB_PATH.exists():
             conn = sqlite3.connect(str(_SAGA_DB_PATH), timeout=5)
             cursor = conn.execute(
                 "DELETE FROM saga_logs WHERE status IN ('completed', 'compensation_complete') "
-                "AND created_at < ?",
-                (cutoff,)
+                "AND created_at < ?", (cutoff,)
             )
             results["saga_deleted"] = cursor.rowcount
             conn.commit()
@@ -753,15 +290,13 @@ async def system_cleanup(retention_days: int = 7):
         logger.error(f"SagaLog 清理失敗: {e}")
         results["saga_error"] = str(e)
 
-    # ── 清理 TaskQueue ──
     try:
         from backend.services.task_queue import _TASK_DB_PATH
         if _TASK_DB_PATH.exists():
             conn = sqlite3.connect(str(_TASK_DB_PATH), timeout=5)
             cursor = conn.execute(
                 "DELETE FROM tasks WHERE status IN ('completed', 'failed') "
-                "AND completed_at < ?",
-                (cutoff,)
+                "AND completed_at < ?", (cutoff,)
             )
             results["task_deleted"] = cursor.rowcount
             conn.commit()
@@ -776,289 +311,3 @@ async def system_cleanup(retention_days: int = 7):
         "message": f"清理完成: SagaLog {results['saga_deleted']} 筆, TaskQueue {results['task_deleted']} 筆 (DLQ 保留不動)",
         "data": results
     }
-
-
-# ==================== 連線管理 API ====================
-
-class ConnectionModel(BaseModel):
-    """連線配置模型"""
-    name: str
-    type: str  # dify | ragflow | ollama | openai | custom
-    url: str
-    api_key: str = ""
-    note: str = ""
-    remember_key: bool = True
-    enabled: bool = True
-
-
-class InlineTestRequest(BaseModel):
-    """Dialog 內測試連線請求"""
-    type: str
-    url: str
-    api_key: str = ""
-
-
-@router.get("/connections")
-async def list_connections():
-    """取得所有連線配置（Key 完整顯示，不遮罩）"""
-    try:
-        connections = load_connections()
-        return {"success": True, "connections": connections}
-    except Exception as e:
-        logger.error(f"載入連線失敗: {e}")
-        raise HTTPException(status_code=500, detail=f"載入連線失敗: {e}")
-
-
-@router.post("/connections")
-async def create_connection(conn: ConnectionModel):
-    """新增連線"""
-    try:
-        now = datetime.now().isoformat()
-        connections = load_connections()
-        new_conn = {
-            'id': generate_connection_id(),
-            'name': conn.name,
-            'type': conn.type,
-            'url': conn.url,
-            'api_key': conn.api_key if conn.remember_key else '',
-            'note': conn.note,
-            'remember_key': conn.remember_key,
-            'enabled': conn.enabled,
-            'created_at': now,
-            'updated_at': now,
-        }
-        connections.append(new_conn)
-        if not save_connections(connections):
-            raise HTTPException(status_code=500, detail="儲存失敗")
-        # 回傳完整 key（含不記住的也傳回，前端自行處理 localStorage）
-        new_conn_resp = {**new_conn, 'api_key': conn.api_key}
-        return {"success": True, "connection": new_conn_resp, "message": "連線已新增"}
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"新增連線失敗: {e}")
-        raise HTTPException(status_code=500, detail=f"新增連線失敗: {e}")
-
-
-@router.put("/connections/{conn_id}")
-async def update_connection(conn_id: str, conn: ConnectionModel):
-    """更新連線"""
-    try:
-        connections = load_connections()
-        idx = next((i for i, c in enumerate(connections) if c['id'] == conn_id), None)
-        if idx is None:
-            raise HTTPException(status_code=404, detail="連線不存在")
-
-        connections[idx].update({
-            'name': conn.name,
-            'type': conn.type,
-            'url': conn.url,
-            'api_key': conn.api_key if conn.remember_key else '',
-            'note': conn.note,
-            'remember_key': conn.remember_key,
-            'enabled': conn.enabled,
-            'updated_at': datetime.now().isoformat(),
-        })
-        if not save_connections(connections):
-            raise HTTPException(status_code=500, detail="儲存失敗")
-        resp_conn = {**connections[idx], 'api_key': conn.api_key}
-        return {"success": True, "connection": resp_conn, "message": "連線已更新"}
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"更新連線失敗: {e}")
-        raise HTTPException(status_code=500, detail=f"更新連線失敗: {e}")
-
-
-@router.delete("/connections/{conn_id}")
-async def delete_connection(conn_id: str):
-    """刪除連線"""
-    try:
-        connections = load_connections()
-        before = len(connections)
-        connections = [c for c in connections if c['id'] != conn_id]
-        if len(connections) == before:
-            raise HTTPException(status_code=404, detail="連線不存在")
-        if not save_connections(connections):
-            raise HTTPException(status_code=500, detail="儲存失敗")
-        return {"success": True, "message": "連線已刪除"}
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"刪除連線失敗: {e}")
-        raise HTTPException(status_code=500, detail=f"刪除連線失敗: {e}")
-
-
-async def _probe_service(service_type: str, url: str, api_key: str = "") -> dict:
-    """測試單一服務連線（通用探測器）"""
-    import httpx
-
-    result = {"status": "unknown", "message": "", "info": {}}
-
-    try:
-        async with httpx.AsyncClient(timeout=5.0, verify=False) as client:
-            if service_type == "ollama":
-                resp = await client.get(f"{url.rstrip('/')}/api/tags")
-                if resp.status_code == 200:
-                    data = resp.json()
-                    models = data.get("models", [])
-                    names = [m["name"] for m in models[:10]]
-                    result["status"] = "ok"
-                    result["message"] = f"✅ 連線正常，{len(models)} 個模型: {', '.join(names)}"
-                    result["info"] = {"models": names}
-                else:
-                    result["status"] = "error"
-                    result["message"] = f"❌ HTTP {resp.status_code}"
-
-            elif service_type == "dify":
-                headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
-                resp = await client.get(url, headers=headers)
-                if resp.status_code in [200, 401, 404, 422]:
-                    result["status"] = "ok"
-                    result["message"] = "✅ Dify 服務運行中"
-                    if not api_key:
-                        result["message"] += "（API Key 未設定）"
-                else:
-                    result["status"] = "error"
-                    result["message"] = f"❌ HTTP {resp.status_code}"
-
-            elif service_type == "ragflow":
-                headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
-                resp = await client.get(
-                    f"{url.rstrip('/')}/datasets", headers=headers
-                )
-                if resp.status_code == 200:
-                    data = resp.json()
-                    ds = data.get("data", [])
-                    count = len(ds) if isinstance(ds, list) else 0
-                    result["status"] = "ok"
-                    result["message"] = f"✅ RAGFlow 連線正常（{count} 個知識庫）"
-                    result["info"] = {"dataset_count": count}
-                elif resp.status_code == 401:
-                    result["status"] = "warning"
-                    result["message"] = "⚠️ API Key 無效或已過期"
-                else:
-                    result["status"] = "error"
-                    result["message"] = f"❌ HTTP {resp.status_code}"
-
-            elif service_type == "openai":
-                headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
-                resp = await client.get(f"{url.rstrip('/')}/models", headers=headers)
-                if resp.status_code == 200:
-                    result["status"] = "ok"
-                    result["message"] = "✅ OpenAI API 連線正常"
-                elif resp.status_code == 401:
-                    result["status"] = "warning"
-                    result["message"] = "⚠️ API Key 無效"
-                else:
-                    result["status"] = "error"
-                    result["message"] = f"❌ HTTP {resp.status_code}"
-
-            else:
-                resp = await client.get(url)
-                result["status"] = "ok" if resp.status_code < 500 else "error"
-                result["message"] = f"HTTP {resp.status_code}"
-
-    except Exception as e:
-        err_type = type(e).__name__
-        if 'ConnectError' in err_type or 'ConnectionError' in err_type:
-            result["status"] = "error"
-            result["message"] = f"❌ 無法連接到 {url}"
-        elif 'Timeout' in err_type:
-            result["status"] = "error"
-            result["message"] = "❌ 連接超時"
-        else:
-            result["status"] = "error"
-            result["message"] = f"❌ {err_type}: {str(e)[:100]}"
-
-    return result
-
-
-@router.post("/connections/{conn_id}/test")
-async def test_connection_by_id(conn_id: str):
-    """測試指定連線"""
-    connections = load_connections()
-    conn = next((c for c in connections if c['id'] == conn_id), None)
-    if not conn:
-        raise HTTPException(status_code=404, detail="連線不存在")
-    result = await _probe_service(conn['type'], conn['url'], conn.get('api_key', ''))
-    return {"success": True, "result": result}
-
-
-@router.post("/test-connection-inline")
-async def test_connection_inline(req: InlineTestRequest):
-    """測試連線（不儲存，用於 Dialog 內即時測試）"""
-    result = await _probe_service(req.type, req.url, req.api_key)
-    return {"success": True, "result": result}
-
-
-@router.post("/detect-services")
-async def detect_services():
-    """
-    自動偵測可用的服務
-
-    掃描常見端口並回報可達性，包含 Ollama 模型列表。
-    也提供 Docker 容器間通訊的建議 URL。
-    """
-    import httpx
-
-    probes = [
-        {"type": "dify", "name": "Dify AI 服務", "url": "http://localhost:82/v1",
-         "probe": "http://localhost:82", "note": "本地 Dify 服務 (Port 82)"},
-        {"type": "dify", "name": "Dify (Port 5001)", "url": "http://localhost:5001/v1",
-         "probe": "http://localhost:5001", "note": "Dify 備用端口 (Port 5001)"},
-        {"type": "ragflow", "name": "RAGFlow 知識檢索", "url": "http://localhost:9380/api/v1",
-         "probe": "http://localhost:9380", "note": "本地 RAGFlow (Port 9380)"},
-        {"type": "ragflow", "name": "RAGFlow (Port 81)", "url": "http://localhost:81/api/v1",
-         "probe": "http://localhost:81", "note": "RAGFlow Nginx 代理 (Port 81)"},
-        {"type": "ollama", "name": "Ollama LLM 引擎", "url": "http://localhost:11434",
-         "probe": "http://localhost:11434/api/tags", "note": "本地 Ollama (Port 11434)"},
-    ]
-
-    results = []
-    existing_connections = load_connections()
-
-    async with httpx.AsyncClient(timeout=3.0, verify=False) as client:
-        for p in probes:
-            entry = {
-                "type": p["type"], "name": p["name"], "url": p["url"],
-                "note": p["note"], "available": False, "info": "",
-                "existing_key": "", "suggested": False,
-            }
-            try:
-                resp = await client.get(p["probe"])
-                entry["available"] = resp.status_code < 500
-                if p["type"] == "ollama" and entry["available"]:
-                    try:
-                        data = resp.json()
-                        models = data.get("models", [])
-                        names = [m["name"] for m in models[:8]]
-                        entry["info"] = f"{len(models)} 個模型: {', '.join(names)}"
-                        entry["models"] = names
-                    except Exception:
-                        entry["info"] = "Ollama 服務運行中"
-                elif entry["available"]:
-                    entry["info"] = f"{p['name']} 運行中"
-            except Exception:
-                entry["info"] = "無法連接"
-
-            # 匹配現有 API Key
-            for ec in existing_connections:
-                if ec.get('type') == p['type']:
-                    entry["existing_key"] = ec.get('api_key', '')
-                    break
-
-            results.append(entry)
-
-    # Docker 專用建議 URL（無法從主機偵測，供使用者手動添加）
-    docker_suggestions = [
-        {"type": "ollama", "name": "Ollama (Docker DNS)", "url": "http://ollama:11434",
-         "note": "Docker 容器間通訊用", "available": None,
-         "info": "用於 RAGFlow 等容器連接 Ollama", "existing_key": "", "suggested": True},
-        {"type": "ollama", "name": "Ollama (Docker→Host)", "url": "http://host.docker.internal:11434",
-         "note": "Docker 容器訪問主機用", "available": None,
-         "info": "從 Docker 內連接主機上的 Ollama", "existing_key": "", "suggested": True},
-    ]
-    results.extend(docker_suggestions)
-
-    return {"success": True, "services": results}

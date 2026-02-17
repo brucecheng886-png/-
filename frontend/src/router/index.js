@@ -3,7 +3,6 @@ import { createRouter, createWebHistory } from 'vue-router';
 // 導入視圖組件（Lazy Loading 優化首次載入效能）
 const BatchRepair = () => import('@/views/BatchRepair.vue');
 const Settings = () => import('@/views/Settings.vue');
-const GraphView = () => import('@/components/GraphView.vue');
 const KnowledgeForm = () => import('@/components/KnowledgeForm.vue');
 const Graph3D = () => import('@/views/Graph3D.vue');
 const GraphPage = () => import('@/views/GraphPage.vue');
@@ -38,15 +37,6 @@ const routes = [
     meta: {
       title: '批次修復',
       icon: '🔧'
-    }
-  },
-  {
-    path: '/graph',
-    name: 'Graph',
-    component: GraphView,
-    meta: {
-      title: '知識圖譜 (舊版 2D)',
-      icon: '🕸️'
     }
   },
   {

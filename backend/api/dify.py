@@ -67,23 +67,23 @@ async def chat_with_dify(request: DifyRequest, raw_request: Request):
     
     try:
         async with dify_breaker:
-            async with httpx.AsyncClient(timeout=settings.REQUEST_TIMEOUT) as client:
-                response = await client.post(
-                    f"{config['api_url']}/chat-messages",
-                    headers={
-                        "Authorization": f"Bearer {config['api_key']}",
-                        "Content-Type": "application/json"
-                    },
-                    json={
-                        "query": request.query,
-                        "user": request.user,
-                        "conversation_id": request.conversation_id,
-                        "inputs": request.inputs,
-                        "response_mode": "blocking"
-                    }
-                )
-                response.raise_for_status()
-                return response.json()
+            client = raw_request.app.state.http_client
+            response = await client.post(
+                f"{config['api_url']}/chat-messages",
+                headers={
+                    "Authorization": f"Bearer {config['api_key']}",
+                    "Content-Type": "application/json"
+                },
+                json={
+                    "query": request.query,
+                    "user": request.user,
+                    "conversation_id": request.conversation_id,
+                    "inputs": request.inputs,
+                    "response_mode": "blocking"
+                }
+            )
+            response.raise_for_status()
+            return response.json()
     
     except CircuitBreakerOpenError as e:
         logger.warning(f"🔴 Dify 斷路器已打開: {e}")
@@ -129,27 +129,27 @@ async def chat_with_dify(request: DifyRequest, raw_request: Request):
 
 
 @router.post("/workflow/run")
-async def run_workflow(request: WorkflowRequest):
+async def run_workflow(request: WorkflowRequest, raw_request: Request):
     """執行 Dify Workflow (受 CircuitBreaker 保護)"""
     config = get_dify_config()
     
     try:
         async with dify_breaker:
-            async with httpx.AsyncClient(timeout=settings.REQUEST_TIMEOUT) as client:
-                response = await client.post(
-                    f"{config['api_url']}/workflows/run",
-                    headers={
-                        "Authorization": f"Bearer {config['api_key']}",
-                        "Content-Type": "application/json"
-                    },
-                    json={
-                        "inputs": request.inputs,
-                        "user": request.user,
-                        "response_mode": "blocking"
-                    }
-                )
-                response.raise_for_status()
-                return response.json()
+            client = raw_request.app.state.http_client
+            response = await client.post(
+                f"{config['api_url']}/workflows/run",
+                headers={
+                    "Authorization": f"Bearer {config['api_key']}",
+                    "Content-Type": "application/json"
+                },
+                json={
+                    "inputs": request.inputs,
+                    "user": request.user,
+                    "response_mode": "blocking"
+                }
+            )
+            response.raise_for_status()
+            return response.json()
     except CircuitBreakerOpenError as e:
         raise HTTPException(status_code=503, detail=f"Dify 服務暫時不可用: {e}")
     except httpx.HTTPError as e:
@@ -158,37 +158,37 @@ async def run_workflow(request: WorkflowRequest):
 
 
 @router.get("/conversations/{conversation_id}")
-async def get_conversation(conversation_id: str):
+async def get_conversation(conversation_id: str, raw_request: Request):
     """獲取對話歷史"""
     config = get_dify_config()
     
     try:
-        async with httpx.AsyncClient(timeout=settings.REQUEST_TIMEOUT) as client:
-            response = await client.get(
-                f"{config['api_url']}/conversations/{conversation_id}",
-                headers={"Authorization": f"Bearer {config['api_key']}"}
-            )
-            response.raise_for_status()
-            return response.json()
+        client = raw_request.app.state.http_client
+        response = await client.get(
+            f"{config['api_url']}/conversations/{conversation_id}",
+            headers={"Authorization": f"Bearer {config['api_key']}"}
+        )
+        response.raise_for_status()
+        return response.json()
     except httpx.HTTPError as e:
         logger.error(f"獲取對話失敗: {e}")
         raise HTTPException(status_code=500, detail=f"獲取對話失敗: {str(e)}")
 
 
 @router.get("/messages")
-async def get_messages(conversation_id: str, limit: int = 20):
+async def get_messages(conversation_id: str, limit: int = 20, raw_request: Request = None):
     """獲取消息列表"""
     config = get_dify_config()
     
     try:
-        async with httpx.AsyncClient(timeout=settings.REQUEST_TIMEOUT) as client:
-            response = await client.get(
-                f"{config['api_url']}/messages",
-                headers={"Authorization": f"Bearer {config['api_key']}"},
-                params={"conversation_id": conversation_id, "limit": limit}
-            )
-            response.raise_for_status()
-            return response.json()
+        client = raw_request.app.state.http_client
+        response = await client.get(
+            f"{config['api_url']}/messages",
+            headers={"Authorization": f"Bearer {config['api_key']}"},
+            params={"conversation_id": conversation_id, "limit": limit}
+        )
+        response.raise_for_status()
+        return response.json()
     except httpx.HTTPError as e:
         logger.error(f"獲取消息失敗: {e}")
         raise HTTPException(status_code=500, detail=f"獲取消息失敗: {str(e)}")

@@ -1,16 +1,16 @@
 <script setup>
-import { ref, computed, onMounted, onUnmounted, watch } from 'vue';
+import { ref, computed, onMounted, onUnmounted } from 'vue';
 import { useGraphStore } from '../stores/graphStore';
 import { useLayoutStore } from '../stores/layoutStore';
 import Graph2D from '../components/Graph2D.vue';
 import Graph3D from './Graph3D.vue';
 import NexusPanel from '../components/NexusPanel.vue';
-import ImportDashboard from '../components/ImportDashboard.vue';
+import ClusterSettingsDialog from '../components/ClusterSettingsDialog.vue';
+import NodeInspectorPanel from '../components/NodeInspectorPanel.vue';
 import ColorLegend from '../components/ColorLegend.vue';
 import ZoomControls from '../components/ZoomControls.vue';
 import BottomToolbar from '../components/BottomToolbar.vue';
 import StatsBar from '../components/StatsBar.vue';
-import DensitySlider from '../components/DensitySlider.vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
 import { useRouter } from 'vue-router';
 
@@ -21,35 +21,20 @@ const router = useRouter();
 
 // ===== State =====
 const searchQuery = ref('');
-const isLoading = ref(false); // 改為 false，避免初始閃爍
-const showLeftPanel = ref(true);
+const isLoading = ref(false);
 const showRightPanel = ref(true);
-// 將預設寬度收窄，為圖譜留更多空間
+const isDraggingLeft = ref(false);
 const leftPanelWidth = ref(340);
-const localNodeData = ref({
-  id: '',
-  name: '',
-  link: '',
-  description: '',
-  image: null,
-  tags: []
-});
-const tagInput = ref('');
 
-// AI 建議連線狀態
-const suggestedLinks = ref([]);
-const selectedSuggestedLinks = ref(new Set()); // 使用者選擇的連線
-const hoveredLinkTarget = ref(null); // 當前suspended節點
-
-// NEXUS 控制台狀態 — 從 store 同步，支持 localStorage 持久化
+// NEXUS 控制台狀態
 const selectedGraphId = ref(graphStore.currentGraphId || localStorage.getItem('lastGraphId') || null);
-const activeFilter = ref('all'); // 'all', 'focus', 'part'
-const nodeViewMode = ref('medium'); // 'list', 'small', 'medium', 'large'
-const isLinkingMode = ref(false); // 手動連線模式
-const linkingSource = ref(null); // 連線起點
-const isSelectOpen = ref(false); // 下拉選單展開狀態
+const activeFilter = ref('all');
+const nodeViewMode = ref('medium');
+const isLinkingMode = ref(false);
+const linkingSource = ref(null);
+const isSelectOpen = ref(false);
 
-// 圖表組件引用（用於調用子組件方法）
+// 圖表組件引用
 const graphComponentRef = ref(null);
 
 // 縮放比例
@@ -59,222 +44,13 @@ let zoomPollTimer = null;
 // 密度過濾 / 叢集控制
 const densityThreshold = ref(0);
 const clusterEnabled = ref(true);
-const nodeSpacing = ref(50);    // 0~100 節點間距
+const nodeSpacing = ref(50);
 
-// 星系圖片設定面板
+// 星系設定面板
 const showClusterSettings = ref(false);
-const clusterTypes = ref([]);
-const clusterImageUrl = ref('');
-const editingClusterType = ref(null);
 
 const openClusterSettings = () => {
-  if (graphComponentRef.value?.getClusterTypes) {
-    clusterTypes.value = graphComponentRef.value.getClusterTypes();
-  }
   showClusterSettings.value = true;
-};
-
-const setClusterImage = (type, url) => {
-  if (graphComponentRef.value?.setClusterImage) {
-    graphComponentRef.value.setClusterImage(type, url);
-    clusterTypes.value = graphComponentRef.value.getClusterTypes();
-  }
-};
-
-const removeClusterImage = (type) => {
-  setClusterImage(type, null);
-};
-
-const startEditClusterImage = (type) => {
-  editingClusterType.value = type;
-  const current = clusterTypes.value.find(t => t.type === type);
-  clusterImageUrl.value = current?.image || '';
-};
-
-const confirmClusterImage = () => {
-  if (editingClusterType.value && clusterImageUrl.value.trim()) {
-    setClusterImage(editingClusterType.value, clusterImageUrl.value.trim());
-  }
-  editingClusterType.value = null;
-  clusterImageUrl.value = '';
-};
-
-const handleClusterImageUpload = (type, event) => {
-  const file = event.target.files?.[0];
-  if (!file) return;
-  const reader = new FileReader();
-  reader.onload = (e) => {
-    setClusterImage(type, e.target.result);
-  };
-  reader.readAsDataURL(file);
-};
-
-// 預設星系圖片（Canvas 程式化生成）
-const showPresetPicker = ref(null); // 當前正在選預設的 type 名稱
-
-const presetPlanets = ref([]);
-const presetGenerated = ref(false);
-
-const generatePresetPlanets = () => {
-  if (presetGenerated.value) return;
-  presetGenerated.value = true;
-  
-  const configs = [
-    { name: '藍色星球',  base: [40, 120, 220], accent: [100, 180, 255], ring: false, pattern: 'swirl' },
-    { name: '紅色星球',  base: [180, 50, 40],  accent: [255, 120, 80],  ring: false, pattern: 'bands' },
-    { name: '翡翠星球',  base: [30, 150, 100],  accent: [80, 220, 160],  ring: false, pattern: 'swirl' },
-    { name: '紫色星球',  base: [120, 50, 180],  accent: [180, 120, 255], ring: false, pattern: 'spots' },
-    { name: '金色星球',  base: [190, 150, 40],  accent: [255, 210, 80],  ring: false, pattern: 'bands' },
-    { name: '土星',      base: [180, 160, 120], accent: [220, 200, 160], ring: true,  pattern: 'bands' },
-    { name: '冰藍星球',  base: [60, 160, 200],  accent: [180, 230, 255], ring: false, pattern: 'spots' },
-    { name: '熔岩星球',  base: [160, 40, 20],   accent: [255, 160, 40],  ring: false, pattern: 'cracks' },
-    { name: '深空星球',  base: [20, 25, 60],    accent: [60, 80, 160],   ring: false, pattern: 'spots' },
-    { name: '粉色星球',  base: [200, 80, 140],  accent: [255, 150, 200], ring: false, pattern: 'swirl' },
-    { name: '雙環星球',  base: [80, 100, 160],  accent: [140, 180, 240], ring: true,  pattern: 'swirl' },
-    { name: '綠洲星球',  base: [40, 120, 60],   accent: [100, 200, 120], ring: false, pattern: 'bands' },
-  ];
-  
-  presetPlanets.value = configs.map(cfg => ({
-    name: cfg.name,
-    dataUrl: renderPlanetToDataUrl(cfg)
-  }));
-};
-
-const renderPlanetToDataUrl = (cfg) => {
-  const size = 128;
-  const canvas = document.createElement('canvas');
-  canvas.width = size;
-  canvas.height = size;
-  const ctx = canvas.getContext('2d');
-  const cx = size / 2, cy = size / 2, r = size * 0.42;
-  const [br, bg, bb] = cfg.base;
-  const [ar, ag, ab] = cfg.accent;
-  
-  // 背景透明
-  ctx.clearRect(0, 0, size, size);
-  
-  // 外層光暈
-  const glow = ctx.createRadialGradient(cx, cy, r * 0.9, cx, cy, r * 1.35);
-  glow.addColorStop(0, `rgba(${ar},${ag},${ab},0.25)`);
-  glow.addColorStop(1, `rgba(${ar},${ag},${ab},0)`);
-  ctx.beginPath(); ctx.arc(cx, cy, r * 1.35, 0, Math.PI * 2);
-  ctx.fillStyle = glow; ctx.fill();
-  
-  // 球體主體
-  ctx.save();
-  ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.clip();
-  
-  const body = ctx.createRadialGradient(cx - r * 0.3, cy - r * 0.3, r * 0.05, cx, cy, r);
-  body.addColorStop(0, `rgb(${Math.min(255,ar+60)},${Math.min(255,ag+60)},${Math.min(255,ab+60)})`);
-  body.addColorStop(0.3, `rgb(${br},${bg},${bb})`);
-  body.addColorStop(1, `rgb(${Math.max(0,br-60)},${Math.max(0,bg-60)},${Math.max(0,bb-60)})`);
-  ctx.fillStyle = body;
-  ctx.fillRect(0, 0, size, size);
-  
-  // 表面紋路
-  ctx.globalAlpha = 0.3;
-  if (cfg.pattern === 'bands') {
-    for (let i = 0; i < 6; i++) {
-      const y = cy - r + r * 2 * (i + 0.5) / 6;
-      const bw = 2 + Math.random() * 4;
-      ctx.fillStyle = i % 2 === 0 ? `rgba(${ar},${ag},${ab},0.3)` : `rgba(0,0,0,0.15)`;
-      ctx.fillRect(cx - r, y - bw / 2, r * 2, bw);
-    }
-  } else if (cfg.pattern === 'spots') {
-    for (let i = 0; i < 12; i++) {
-      const angle = Math.random() * Math.PI * 2;
-      const dist = Math.random() * r * 0.75;
-      const sr = 3 + Math.random() * 8;
-      ctx.beginPath();
-      ctx.arc(cx + Math.cos(angle) * dist, cy + Math.sin(angle) * dist, sr, 0, Math.PI * 2);
-      ctx.fillStyle = `rgba(${ar},${ag},${ab},${0.2 + Math.random() * 0.3})`;
-      ctx.fill();
-    }
-  } else if (cfg.pattern === 'swirl') {
-    ctx.strokeStyle = `rgba(${ar},${ag},${ab},0.25)`;
-    ctx.lineWidth = 2;
-    for (let i = 0; i < 3; i++) {
-      ctx.beginPath();
-      for (let t = 0; t < Math.PI * 4; t += 0.1) {
-        const sr = (t / (Math.PI * 4)) * r * 0.85;
-        const x = cx + Math.cos(t + i * 2) * sr;
-        const y = cy + Math.sin(t + i * 2) * sr * 0.5;
-        t === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
-      }
-      ctx.stroke();
-    }
-  } else if (cfg.pattern === 'cracks') {
-    ctx.strokeStyle = `rgba(${ar},${ag},${ab},0.6)`;
-    ctx.lineWidth = 1.5;
-    for (let i = 0; i < 8; i++) {
-      ctx.beginPath();
-      let x = cx + (Math.random() - 0.5) * r;
-      let y = cy + (Math.random() - 0.5) * r;
-      ctx.moveTo(x, y);
-      for (let j = 0; j < 4; j++) {
-        x += (Math.random() - 0.5) * 20;
-        y += (Math.random() - 0.5) * 20;
-        ctx.lineTo(x, y);
-      }
-      ctx.stroke();
-      // 熔岩亮點
-      ctx.beginPath();
-      ctx.arc(x, y, 2 + Math.random() * 3, 0, Math.PI * 2);
-      ctx.fillStyle = `rgba(${ar},${ag},${ab},0.5)`;
-      ctx.fill();
-    }
-  }
-  ctx.globalAlpha = 1;
-  
-  // 邊緣暗化
-  const edge = ctx.createRadialGradient(cx, cy, r * 0.4, cx, cy, r);
-  edge.addColorStop(0, 'rgba(0,0,0,0)');
-  edge.addColorStop(0.7, 'rgba(0,0,0,0.1)');
-  edge.addColorStop(1, 'rgba(0,0,0,0.45)');
-  ctx.fillStyle = edge;
-  ctx.fillRect(0, 0, size, size);
-  
-  // 高光
-  const hl = ctx.createRadialGradient(cx - r * 0.35, cy - r * 0.35, 0, cx - r * 0.35, cy - r * 0.35, r * 0.5);
-  hl.addColorStop(0, 'rgba(255,255,255,0.45)');
-  hl.addColorStop(0.4, 'rgba(255,255,255,0.1)');
-  hl.addColorStop(1, 'rgba(255,255,255,0)');
-  ctx.fillStyle = hl;
-  ctx.fillRect(0, 0, size, size);
-  
-  ctx.restore();
-  
-  // 光圈邊框
-  ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2);
-  ctx.strokeStyle = `rgba(${ar},${ag},${ab},0.35)`;
-  ctx.lineWidth = 1.5;
-  ctx.stroke();
-  
-  // 土星環
-  if (cfg.ring) {
-    ctx.save();
-    ctx.beginPath();
-    ctx.ellipse(cx, cy, r * 1.3, r * 0.25, -0.2, 0, Math.PI * 2);
-    ctx.strokeStyle = `rgba(${ar},${ag},${ab},0.4)`;
-    ctx.lineWidth = 4;
-    ctx.stroke();
-    ctx.strokeStyle = `rgba(${ar},${ag},${ab},0.2)`;
-    ctx.lineWidth = 8;
-    ctx.stroke();
-    ctx.restore();
-  }
-  
-  return canvas.toDataURL('image/png');
-};
-
-const openPresetPicker = (type) => {
-  generatePresetPlanets();
-  showPresetPicker.value = type;
-};
-
-const selectPreset = (type, dataUrl) => {
-  setClusterImage(type, dataUrl);
-  showPresetPicker.value = null;
 };
 
 // ===== Computed =====
@@ -299,14 +75,6 @@ const filteredNodes = computed(() => {
   return nodes;
 });
 
-const nodeStats = computed(() => {
-  return {
-    total: graphStore.nodeCount,
-    filtered: filteredNodes.value.length,
-    links: graphStore.linkCount
-  };
-});
-
 // ===== Methods =====
 const clearSearch = () => {
   searchQuery.value = '';
@@ -329,46 +97,6 @@ const handleFilterByType = (type) => {
   }
 };
 
-// 根據節點類型或 group 獲取檔案圖示
-const getNodeIcon = (node) => {
-  // 如果節點已有 emoji，優先使用
-  if (node.emoji) {
-    return node.emoji;
-  }
-  
-  // 根據 type 或 group 映射圖示
-  const type = (node.type || '').toLowerCase();
-  const group = node.group;
-  
-  // 優先根據類型名稱匹配
-  if (type.includes('pdf')) return '📄';
-  if (type.includes('excel') || type.includes('xlsx') || type.includes('xls')) return '📊';
-  if (type.includes('word') || type.includes('doc')) return '📝';
-  if (type.includes('ppt') || type.includes('powerpoint')) return '📽';
-  if (type.includes('image') || type.includes('img') || type.includes('photo')) return '🖼';
-  if (type.includes('video') || type.includes('mp4')) return '🎬';
-  if (type.includes('audio') || type.includes('music')) return '🎵';
-  if (type.includes('zip') || type.includes('archive')) return '📦';
-  if (type.includes('code') || type.includes('程式')) return '💻';
-  if (type.includes('檔案') || type.includes('file')) return '📄';
-  
-  // 根據 group 映射（假設 group 7+ 是檔案類型）
-  if (group >= 7) {
-    const fileGroupIcons = {
-      7: '📄',  // 一般檔案
-      8: '📊',  // Excel
-      9: '📝',  // Word
-      10: '📽', // PPT
-      11: '🖼', // 圖片
-      12: '🎬', // 影片
-    };
-    return fileGroupIcons[group] || '📄';
-  }
-  
-  // 預設圖示
-  return '📌';
-};
-
 const handleNodeClick = (node) => {
   // 如果處於連線模式
   if (isLinkingMode.value) {
@@ -376,342 +104,74 @@ const handleNodeClick = (node) => {
     return;
   }
   
-  // 正常模式：選擇節點並顯示詳情
+  // 正常模式：選擇節點並顯示詳情（NodeInspectorPanel 自行同步本地資料）
   graphStore.selectNode(node.id);
   showRightPanel.value = true;
   
-  // 同步到本地編輯數據 (避免直接修改 Store)
-  localNodeData.value = {
-    id: node.id,
-    name: node.name,
-    link: node.link || '',
-    description: node.description || '',
-    image: node.image || null
-  };
-  
-  // 處理 AI 建議連線
-  if (node.links && Array.isArray(node.links)) {
-    suggestedLinks.value = node.links.map(link => ({
-      ...link,
-      id: `${node.id}_to_${link.target_id}` // 為每個連線生成唯一 ID
-    }));
-    // 預設全部勾選
-    selectedSuggestedLinks.value = new Set(suggestedLinks.value.map(link => link.id));
-  } else {
-    suggestedLinks.value = [];
-    selectedSuggestedLinks.value = new Set();
-  }
-  
   // 🎯 觸發聚焦：調用圖表組件的聚焦方法
-  if (graphComponentRef.value && typeof graphComponentRef.value.focusNode === 'function') {
-    console.log('🎯 [GraphPage] 觸發節點聚焦:', node.name);
+  if (graphComponentRef.value?.focusNode) {
     graphComponentRef.value.focusNode(node);
-  } else {
-    console.warn('⚠️ [GraphPage] 圖表組件未提供 focusNode 方法');
   }
 };
 
-const handleAutoLink = () => {
-  ElMessage.info('🔗 AI 自動連結功能開發中...');
+// ===== Inspector 事件處理（委派給 NodeInspectorPanel 元件） =====
+const closeInspector = () => {
+  showRightPanel.value = false;
+  graphStore.clearSelection();
 };
 
-// ImportGallery 檔案點擊處理
-const handleFileClick = ({ fileId, nodeId }) => {
-  console.log('📂 檔案點擊:', { fileId, nodeId });
-  
-  // 選中節點
-  graphStore.selectNode(nodeId);
-  
-  // 顯示檢查器面板
-  showRightPanel.value = true;
-  
-  // 同步到本地編輯數據
-  const node = graphStore.nodes.find(n => n.id === nodeId);
-  if (node) {
-    localNodeData.value = {
-      id: node.id,
-      name: node.name,
-      link: node.link || '',
-      description: node.description || '',
-      image: node.image || null
-    };
-  }
-  
-  // 調用圖表組件的 focusNode 方法（Camera Fly-to）
-  if (graphComponentRef.value && typeof graphComponentRef.value.focusNode === 'function') {
-    graphComponentRef.value.focusNode(nodeId);
-    console.log('🎯 鏡頭飛向節點:', nodeId);
-  } else {
-    console.warn('⚠️ 圖表組件未提供 focusNode 方法');
-  }
-  
-  ElMessage.success(`✅ 已聲焚至檔案: ${node?.name || fileId}`);
-};
-
-// ImportGallery 檔案上傳處理（使用 Store 統一 API）
-const handleFileUploaded = async (files) => {
-  console.log('📥 開始上傳檔案:', files.length);
-  
-  const loadingMsg = ElMessage({
-    message: `🚀 正在上傳 ${files.length} 個檔案...`,
-    type: 'info',
-    duration: 0
-  });
-  
+const handleInspectorSave = async ({ nodeData, selectedLinks }) => {
+  if (!graphStore.selectedNode) return;
   try {
-    // 🌟 使用 Store 的統一 API
-    console.log('📡 [GraphPage] 使用 Store.importMultipleFiles()');
-    const stats = await graphStore.importMultipleFiles(files);
-    
-    loadingMsg.close();
-    
-    ElMessage.success({
-      message: `✅ 匯入成功！成功: ${stats.success}, 跳過: ${stats.skipped}, 失敗: ${stats.failed}`,
-      duration: 3000
+    await graphStore.updateEntity(nodeData.id, {
+      name: nodeData.name,
+      link: nodeData.link,
+      description: nodeData.description,
+      image: nodeData.image,
+      tags: nodeData.tags || [],
     });
-    
-    console.log('🎉 檔案匯入成功:', stats);
-    
-  } catch (error) {
-    loadingMsg.close();
-    
-    ElMessage.error({
-      message: `❌ 匯入失敗: ${error.message}`,
-      duration: 5000
-    });
-    console.error('❌ 檔案上傳失敗:', error);
-  }
-};
-
-const saveChanges = async () => {
-  if (!graphStore.selectedNode) {
-    ElMessage.warning('⚠️ 未選擇節點');
-    return;
-  }
-  
-  const nodeId = localNodeData.value.id;
-  const updates = {
-    name: localNodeData.value.name,
-    link: localNodeData.value.link,
-    description: localNodeData.value.description,
-    image: localNodeData.value.image,
-    tags: localNodeData.value.tags || []
-  };
-  
-  console.log('💾 [GraphPage] 保存節點變更:', nodeId, updates);
-  
-  try {
-    // 1️⃣ 呼叫 Store 統一 API（後端持久化 + 前端同步）
-    await graphStore.updateEntity(nodeId, updates);
-    
-    // 2️⃣ 處理 AI 建議連線
-    const selectedLinks = Array.from(selectedSuggestedLinks.value);
     if (selectedLinks.length > 0) {
-      for (const linkId of selectedLinks) {
-        const link = suggestedLinks.value.find(l => l.id === linkId);
-        if (link) {
-          graphStore.addLink({
-            source: nodeId,
-            target: link.target_id,
-            relation: link.relation,
-            reason: link.reason,
-            value: 1
-          });
-        }
+      for (const link of selectedLinks) {
+        graphStore.addLink({
+          source: nodeData.id,
+          target: link.target_id,
+          relation: link.relation,
+          reason: link.reason,
+          value: 1,
+        });
       }
       ElMessage.success(`💾 已保存節點及 ${selectedLinks.length} 個建議連線`);
     } else {
-      ElMessage.success(`💾 已保存節點「${localNodeData.value.name}」的變更`);
+      ElMessage.success(`💾 已保存節點「${nodeData.name}」的變更`);
     }
-    
-    console.log('✅ [GraphPage] 節點已同步到後端和前端 Store');
-    
   } catch (error) {
-    console.error('❌ [GraphPage] 保存失敗:', error);
     ElMessage.error(`保存失敗: ${error.message}`);
   }
 };
 
-const openLink = () => {
-  const url = localNodeData.value.link;
-  if (!url) {
-    ElMessage.warning('⚠️ 連結為空');
-    return;
-  }
-  
-  // 確保 URL 有協議
-  const validUrl = url.startsWith('http://') || url.startsWith('https://') 
-    ? url 
-    : `https://${url}`;
-  
-  window.open(validUrl, '_blank');
-  console.log('🔗 開啟連結:', validUrl);
-};
-
-// 圖片上傳（支援 URL 輸入或檔案選擇）
-const imageFileInput = ref(null);
-
-const handleImageChange = async () => {
-  try {
-    const { value: action } = await ElMessageBox.confirm(
-      '選擇圖片來源',
-      '變更封面',
-      {
-        confirmButtonText: '輸入網址',
-        cancelButtonText: '選擇檔案',
-        distinguishCancelAndClose: true
-      }
-    );
-    // 用戶選擇「輸入網址」
-    const { value: url } = await ElMessageBox.prompt('請輸入圖片 URL', '封面圖片', {
-      confirmButtonText: '確認',
-      cancelButtonText: '取消',
-      inputPlaceholder: 'https://example.com/image.jpg'
-    });
-    if (url && url.trim()) {
-      localNodeData.value.image = url.trim();
-      ElMessage.success('🖼️ 封面已更新（請點 SAVE 保存）');
-    }
-  } catch (action) {
-    if (action === 'cancel') {
-      // 用戶選擇「選擇檔案」— 觸發檔案選擇器
-      const input = document.createElement('input');
-      input.type = 'file';
-      input.accept = 'image/*';
-      input.onchange = (e) => {
-        const file = e.target.files[0];
-        if (!file) return;
-        if (file.size > 5 * 1024 * 1024) {
-          ElMessage.warning('圖片大小不能超過 5MB');
-          return;
-        }
-        // 轉換為 Base64 Data URL
-        const reader = new FileReader();
-        reader.onload = () => {
-          localNodeData.value.image = reader.result;
-          ElMessage.success('🖼️ 封面已更新（請點 SAVE 保存）');
-        };
-        reader.readAsDataURL(file);
-      };
-      input.click();
-    }
-    // 'close' = 關閉對話框，不做任何事
-  }
-};
-
-const closeInspector = () => {
-  showRightPanel.value = false;
-  graphStore.clearSelection();
-  suggestedLinks.value = [];
-  selectedSuggestedLinks.value = new Set();
-  hoveredLinkTarget.value = null;
-  tagInput.value = '';
-};
-
-// ===== Tag 本地編輯方法 =====
-
-/** 新增 Tag（本地 localNodeData，儲存時才同步） */
-const addLocalTag = () => {
-  const trimmed = tagInput.value.trim();
-  if (!trimmed) return;
-  if (!localNodeData.value.tags) localNodeData.value.tags = [];
-  if (localNodeData.value.tags.includes(trimmed)) {
-    tagInput.value = '';
-    return;
-  }
-  localNodeData.value.tags = [...localNodeData.value.tags, trimmed];
-  tagInput.value = '';
-};
-
-/** 移除 Tag（本地 localNodeData） */
-const removeLocalTag = (index) => {
-  localNodeData.value.tags = localNodeData.value.tags.filter((_, i) => i !== index);
-};
-
-/** 切換 Tag（快速選擇用） */
-const toggleLocalTag = (tagName) => {
-  if (!localNodeData.value.tags) localNodeData.value.tags = [];
-  const idx = localNodeData.value.tags.indexOf(tagName);
-  if (idx >= 0) {
-    localNodeData.value.tags = localNodeData.value.tags.filter((_, i) => i !== idx);
-  } else {
-    localNodeData.value.tags = [...localNodeData.value.tags, tagName];
-  }
-};
-
-// 切换建議連線的選擇狀態
-const toggleSuggestedLink = (linkId) => {
-  if (selectedSuggestedLinks.value.has(linkId)) {
-    selectedSuggestedLinks.value.delete(linkId);
-  } else {
-    selectedSuggestedLinks.value.add(linkId);
-  }
-  // 觸發響應式更新
-  selectedSuggestedLinks.value = new Set(selectedSuggestedLinks.value);
-};
-
-// 當滑鼠懸停在建議連線上
-const handleLinkHover = (targetId) => {
-  hoveredLinkTarget.value = targetId;
-  // 通知圖表組件顯示呼吸燈效果
-  if (graphComponentRef.value && typeof graphComponentRef.value.highlightNode === 'function') {
-    graphComponentRef.value.highlightNode(targetId);
-  }
-};
-
-// 當滑鼠離開建議連線
-const handleLinkLeave = () => {
-  hoveredLinkTarget.value = null;
-  // 通知圖表組件取消高亮
-  if (graphComponentRef.value && typeof graphComponentRef.value.unhighlightNode === 'function') {
-    graphComponentRef.value.unhighlightNode();
-  }
-};
-
-// 獲取目標節點名稱
-const getTargetNodeName = (targetId) => {
-  const node = graphStore.getNodeById(targetId);
-  return node ? node.name : targetId;
-};
-
-const deleteNode = async () => {
-  if (!graphStore.selectedNode) {
-    ElMessage.warning('⚠️ 未選擇節點');
-    return;
-  }
-  
-  const nodeId = graphStore.selectedNode.id;
-  const nodeName = graphStore.selectedNode.name;
-  
-  // 使用 ElMessageBox 替代原生 confirm
+const handleInspectorDelete = async (nodeId) => {
+  const nodeName = graphStore.selectedNode?.name || nodeId;
   try {
     await ElMessageBox.confirm(
       `此操作將同時刪除所有相關連接，且無法復原。`,
       `確定要刪除節點「${nodeName}」嗎？`,
       { confirmButtonText: '刪除', cancelButtonText: '取消', type: 'warning' }
     );
-  } catch {
-    return; // 用戶取消
-  }
-  
-  console.log('🗑️ [GraphPage] 刪除節點:', nodeId, nodeName);
-  
+  } catch { return; }
   try {
-    // 1️⃣ 呼叫 Store 統一 API（後端刪除 + 前端同步）
     await graphStore.deleteEntity(nodeId);
-    
-    // 2️⃣ 關閉面板
     showRightPanel.value = false;
-    
-    ElMessage.success({
-      message: `🗑️ 已刪除節點「${nodeName}」`,
-      duration: 2000,
-      showClose: true
-    });
-    
+    ElMessage.success(`🗑️ 已刪除節點「${nodeName}」`);
   } catch (error) {
-    console.error('❌ [GraphPage] 刪除失敗:', error);
     ElMessage.error(`刪除失敗: ${error.message}`);
+  }
+};
+
+const handleInspectorHighlight = (targetId) => {
+  if (targetId) {
+    graphComponentRef.value?.highlightNode?.(targetId);
+  } else {
+    graphComponentRef.value?.unhighlightNode?.();
   }
 };
 
@@ -741,16 +201,6 @@ const handleGraphChange = async (graphIdOrEvent) => {
     isLoading.value = false;
   }
   isSelectOpen.value = false;
-};
-
-const onSelectMouseDown = () => {
-  isSelectOpen.value = true;
-};
-
-const onSelectBlur = () => {
-  setTimeout(() => {
-    isSelectOpen.value = false;
-  }, 200);
 };
 
 const handleEditGraph = async () => {
@@ -966,12 +416,6 @@ const toggleViewMode = () => {
   }, 100);
 };
 
-// ===== 節點展示模式 =====
-const setNodeViewMode = (mode) => {
-  nodeViewMode.value = mode;
-  console.log('🎨 節點展示模式:', mode);
-};
-
 // ===== 手動連線功能 =====
 const toggleLinkingMode = () => {
   isLinkingMode.value = !isLinkingMode.value;
@@ -1044,27 +488,6 @@ const stopDragLeft = () => {
   document.removeEventListener('mousemove', onDragLeft);
   document.removeEventListener('mouseup', stopDragLeft);
 };
-
-// ===== Watch: 監聽選中節點變化，自動同步到本地編輯數據 =====
-watch(
-  () => graphStore.selectedNode,
-  (newNode) => {
-    if (newNode) {
-      // 同步選中節點到本地編輯數據
-      localNodeData.value = {
-        id: newNode.id,
-        name: newNode.name || '',
-        link: newNode.link || '',
-        description: newNode.description || '',
-        image: newNode.image || null,
-        tags: Array.isArray(newNode.tags) ? [...newNode.tags] : []
-      };
-      tagInput.value = '';
-      console.log('🔄 [GraphPage] 選中節點已同步到編輯面板:', newNode.name);
-    }
-  },
-  { immediate: false }
-);
 
 // ===== Lifecycle =====
 onMounted(async () => {
@@ -1239,319 +662,21 @@ onUnmounted(() => {
         </div>
       </div>
 
-      <!-- 星系圖片設定面板 -->
-      <transition name="slide-down">
-        <div v-if="showClusterSettings" class="fixed inset-0 z-[60] flex items-center justify-center" @click.self="showClusterSettings = false">
-          <div class="cluster-settings-panel">
-            <div class="flex items-center justify-between mb-5">
-              <div class="flex items-center gap-3">
-                <div class="w-9 h-9 rounded-lg bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center">
-                  <svg class="w-5 h-5 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="3"/><path d="M12 2v4M12 18v4M2 12h4M18 12h4"/></svg>
-                </div>
-                <div>
-                  <h3 class="text-white font-bold text-base m-0">星系自訂圖片</h3>
-                  <p class="text-gray-400 text-xs m-0 mt-0.5">為每個類型叢集設定專屬星球外觀</p>
-                </div>
-              </div>
-              <button class="w-8 h-8 flex items-center justify-center rounded-lg bg-white/10 hover:bg-white/20 text-white transition-all cursor-pointer border-none" @click="showClusterSettings = false">✕</button>
-            </div>
-
-            <div class="cluster-types-list">
-              <div v-for="ct in clusterTypes" :key="ct.type" class="cluster-type-row">
-                <!-- 預覽 -->
-                <div class="cluster-preview" :style="{ borderColor: ct.color + '60' }">
-                  <img v-if="ct.image" :src="ct.image" class="w-full h-full object-cover rounded-lg" />
-                  <div v-else class="w-full h-full rounded-lg flex items-center justify-center" :style="{ background: `radial-gradient(circle, ${ct.color}44, ${ct.color}15)` }">
-                    <svg class="w-6 h-6 opacity-40 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="10"/></svg>
-                  </div>
-                </div>
-                
-                <!-- 資訊 -->
-                <div class="flex-1 min-w-0">
-                  <div class="flex items-center gap-2">
-                    <span class="w-2.5 h-2.5 rounded-full flex-shrink-0" :style="{ background: ct.color }"></span>
-                    <span class="text-white font-semibold text-sm truncate">{{ ct.type }}</span>
-                    <span class="text-xs text-gray-400">({{ ct.count }})</span>
-                  </div>
-                  <p class="text-xs text-gray-500 mt-1 m-0 truncate">{{ ct.image ? '已設定自訂圖片' : '使用預設星球效果' }}</p>
-                </div>
-
-                <!-- 操作按鈕 -->
-                <div class="flex items-center gap-2 flex-shrink-0">
-                  <!-- 預設圖庫 -->
-                  <button class="cluster-action-btn cluster-action-preset" title="選擇預設星球" @click="openPresetPicker(ct.type)">
-                    <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
-                  </button>
-                  <!-- 上傳圖片 -->
-                  <label class="cluster-action-btn" title="上傳圖片">
-                    <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
-                    <input type="file" accept="image/*" class="hidden" @change="handleClusterImageUpload(ct.type, $event)" />
-                  </label>
-                  <!-- 貼上 URL -->
-                  <button class="cluster-action-btn" title="輸入圖片 URL" @click="startEditClusterImage(ct.type)">
-                    <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71"/></svg>
-                  </button>
-                  <!-- 移除 -->
-                  <button v-if="ct.image" class="cluster-action-btn cluster-action-danger" title="移除圖片" @click="removeClusterImage(ct.type)">
-                    <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-                  </button>
-                </div>
-              </div>
-              
-              <!-- 空狀態 -->
-              <div v-if="clusterTypes.length === 0" class="text-center py-8">
-                <svg class="w-12 h-12 mx-auto mb-3 opacity-20 text-gray-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/></svg>
-                <p class="text-gray-400 text-sm m-0">需要至少 3 個同類型節點才會形成星系</p>
-              </div>
-            </div>
-
-            <!-- URL 輸入面板 -->
-            <transition name="slide-down">
-              <div v-if="editingClusterType" class="mt-4 p-3 rounded-xl bg-white/5 border border-white/10">
-                <p class="text-xs text-gray-400 m-0 mb-2">為 <span class="text-blue-400 font-semibold">{{ editingClusterType }}</span> 設定圖片 URL</p>
-                <div class="flex gap-2">
-                  <input 
-                    v-model="clusterImageUrl"
-                    type="text" 
-                    class="flex-1 px-3 py-2 bg-white/5 border border-white/10 rounded-lg text-sm text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    placeholder="https://example.com/galaxy.png"
-                    @keyup.enter="confirmClusterImage"
-                  />
-                  <button class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-semibold transition-all cursor-pointer border-none" @click="confirmClusterImage">確認</button>
-                  <button class="px-3 py-2 bg-white/10 hover:bg-white/20 text-white rounded-lg text-sm transition-all cursor-pointer border-none" @click="editingClusterType = null">取消</button>
-                </div>
-              </div>
-            </transition>
-
-            <!-- 預設星球選擇器 -->
-            <transition name="slide-down">
-              <div v-if="showPresetPicker" class="mt-4 p-4 rounded-xl bg-white/5 border border-white/10">
-                <div class="flex items-center justify-between mb-3">
-                  <p class="text-xs text-gray-400 m-0">為 <span class="text-purple-400 font-semibold">{{ showPresetPicker }}</span> 選擇預設星球</p>
-                  <button class="text-xs text-gray-500 hover:text-white transition-colors cursor-pointer bg-transparent border-none" @click="showPresetPicker = null">關閉</button>
-                </div>
-                <div class="preset-grid">
-                  <button 
-                    v-for="preset in presetPlanets" 
-                    :key="preset.name"
-                    class="preset-planet-btn"
-                    :title="preset.name"
-                    @click="selectPreset(showPresetPicker, preset.dataUrl)"
-                  >
-                    <img :src="preset.dataUrl" :alt="preset.name" class="w-full h-full object-contain" />
-                    <span class="preset-planet-name">{{ preset.name }}</span>
-                  </button>
-                </div>
-              </div>
-            </transition>
-          </div>
-        </div>
-      </transition>
+      <!-- 星系圖片設定面板（已拆分為獨立元件） -->
+      <ClusterSettingsDialog v-model="showClusterSettings" :graphComponentRef="graphComponentRef" />
     </main>
 
-    <!-- 頂部橫向面板: 節點檢查器 (Inspector) -->
-    <transition name="slide-down">
-      <div 
-        v-if="showRightPanel && graphStore.selectedNode" 
-        class="fixed top-16 left-1/2 -translate-x-1/2 w-[950px] max-h-[85vh] z-50 backdrop-blur-xl border rounded-xl shadow-2xl overflow-hidden transition-all duration-300 bg-[#0f0f0f]/95 border-white/10"
-      >
-        <!-- 關閉按鈕 -->
-        <button 
-          class="absolute top-3 right-3 w-7 h-7 flex items-center justify-center rounded-lg transition-all z-10 bg-white/10 hover:bg-white/20 text-white"
-          @click="closeInspector" 
-          title="關閉"
-        >✕</button>
-
-        <!-- 橫向佈局 -->
-        <div class="flex items-stretch h-full">
-          <!-- 左側: 預覽圖 -->
-          <div class="w-64 flex-shrink-0">
-            <div class="relative group h-full bg-white/5 border-r border-white/10">
-              <div v-if="!localNodeData.image" class="w-full h-full flex flex-col items-center justify-center gap-2">
-                <svg class="w-12 h-12 opacity-30 text-gray-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>
-                <span class="text-sm text-gray-400 font-medium">No Cover</span>
-              </div>
-              <img 
-                v-else 
-                :src="localNodeData.image" 
-                alt="Node Cover"
-                class="w-full h-full object-cover"
-              />
-              <!-- Hover Overlay -->
-              <div class="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer" @click="handleImageChange">
-                <span class="text-3xl">📷</span>
-                <span class="text-sm text-white font-semibold">Change Cover</span>
-              </div>
-            </div>
-          </div>
-
-          <!-- 中間: 標題、輸入框與 AI 建議連線 -->
-          <div class="flex-1 flex flex-col p-5 gap-3">
-            <!-- 標題 -->
-            <div>
-              <input 
-                v-model="localNodeData.name"
-                type="text"
-                class="w-full px-4 py-2.5 bg-white/5 border border-white/10 rounded-lg text-lg font-bold text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all"
-                placeholder="節點標題..."
-              />
-            </div>
-
-            <!-- SRL -->
-            <div class="flex flex-col gap-1.5">
-              <label class="text-xs font-bold text-gray-400 uppercase tracking-wider">SRL</label>
-              <input 
-                v-model="localNodeData.id"
-                type="text"
-                class="px-3 py-2 bg-white/5 border border-white/10 rounded-lg text-sm text-white font-mono focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all"
-                readonly
-              />
-            </div>
-
-            <!-- LINK -->
-            <div class="flex flex-col gap-1.5">
-              <label class="text-xs font-bold text-gray-400 uppercase tracking-wider">LINK</label>
-              <div class="flex gap-2">
-                <input 
-                  v-model="localNodeData.link"
-                  type="text"
-                  class="flex-1 px-3 py-2 bg-white/5 border border-white/10 rounded-lg text-sm text-white focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all"
-                  placeholder="https://..."
-                />
-                <button class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-semibold transition-all" @click="openLink">Go</button>
-              </div>
-            </div>
-
-            <!-- TAGS -->
-            <div class="flex flex-col gap-1.5">
-              <label class="text-xs font-bold text-gray-400 uppercase tracking-wider flex items-center gap-1.5">
-                <span>🏷️</span>
-                <span>TAGS</span>
-                <span class="text-xs font-normal text-gray-500">(Enter 新增)</span>
-              </label>
-              <!-- 已有 Tags 顯示 -->
-              <div class="flex flex-wrap gap-1.5 min-h-[28px]">
-                <span 
-                  v-for="(tag, idx) in localNodeData.tags" 
-                  :key="idx"
-                  class="inline-flex items-center gap-1 px-2.5 py-1 bg-blue-500/15 border border-blue-500/30 text-blue-300 text-xs font-medium rounded-full transition-all hover:bg-blue-500/25 group"
-                >
-                  {{ tag }}
-                  <button 
-                    class="w-3.5 h-3.5 flex items-center justify-center rounded-full hover:bg-red-500/40 hover:text-red-300 text-blue-400 opacity-0 group-hover:opacity-100 transition-all cursor-pointer"
-                    @click="removeLocalTag(idx)"
-                    title="移除"
-                  >×</button>
-                </span>
-                <!-- 空狀態提示 -->
-                <span v-if="!localNodeData.tags || localNodeData.tags.length === 0" class="text-xs text-gray-500 italic py-1">尚無標籤</span>
-              </div>
-              <!-- Tag 輸入框 -->
-              <div class="flex gap-2">
-                <input
-                  v-model="tagInput"
-                  type="text"
-                  class="flex-1 px-3 py-1.5 bg-white/5 border border-white/10 rounded-lg text-sm text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all"
-                  placeholder="輸入標籤..."
-                  @keydown.enter.prevent="addLocalTag"
-                />
-                <button 
-                  class="px-3 py-1.5 bg-blue-600/80 hover:bg-blue-600 text-white rounded-lg text-xs font-semibold transition-all disabled:opacity-30 disabled:cursor-not-allowed"
-                  :disabled="!tagInput.trim()"
-                  @click="addLocalTag"
-                >+ 新增</button>
-              </div>
-              <!-- 常用 Tag 快速選擇 -->
-              <div v-if="graphStore.allTags.length > 0" class="flex flex-wrap gap-1 mt-0.5">
-                <button
-                  v-for="t in graphStore.allTags.slice(0, 8)"
-                  :key="t.name"
-                  class="px-2 py-0.5 text-[11px] rounded-full transition-all cursor-pointer"
-                  :class="localNodeData.tags?.includes(t.name) 
-                    ? 'bg-blue-500/20 text-blue-300 border border-blue-500/30' 
-                    : 'bg-white/5 text-gray-500 hover:bg-white/10 hover:text-gray-300 border border-transparent'"
-                  @click="toggleLocalTag(t.name)"
-                >
-                  {{ t.name }} <span class="text-gray-600">({{ t.count }})</span>
-                </button>
-              </div>
-            </div>
-
-            <!-- AI 建議連線區塊 -->
-            <div v-if="suggestedLinks.length > 0" class="flex flex-col gap-2 mt-2">
-              <label class="text-xs font-bold text-purple-400 uppercase tracking-wider flex items-center gap-1.5">
-                <span>🤖</span>
-                <span>AI 建議連線</span>
-                <span class="text-xs font-normal text-gray-400">(取消勾選不儲存)</span>
-              </label>
-              <div class="max-h-32 overflow-y-auto space-y-2 pr-2">
-                <div 
-                  v-for="link in suggestedLinks" 
-                  :key="link.id"
-                  class="group flex items-start gap-2 p-2.5 rounded-lg border transition-all cursor-pointer"
-                  :class="[
-                    selectedSuggestedLinks.has(link.id)
-                      ? 'bg-purple-500/10 border-purple-500/30'
-                      : 'bg-white/5 border-white/10',
-                    hoveredLinkTarget === link.target_id ? 'ring-2 ring-purple-500' : ''
-                  ]"
-                  @mouseenter="handleLinkHover(link.target_id)"
-                  @mouseleave="handleLinkLeave"
-                >
-                  <!-- 勾選框 -->
-                  <input 
-                    type="checkbox"
-                    :checked="selectedSuggestedLinks.has(link.id)"
-                    @change="toggleSuggestedLink(link.id)"
-                    class="mt-0.5 w-4 h-4 text-purple-600 rounded focus:ring-2 focus:ring-purple-500 cursor-pointer"
-                  />
-                  
-                  <!-- 連線資訊 -->
-                  <div class="flex-1 text-sm">
-                    <div class="flex items-center gap-2 mb-1">
-                      <span class="font-semibold text-white">{{ getTargetNodeName(link.target_id) }}</span>
-                      <span class="px-2 py-0.5 bg-purple-500/20 text-purple-300 text-xs font-medium rounded">{{ link.relation }}</span>
-                    </div>
-                    <p class="text-xs text-gray-400 leading-relaxed">{{ link.reason }}</p>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <!-- 操作按鈕列 -->
-            <div class="flex gap-3 mt-auto pt-2">
-              <button 
-                class="flex-1 px-4 py-2 flex items-center justify-center gap-2 bg-gradient-to-r from-blue-600 to-blue-500 hover:from-blue-700 hover:to-blue-600 text-white rounded-lg font-semibold shadow-lg shadow-blue-500/30 transition-all" 
-                @click="saveChanges"
-              >
-                <span class="text-base">💾</span>
-                <span>SAVE</span>
-              </button>
-              <button 
-                class="px-4 py-2 flex items-center justify-center gap-2 bg-red-600 hover:bg-red-700 text-white rounded-lg font-semibold shadow-lg shadow-red-500/30 transition-all" 
-                @click="deleteNode"
-                title="刪除節點"
-              >
-                <svg class="w-4 h-4" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 4h10M5.5 4V3a1 1 0 011-1h3a1 1 0 011 1v1M6 7v5M10 7v5M4 4l.8 9a1 1 0 001 .9h4.4a1 1 0 001-.9L12 4"/></svg>
-                <span>DELETE</span>
-              </button>
-            </div>
-          </div>
-
-          <!-- 右側: 描述區域 -->
-          <div class="w-80 flex-shrink-0 p-5 border-l border-white/10">
-            <div class="flex flex-col gap-2 h-full">
-              <label class="text-xs font-bold text-gray-400 uppercase tracking-wider">DESCRIPTION</label>
-              <textarea 
-                v-model="localNodeData.description"
-                class="flex-1 px-3 py-2.5 bg-white/5 border border-white/10 rounded-lg text-sm leading-relaxed text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none transition-all"
-                placeholder="節點描述..."
-              ></textarea>
-            </div>
-          </div>
-        </div>
-      </div>
-    </transition>
+    <!-- 節點檢查器面板（已拆分為獨立元件） -->
+    <NodeInspectorPanel
+      :visible="showRightPanel && !!graphStore.selectedNode"
+      :node="graphStore.selectedNode"
+      :allTags="graphStore.allTags"
+      :graphComponentRef="graphComponentRef"
+      @close="closeInspector"
+      @save="handleInspectorSave"
+      @delete="handleInspectorDelete"
+      @highlight-node="handleInspectorHighlight"
+    />
     
 
   </div>
@@ -2602,122 +1727,6 @@ onUnmounted(() => {
   .primary-actions {
     grid-template-columns: 1fr;
   }
-}
-
-/* ===== 星系設定面板 ===== */
-.cluster-settings-panel {
-  width: 480px;
-  max-height: 75vh;
-  padding: 24px;
-  background: rgba(15, 15, 20, 0.97);
-  backdrop-filter: blur(24px);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 16px;
-  box-shadow: 0 25px 60px rgba(0, 0, 0, 0.5), 0 0 40px rgba(59, 130, 246, 0.08);
-  overflow-y: auto;
-}
-
-.cluster-types-list {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-
-.cluster-type-row {
-  display: flex;
-  align-items: center;
-  gap: 14px;
-  padding: 12px;
-  border-radius: 12px;
-  background: rgba(255, 255, 255, 0.03);
-  border: 1px solid rgba(255, 255, 255, 0.06);
-  transition: all 0.2s;
-}
-
-.cluster-type-row:hover {
-  background: rgba(255, 255, 255, 0.06);
-  border-color: rgba(255, 255, 255, 0.1);
-}
-
-.cluster-preview {
-  width: 52px;
-  height: 52px;
-  border-radius: 12px;
-  overflow: hidden;
-  border: 2px solid rgba(255, 255, 255, 0.1);
-  flex-shrink: 0;
-}
-
-.cluster-action-btn {
-  width: 32px;
-  height: 32px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 8px;
-  background: rgba(255, 255, 255, 0.06);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  color: rgba(255, 255, 255, 0.6);
-  cursor: pointer;
-  transition: all 0.2s;
-}
-
-.cluster-action-btn:hover {
-  background: rgba(59, 130, 246, 0.15);
-  border-color: rgba(59, 130, 246, 0.3);
-  color: #60a5fa;
-}
-
-.cluster-action-danger:hover {
-  background: rgba(239, 68, 68, 0.15);
-  border-color: rgba(239, 68, 68, 0.3);
-  color: #f87171;
-}
-
-.cluster-action-preset:hover {
-  background: rgba(168, 85, 247, 0.15);
-  border-color: rgba(168, 85, 247, 0.3);
-  color: #c084fc;
-}
-
-/* 預設星球網格 */
-.preset-grid {
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 10px;
-}
-
-.preset-planet-btn {
-  position: relative;
-  width: 100%;
-  aspect-ratio: 1;
-  border-radius: 12px;
-  overflow: hidden;
-  background: rgba(255, 255, 255, 0.03);
-  border: 2px solid rgba(255, 255, 255, 0.06);
-  cursor: pointer;
-  transition: all 0.2s;
-  padding: 4px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.preset-planet-btn:hover {
-  border-color: rgba(168, 85, 247, 0.5);
-  background: rgba(168, 85, 247, 0.08);
-  transform: scale(1.05);
-}
-
-.preset-planet-name {
-  position: absolute;
-  bottom: 2px;
-  left: 0;
-  right: 0;
-  text-align: center;
-  font-size: 9px;
-  color: rgba(255, 255, 255, 0.5);
-  pointer-events: none;
 }
 
 /* ===== 節點間距滑桿面板 ===== */

@@ -275,7 +275,12 @@ const typewriterEffect = async (messageIndex, fullText) => {
  */
 const renderMarkdown = (text) => {
   if (!text) return '';
-  return md.render(text);
+  const raw = md.render(text);
+  // DOMPurify 消毒以防止 XSS——僅允許安全的 HTML 標籤
+  if (typeof window !== 'undefined' && window.DOMPurify) {
+    return window.DOMPurify.sanitize(raw);
+  }
+  return raw;
 };
 
 /**

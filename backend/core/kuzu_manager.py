@@ -830,17 +830,28 @@ class AsyncKuzuWrapper:
                 entity_id, depth
             )
 
+    async def safe_get_entity(self, entity_id: str) -> Optional[Dict]:
+        """Async 安全版本的 get_entity (讀取)"""
+        async with self._read_semaphore:
+            loop = asyncio.get_event_loop()
+            return await loop.run_in_executor(
+                self._executor,
+                self._manager.get_entity,
+                entity_id
+            )
+
     # ---------- 圖譜元數據 async 安全方法 ----------
 
     async def safe_create_graph_metadata(self, graph_id: str, name: str,
                                           description: str = "", icon: str = "🌐",
-                                          color: str = "#3b82f6") -> bool:
+                                          color: str = "#3b82f6", **kwargs) -> bool:
         async with self._write_lock:
             loop = asyncio.get_event_loop()
             return await loop.run_in_executor(
                 self._executor,
-                self._manager.create_graph_metadata,
-                graph_id, name, description, icon, color
+                lambda: self._manager.create_graph_metadata(
+                    graph_id, name, description, icon, color, **kwargs
+                )
             )
 
     async def safe_get_graph_metadata(self, graph_id: str) -> Optional[Dict]:
@@ -876,6 +887,15 @@ class AsyncKuzuWrapper:
                 self._executor,
                 self._manager.update_graph_stats,
                 graph_id
+            )
+
+    async def safe_update_graph_metadata(self, graph_id: str, **kwargs) -> bool:
+        """Async 安全版本的 update_graph_metadata"""
+        async with self._write_lock:
+            loop = asyncio.get_event_loop()
+            return await loop.run_in_executor(
+                self._executor,
+                lambda: self._manager.update_graph_metadata(graph_id, **kwargs)
             )
 
     # ---------- 同步代理方法 (向後相容) ----------

@@ -93,7 +93,7 @@ async def create_entity(request: Request, entity: EntityCreate):
     if not kuzu_manager:
         raise HTTPException(status_code=503, detail="圖譜服務未就緒")
     
-    success = kuzu_manager.add_entity(
+    success = await kuzu_manager.safe_add_entity(
         entity.id,
         entity.name,
         entity.type,
@@ -132,7 +132,7 @@ async def update_entity(request: Request, entity_id: str, entity_data: EntityUpd
             import json
             properties_update["tags"] = json.dumps(entity_data.tags, ensure_ascii=False)
         
-        success = kuzu_manager.update_entity(
+        success = await kuzu_manager.safe_update_entity(
             entity_id,
             name=entity_data.name,
             entity_type=entity_data.type,
@@ -165,11 +165,11 @@ async def delete_entity(request: Request, entity_id: str):
     
     try:
         # 先確認實體存在
-        entity = kuzu_manager.get_entity(entity_id)
+        entity = await kuzu_manager.safe_get_entity(entity_id)
         if not entity:
             raise HTTPException(status_code=404, detail=f"實體 {entity_id} 不存在")
         
-        success = kuzu_manager.delete_entity(entity_id)
+        success = await kuzu_manager.safe_delete_entity(entity_id)
         
         if not success:
             raise HTTPException(status_code=500, detail="刪除實體失敗")
@@ -196,7 +196,7 @@ async def create_relation(request: Request, relation: RelationCreate):
     if not kuzu_manager:
         raise HTTPException(status_code=503, detail="圖譜服務未就緒")
     
-    success = kuzu_manager.add_relation(
+    success = await kuzu_manager.safe_add_relation(
         relation.from_id,
         relation.to_id,
         relation.relation_type,
@@ -217,7 +217,7 @@ async def get_entity(request: Request, entity_id: str):
     if not kuzu_manager:
         raise HTTPException(status_code=503, detail="圖譜服務未就緒")
     
-    entity = kuzu_manager.get_entity(entity_id)
+    entity = await kuzu_manager.safe_get_entity(entity_id)
     
     if entity:
         return entity
@@ -233,7 +233,7 @@ async def search_entities(request: Request, keyword: str, entity_type: Optional[
     if not kuzu_manager:
         raise HTTPException(status_code=503, detail="圖譜服務未就緒")
     
-    results = kuzu_manager.search_entities(keyword, entity_type or "")
+    results = await kuzu_manager.safe_search_entities(keyword, entity_type or "")
     return {"results": results, "count": len(results)}
 
 
@@ -245,7 +245,7 @@ async def get_neighbors(request: Request, entity_id: str, depth: int = 1):
     if not kuzu_manager:
         raise HTTPException(status_code=503, detail="圖譜服務未就緒")
     
-    neighbors = kuzu_manager.get_neighbors(entity_id, depth)
+    neighbors = await kuzu_manager.safe_get_neighbors(entity_id, depth)
     return {"neighbors": neighbors, "count": len(neighbors)}
 
 
@@ -257,7 +257,7 @@ async def list_graphs_legacy(request: Request):
     try:
         # 使用真實的圖譜元數據
         if kuzu_manager:
-            graphs = kuzu_manager.list_graph_metadata()
+            graphs = await kuzu_manager.safe_list_graph_metadata()
             # 清理 KuzuDB 內部欄位
             graphs = [_clean_graph_metadata(g) for g in graphs]
             if graphs:
@@ -265,12 +265,12 @@ async def list_graphs_legacy(request: Request):
                 for g in graphs:
                     try:
                         gid = g.get('id', '')
-                        nodes_result = kuzu_manager.query(
+                        nodes_result = await kuzu_manager.safe_query(
                             "MATCH (n:Entity) WHERE n.graph_id = $gid OR (n.graph_id IS NULL AND $gid = '1') RETURN count(n) as count",
                             parameters={"gid": gid}
                         )
                         g['nodeCount'] = nodes_result[0].get('count', 0) if nodes_result else 0
-                        links_result = kuzu_manager.query(
+                        links_result = await kuzu_manager.safe_query(
                             "MATCH (a:Entity)-[r:Relation]->(b:Entity) WHERE a.graph_id = $gid RETURN count(r) as count",
                             parameters={"gid": gid}
                         )
@@ -319,7 +319,7 @@ async def execute_query(request: Request, query_request: CypherQuery):
         )
     
     try:
-        results = kuzu_manager.query(query_request.query, query_request.parameters or {})
+        results = await kuzu_manager.safe_query(query_request.query, query_request.parameters or {})
         return {"results": results, "count": len(results)}
     except Exception as e:
         logger.error(f"查詢執行失敗: {e}")
@@ -342,7 +342,7 @@ async def create_graph(request: Request, graph_data: GraphMetadataCreate):
         graph_id = f"graph_{uuid.uuid4().hex[:12]}"
         
         # 創建圖譜元數據
-        success = kuzu_manager.create_graph_metadata(
+        success = await kuzu_manager.safe_create_graph_metadata(
             graph_id=graph_id,
             name=graph_data.name,
             description=graph_data.description or "",
@@ -356,7 +356,7 @@ async def create_graph(request: Request, graph_data: GraphMetadataCreate):
             raise HTTPException(status_code=500, detail="創建圖譜失敗")
         
         # 獲取創建的圖譜
-        graph = kuzu_manager.get_graph_metadata(graph_id)
+        graph = await kuzu_manager.safe_get_graph_metadata(graph_id)
         
         return {
             "success": True,
@@ -380,7 +380,7 @@ async def list_graphs(request: Request):
         raise HTTPException(status_code=503, detail="圖譜服務未就緒")
     
     try:
-        graphs = kuzu_manager.list_graph_metadata()
+        graphs = await kuzu_manager.safe_list_graph_metadata()
         # 清理 KuzuDB 內部欄位
         graphs = [_clean_graph_metadata(g) for g in graphs]
         
@@ -404,7 +404,7 @@ async def get_graph(request: Request, graph_id: str):
         raise HTTPException(status_code=503, detail="圖譜服務未就緒")
     
     try:
-        graph = kuzu_manager.get_graph_metadata(graph_id)
+        graph = await kuzu_manager.safe_get_graph_metadata(graph_id)
         
         if not graph:
             raise HTTPException(status_code=404, detail=f"圖譜 {graph_id} 不存在")
@@ -431,7 +431,7 @@ async def update_graph(request: Request, graph_id: str, graph_data: GraphMetadat
     
     try:
         # 檢查圖譜是否存在
-        existing = kuzu_manager.get_graph_metadata(graph_id)
+        existing = await kuzu_manager.safe_get_graph_metadata(graph_id)
         if not existing:
             raise HTTPException(status_code=404, detail=f"圖譜 {graph_id} 不存在")
         
@@ -451,13 +451,13 @@ async def update_graph(request: Request, graph_id: str, graph_data: GraphMetadat
         if not updates:
             raise HTTPException(status_code=400, detail="未提供更新字段")
         
-        success = kuzu_manager.update_graph_metadata(graph_id, **updates)
+        success = await kuzu_manager.safe_update_graph_metadata(graph_id, **updates)
         
         if not success:
             raise HTTPException(status_code=500, detail="更新圖譜失敗")
         
         # 獲取更新後的圖譜
-        graph = kuzu_manager.get_graph_metadata(graph_id)
+        graph = await kuzu_manager.safe_get_graph_metadata(graph_id)
         
         return {
             "success": True,
@@ -487,7 +487,7 @@ async def delete_graph(request: Request, graph_id: str, cascade: bool = False):
     
     try:
         # 檢查圖譜是否存在
-        existing = kuzu_manager.get_graph_metadata(graph_id)
+        existing = await kuzu_manager.safe_get_graph_metadata(graph_id)
         if not existing:
             raise HTTPException(status_code=404, detail=f"圖譜 {graph_id} 不存在")
         
@@ -502,7 +502,8 @@ async def delete_graph(request: Request, graph_id: str, cascade: bool = False):
                 if api_keys.get('RAGFLOW_API_KEY'):
                     rag_client = RAGFlowClient(
                         api_key=api_keys['RAGFLOW_API_KEY'],
-                        base_url=api_keys['RAGFLOW_API_URL']
+                        base_url=api_keys['RAGFLOW_API_URL'],
+                        http_client=getattr(request.app.state, 'http_client', None),
                     )
                     # 先列出該 dataset 中的所有文檔
                     docs_result = await rag_client.async_list_documents(ragflow_dataset_id)
@@ -530,7 +531,7 @@ async def delete_graph(request: Request, graph_id: str, cascade: bool = False):
                 logger.warning(f"⚠️ RAGFlow 清理失敗（繼續刪除圖譜）: {e}")
         
         # ── 階段 2: 刪除 KuzuDB 圖譜數據 ──
-        success = kuzu_manager.delete_graph_metadata(graph_id, cascade=cascade)
+        success = await kuzu_manager.safe_delete_graph_metadata(graph_id, cascade=cascade)
         
         if not success:
             raise HTTPException(status_code=500, detail="刪除圖譜失敗")

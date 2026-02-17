@@ -8,6 +8,8 @@ import secrets
 import hashlib
 import json
 import logging
+import time
+import threading
 from datetime import datetime
 from pathlib import Path
 from typing import Optional, Dict, List
@@ -49,6 +51,22 @@ def _hash_token(token: str) -> str:
     return hashlib.sha256(token.encode()).hexdigest()
 
 
+# ==================== Token Store 快取 (v5.3) ====================
+# 避免每次 API 請求都讀取磁碟檔案，使用 in-memory cache + TTL 30 秒
+_token_store_cache: Optional[Dict] = None
+_token_store_cache_time: float = 0.0
+_TOKEN_CACHE_TTL: float = 30.0  # 秒
+_token_cache_lock = threading.Lock()
+
+
+def _invalidate_token_cache() -> None:
+    """寫入操作後清除快取，確保下次讀取會從磁碟重新載入"""
+    global _token_store_cache, _token_store_cache_time
+    with _token_cache_lock:
+        _token_store_cache = None
+        _token_store_cache_time = 0.0
+
+
 # ==================== 多 Token 儲存格式 ====================
 # {
 #   "tokens": [
@@ -60,7 +78,12 @@ def _hash_token(token: str) -> str:
 
 
 def _load_token_store() -> Dict:
-    """讀取完整的 Token 儲存，自動遷移舊格式（支援三代格式）"""
+    """讀取完整的 Token 儲存，含 in-memory 快取 (TTL 30s)，自動遷移舊格式"""
+    global _token_store_cache, _token_store_cache_time
+    now = time.monotonic()
+    with _token_cache_lock:
+        if _token_store_cache is not None and (now - _token_store_cache_time) < _TOKEN_CACHE_TTL:
+            return _token_store_cache
     if not TOKEN_FILE_PATH.exists():
         return {"tokens": []}
     try:
@@ -100,6 +123,9 @@ def _load_token_store() -> Dict:
 
         # ── 格式 C (新)：tokens 是 list ──
         if isinstance(tokens, list):
+            with _token_cache_lock:
+                _token_store_cache = data
+                _token_store_cache_time = time.monotonic()
             return data
 
         return {"tokens": []}
@@ -109,11 +135,12 @@ def _load_token_store() -> Dict:
 
 
 def _save_token_store(store: Dict) -> None:
-    """保存完整的 Token 儲存"""
+    """保存完整的 Token 儲存，並清除快取"""
     try:
         TOKEN_FILE_PATH.parent.mkdir(parents=True, exist_ok=True)
         with open(TOKEN_FILE_PATH, 'w', encoding='utf-8') as f:
             json.dump(store, f, ensure_ascii=False, indent=2)
+        _invalidate_token_cache()
     except Exception as e:
         logger.error(f"保存 Token 檔案失敗: {e}")
 
@@ -372,9 +399,7 @@ class APIAuthMiddleware(BaseHTTPMiddleware):
         if api_token:
             return api_token
         
-        # 方式 3: URL query parameter (不建議，但方便開發測試)
-        token_param = request.query_params.get("token")
-        if token_param:
-            return token_param
+        # 方式 3: URL query parameter — 已移除
+        # Token 會出現在日誌、Referer header、瀏覽器歷史中，存在安全風險
         
         return None
