@@ -82,6 +82,7 @@ class EntityUpdate(BaseModel):
     image: Optional[str] = None
     color: Optional[str] = None
     size: Optional[int] = None
+    tags: Optional[List[str]] = None
 
 
 @router.post("/entities")
@@ -127,6 +128,9 @@ async def update_entity(request: Request, entity_id: str, entity_data: EntityUpd
             properties_update["color"] = entity_data.color
         if entity_data.size is not None:
             properties_update["size"] = entity_data.size
+        if entity_data.tags is not None:
+            import json
+            properties_update["tags"] = json.dumps(entity_data.tags, ensure_ascii=False)
         
         success = kuzu_manager.update_entity(
             entity_id,

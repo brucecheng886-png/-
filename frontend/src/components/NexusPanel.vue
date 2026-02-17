@@ -325,6 +325,26 @@ function getNodeIcon(node) {
         </button>
       </div>
 
+      <!-- 🏷️ Tag 篩選列 -->
+      <div v-if="graphStore.allTags.length > 0" class="flex flex-wrap gap-1 px-1 py-2 border-b border-white/5">
+        <button
+          class="px-2 py-0.5 text-[11px] rounded-full transition-all cursor-pointer"
+          :class="!graphStore.activeTagFilter 
+            ? 'bg-blue-500/20 text-blue-300 border border-blue-500/30' 
+            : 'bg-white/5 text-gray-500 hover:bg-white/10 hover:text-gray-300 border border-transparent'"
+          @click="graphStore.setTagFilter(null)"
+        >全部</button>
+        <button
+          v-for="t in graphStore.allTags.slice(0, 10)"
+          :key="t.name"
+          class="px-2 py-0.5 text-[11px] rounded-full transition-all cursor-pointer"
+          :class="graphStore.activeTagFilter === t.name || (Array.isArray(graphStore.activeTagFilter) && graphStore.activeTagFilter.includes(t.name))
+            ? 'bg-blue-500/20 text-blue-300 border border-blue-500/30' 
+            : 'bg-white/5 text-gray-500 hover:bg-white/10 hover:text-gray-300 border border-transparent'"
+          @click="graphStore.setTagFilter(t.name)"
+        >{{ t.name }} <span class="text-gray-600">{{ t.count }}</span></button>
+      </div>
+
       <!-- 空狀態 -->
       <div v-if="filteredNodes.length === 0" class="flex flex-col items-center justify-center h-full gap-4 py-12">
         <span class="text-6xl opacity-30">📭</span>
@@ -356,7 +376,15 @@ function getNodeIcon(node) {
             </div>
             <div class="flex-1 min-w-0">
               <div class="text-sm font-medium text-white truncate">{{ node.name || node.label }}</div>
-              <div class="text-[11px] text-gray-500 capitalize">{{ node.type || node.group || 'unknown' }}</div>
+              <div class="flex items-center gap-1.5 mt-0.5">
+                <span class="text-[11px] text-gray-500 capitalize">{{ node.type || node.group || 'unknown' }}</span>
+                <span 
+                  v-for="tag in (node.tags || []).slice(0, 2)" 
+                  :key="tag"
+                  class="px-1.5 py-0 text-[10px] bg-blue-500/15 text-blue-400 rounded-full leading-4 truncate max-w-[60px]"
+                >{{ tag }}</span>
+                <span v-if="(node.tags || []).length > 2" class="text-[10px] text-gray-500">+{{ node.tags.length - 2 }}</span>
+              </div>
             </div>
           </div>
         </div>
@@ -400,6 +428,13 @@ function getNodeIcon(node) {
             <div class="flex flex-col gap-1">
               <span class="text-sm font-semibold text-white truncate">{{ node.name || node.label }}</span>
               <span class="text-xs text-gray-400 truncate">{{ node.type || node.group }}</span>
+              <div v-if="node.tags && node.tags.length > 0" class="flex flex-wrap gap-1 mt-0.5">
+                <span 
+                  v-for="tag in node.tags.slice(0, 3)" 
+                  :key="tag"
+                  class="px-1.5 py-0 text-[10px] bg-blue-500/15 text-blue-400 rounded-full leading-4"
+                >{{ tag }}</span>
+              </div>
             </div>
           </div>
         </div>

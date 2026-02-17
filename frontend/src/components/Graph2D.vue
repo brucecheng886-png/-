@@ -480,6 +480,26 @@ const initGraph = async () => {
         ctx.stroke();
       }
       
+      // 🏷️ Tag 色點指示器（節點底部，縮放足夠時才顯示）
+      if (globalScale >= 0.6 && node.tags && node.tags.length > 0) {
+        const tagColors = ['#3b82f6', '#8b5cf6', '#22c55e', '#f59e0b', '#ec4899', '#06b6d4'];
+        const tagCount = Math.min(node.tags.length, 4);
+        const dotR = 2;
+        const dotGap = 5;
+        const totalW = tagCount * dotR * 2 + (tagCount - 1) * (dotGap - dotR * 2);
+        const startX = node.x - totalW / 2 + dotR;
+        const dotY = node.y + nodeSize + 3;
+        
+        for (let i = 0; i < tagCount; i++) {
+          ctx.beginPath();
+          ctx.arc(startX + i * dotGap, dotY, dotR, 0, 2 * Math.PI);
+          ctx.fillStyle = tagColors[i % tagColors.length];
+          ctx.globalAlpha = fadeAlpha * 0.85;
+          ctx.fill();
+        }
+        ctx.globalAlpha = fadeAlpha;
+      }
+      
       // 📝 繪製標籤
       const labelFontSize = isSelected ? fontSize * 1.4 : fontSize;
       const labelOffset = nodeSize + 4;

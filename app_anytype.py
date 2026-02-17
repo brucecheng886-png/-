@@ -512,6 +512,16 @@ async def get_graph_data(request: Request, graph_id: str = "1"):
                 # 統計節點類型
                 node_type_count[node_type] = node_type_count.get(node_type, 0) + 1
                 
+                # 解析 tags（可能是 JSON 字串或已解析的列表）
+                raw_tags = properties.get("tags", [])
+                if isinstance(raw_tags, str):
+                    try:
+                        raw_tags = json.loads(raw_tags)
+                    except (json.JSONDecodeError, ValueError):
+                        raw_tags = [t.strip() for t in raw_tags.split(",") if t.strip()]
+                if not isinstance(raw_tags, list):
+                    raw_tags = []
+                
                 # 構建節點對象（將 properties 中的常用欄位提升到頂層）
                 node = {
                     "id": node_id,
@@ -523,6 +533,7 @@ async def get_graph_data(request: Request, graph_id: str = "1"):
                     "description": properties.get("description", ""),
                     "image": properties.get("image", ""),
                     "color": properties.get("color", ""),
+                    "tags": raw_tags,  # AI 自動生成的分類標籤
                     "size": 10,  # 統一節點大小
                     "properties": properties
                 }

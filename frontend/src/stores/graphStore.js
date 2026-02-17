@@ -130,6 +130,18 @@ export const useGraphStore = defineStore('graph', () => {
   const savedGraphId = typeof window !== 'undefined' ? localStorage.getItem('lastGraphId') : null;
   const currentGraphId = ref(savedGraphId || 1);
   
+  /**
+   * Tag 過濾狀態
+   * @type {import('vue').Ref<string|null>}
+   */
+  const activeTagFilter = ref(null);
+  
+  /**
+   * Tag 過濾模式: 'any'=包含任一 tag, 'all'=包含所有 tag
+   * @type {import('vue').Ref<string>}
+   */
+  const tagFilterMode = ref('any');
+  
   // ===== 初始化：加載圖譜列表（使用 Manager）=====
   const loadGraphMetadataList = async (options = {}) => {
     try {
@@ -186,32 +198,71 @@ export const useGraphStore = defineStore('graph', () => {
   });
   
   /**
-   * 過濾後的節點列表
+   * 過濾後的節點列表（支援 tag 過濾）
    */
   const filteredNodes = computed(() => {
-    if (filterMode.value === 'all') {
-      return nodes.value;
+    let result = nodes.value;
+    
+    // 1️⃣ filterMode 過濾
+    if (filterMode.value !== 'all' && selectedNode.value) {
+      if (filterMode.value === 'focus') {
+        const neighbors = getNeighbors(selectedNode.value.id);
+        const neighborIds = new Set(neighbors.map(n => n.id));
+        neighborIds.add(selectedNode.value.id);
+        result = result.filter(n => neighborIds.has(n.id));
+      } else if (filterMode.value === 'part') {
+        const selectedGroup = selectedNode.value.group;
+        result = result.filter(n => n.group === selectedGroup);
+      }
     }
     
-    if (!selectedNode.value) {
-      return nodes.value;
+    // 2️⃣ Tag 過濾
+    if (activeTagFilter.value) {
+      const filterTags = Array.isArray(activeTagFilter.value) 
+        ? activeTagFilter.value 
+        : [activeTagFilter.value];
+      if (filterTags.length > 0) {
+        result = result.filter(n => {
+          const nodeTags = n.tags || [];
+          if (tagFilterMode.value === 'all') {
+            return filterTags.every(t => nodeTags.includes(t));
+          }
+          return filterTags.some(t => nodeTags.includes(t));
+        });
+      }
     }
     
-    if (filterMode.value === 'focus') {
-      // Focus: 選中節點 + 它的鄰居
-      const neighbors = getNeighbors(selectedNode.value.id);
-      const neighborIds = new Set(neighbors.map(n => n.id));
-      neighborIds.add(selectedNode.value.id);
-      return nodes.value.filter(n => neighborIds.has(n.id));
-    }
-    
-    if (filterMode.value === 'part') {
-      // Part: 同一群組的節點
-      const selectedGroup = selectedNode.value.group;
-      return nodes.value.filter(n => n.group === selectedGroup);
-    }
-    
-    return nodes.value;
+    return result;
+  });
+  
+  /**
+   * 按 Tag 分組的節點統計
+   */
+  const nodesByTag = computed(() => {
+    const groups = {};
+    nodes.value.forEach(node => {
+      const tags = node.tags || [];
+      tags.forEach(tag => {
+        if (!groups[tag]) groups[tag] = [];
+        groups[tag].push(node);
+      });
+    });
+    return groups;
+  });
+  
+  /**
+   * 所有唯一的 Tag 列表（帶統計）
+   */
+  const allTags = computed(() => {
+    const tagMap = new Map();
+    nodes.value.forEach(node => {
+      (node.tags || []).forEach(tag => {
+        tagMap.set(tag, (tagMap.get(tag) || 0) + 1);
+      });
+    });
+    return Array.from(tagMap.entries())
+      .map(([name, count]) => ({ name, count }))
+      .sort((a, b) => b.count - a.count);
   });
   
   /**
@@ -568,6 +619,7 @@ export const useGraphStore = defineStore('graph', () => {
       size: node.size || 24, // 預設大小
       description: node.description || '', // 描述資訊
       emoji: node.emoji || '📄', // 預設檔案圖示
+      tags: Array.isArray(node.tags) ? [...node.tags] : [], // 標籤陣列
       ...node // 保留其他自定義屬性
     };
     
@@ -728,6 +780,67 @@ export const useGraphStore = defineStore('graph', () => {
     }
     filterMode.value = mode;
     console.log('🔎 過濾模式已切換:', mode);
+  };
+  
+  // ===== Tag 相關 Actions =====
+  
+  /**
+   * 新增 Tag 到節點
+   * @param {string} nodeId - 節點 ID
+   * @param {string} tag - 標籤名稱
+   */
+  const addTagToNode = (nodeId, tag) => {
+    const trimmed = tag.trim();
+    if (!trimmed) return;
+    const node = nodes.value.find(n => n.id === nodeId);
+    if (!node) {
+      console.error('❌ 節點不存在:', nodeId);
+      return;
+    }
+    if (!node.tags) node.tags = [];
+    if (node.tags.includes(trimmed)) {
+      console.warn('⚠️ Tag 已存在:', trimmed);
+      return;
+    }
+    node.tags = [...node.tags, trimmed];
+    nodeVersion.value++;
+    graphDataManager.invalidateCache(currentGraphId.value);
+    console.log('🏷️ Tag 已新增:', trimmed, '→', nodeId);
+  };
+  
+  /**
+   * 從節點移除 Tag
+   * @param {string} nodeId - 節點 ID
+   * @param {string} tag - 標籤名稱
+   */
+  const removeTagFromNode = (nodeId, tag) => {
+    const node = nodes.value.find(n => n.id === nodeId);
+    if (!node || !node.tags) return;
+    node.tags = node.tags.filter(t => t !== tag);
+    nodeVersion.value++;
+    graphDataManager.invalidateCache(currentGraphId.value);
+    console.log('🗑️ Tag 已移除:', tag, '←', nodeId);
+  };
+  
+  /**
+   * 取得所有唯一 Tag 名稱
+   * @returns {Array<string>}
+   */
+  const getAllTagNames = () => {
+    const tagSet = new Set();
+    nodes.value.forEach(n => (n.tags || []).forEach(t => tagSet.add(t)));
+    return Array.from(tagSet).sort();
+  };
+  
+  /**
+   * 設定 Tag 過濾
+   * @param {string|Array<string>|null} tags - 篠選的 tag (単個、多個、或 null 清除)
+   * @param {string} mode - 'any' | 'all'
+   */
+  const setTagFilter = (tags, mode = 'any') => {
+    activeTagFilter.value = tags;
+    tagFilterMode.value = mode;
+    console.log('🏷️ Tag 過濾已設定:', tags, mode);
   };
   
   /**
@@ -1390,6 +1503,8 @@ export const useGraphStore = defineStore('graph', () => {
     filterMode,
     importedFiles,
     currentGraphId,
+    activeTagFilter,
+    tagFilterMode,
     
     // 匯入進度狀態
     importTaskId,
@@ -1411,6 +1526,8 @@ export const useGraphStore = defineStore('graph', () => {
     is3DMode,
     is2DMode,
     nodesByType,
+    nodesByTag,
+    allTags,
     filteredNodes,
     filteredLinks,
     
@@ -1439,6 +1556,10 @@ export const useGraphStore = defineStore('graph', () => {
     updateNode,
     deleteNode,
     setFilterMode,
+    addTagToNode,
+    removeTagFromNode,
+    getAllTagNames,
+    setTagFilter,
     importFile,
     importExcelAsync,
     cancelImportPoll,

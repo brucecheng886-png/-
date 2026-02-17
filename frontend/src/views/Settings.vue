@@ -1,257 +1,171 @@
 <template>
-  <div class="settings-container">
+  <div class="settings-container" @click="showUrlSuggestions = false">
     <!-- 頁面標題 -->
     <div class="page-header">
-      <h1 class="page-title">
-        <span class="title-icon"><svg class="w-6 h-6 inline-block align-middle" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M11.49 3.17c-.38-1.56-2.6-1.56-2.98 0a1.532 1.532 0 01-2.286.948c-1.372-.836-2.942.734-2.106 2.106.54.886.061 2.042-.947 2.287-1.561.379-1.561 2.6 0 2.978a1.532 1.532 0 01.947 2.287c-.836 1.372.734 2.942 2.106 2.106a1.532 1.532 0 012.287.947c.379 1.561 2.6 1.561 2.978 0a1.533 1.533 0 012.287-.947c1.372.836 2.942-.734 2.106-2.106a1.533 1.533 0 01.947-2.287c1.561-.379 1.561-2.6 0-2.978a1.532 1.532 0 01-.947-2.287c.836-1.372-.734-2.942-2.106-2.106a1.532 1.532 0 01-2.287-.947zM10 13a3 3 0 100-6 3 3 0 000 6z" clip-rule="evenodd"/></svg></span>
-        系統設定
-      </h1>
-      <p class="page-subtitle">管理 API Keys 和系統配置</p>
+      <h1 class="page-title">系統設定</h1>
+      <p class="page-subtitle">管理服務連線、API Keys 和系統配置</p>
     </div>
 
-    <!-- 載入中狀態 -->
+    <!-- 分頁標籤 -->
+    <div class="tab-bar">
+      <button class="tab-btn" :class="{ active: activeTab === 'connections' }" @click="activeTab = 'connections'">
+        連線管理
+      </button>
+      <button class="tab-btn" :class="{ active: activeTab === 'users' }" @click="activeTab = 'users'">
+        使用者管理
+      </button>
+    </div>
+
+    <!-- 載入中 -->
     <div v-if="loading" class="loading-state">
       <div class="spinner"></div>
       <p>載入配置中...</p>
     </div>
 
-    <!-- 設定表單 -->
-    <div v-else class="settings-card">
-      <!-- Dify 配置區塊 -->
-      <div class="config-section">
-        <div class="section-header">
-          <h2 class="section-title">
-            <span class="section-icon">🤖</span>
-            Dify 配置
-          </h2>
-          <div class="section-actions">
-            <span class="section-badge">AI 對話服務</span>
-            <a href="http://localhost:82" target="_blank" class="manage-link">
-              <span class="link-icon">🔗</span>
-              管理介面
-            </a>
-          </div>
-        </div>
-
-        <!-- Dify API URL -->
-        <div class="form-group">
-          <label class="form-label">
-            API URL
-            <span class="label-badge">可編輯</span>
-          </label>
-          <input
-            v-model="config.dify_api_url"
-            type="text"
-            class="form-input"
-            placeholder="http://localhost:5001/v1"
-            @input="hasChanges = true"
-          />
-          <p class="form-hint">
-            Dify 服務的 API 端點（例如：http://localhost:5001/v1）
-          </p>
-        </div>
-
-        <!-- Dify API Key -->
-        <div class="form-group">
-          <label class="form-label">
-            API Key
-            <span class="label-badge required">必填</span>
-          </label>
-          <div class="input-with-toggle">
-            <input
-              v-model="config.dify_key"
-              :type="showDifyKey ? 'text' : 'password'"
-              class="form-input"
-              placeholder="app-xxxxxxxxxxxxxxxx"
-              @input="hasChanges = true"
-            />
-            <button 
-              type="button" 
-              class="toggle-password-btn"
-              @click="showDifyKey = !showDifyKey"
-              :title="showDifyKey ? '隱藏' : '顯示'"
-            >
-              <svg v-if="showDifyKey" class="w-4 h-4" viewBox="0 0 20 20" fill="currentColor"><path d="M10 12a2 2 0 100-4 2 2 0 000 4z"/><path fill-rule="evenodd" d="M.458 10C1.732 5.943 5.522 3 10 3s8.268 2.943 9.542 7c-1.274 4.057-5.064 7-9.542 7S1.732 14.057.458 10zM14 10a4 4 0 11-8 0 4 4 0 018 0z" clip-rule="evenodd"/></svg>
-              <svg v-else class="w-4 h-4" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M3.707 2.293a1 1 0 00-1.414 1.414l14 14a1 1 0 001.414-1.414l-1.473-1.473A10.014 10.014 0 0019.542 10C18.268 5.943 14.478 3 10 3a9.958 9.958 0 00-4.512 1.074L3.707 2.293zm4.261 4.26l1.514 1.515a2.003 2.003 0 012.45 2.45l1.514 1.514a4 4 0 00-5.478-5.478z" clip-rule="evenodd"/><path d="M12.454 16.697L9.75 13.992a4 4 0 01-3.742-3.741L2.335 6.578A9.98 9.98 0 00.458 10c1.274 4.057 5.065 7 9.542 7 .847 0 1.669-.105 2.454-.303z"/></svg>
-            </button>
-          </div>
-          <p class="form-hint">
-            從 Dify Web UI (http://localhost:82) 創建應用後獲取
-          </p>
+    <!-- ==================== Tab: 連線管理 ==================== -->
+    <div v-show="!loading && activeTab === 'connections'" class="settings-card">
+      <div class="section-header">
+        <h2 class="section-title">連線管理</h2>
+        <div class="section-actions">
+          <button class="btn btn-test" @click="detectServices" :disabled="detecting">
+            {{ detecting ? '偵測中...' : '自動偵測' }}
+          </button>
+          <button class="btn btn-primary" @click="openConnDialog()">
+            新增連線
+          </button>
         </div>
       </div>
+      <p class="section-desc">
+        管理所有服務連線。Key 和 URL 完整顯示，不做遮罩。可自行新增、編輯、刪除任何連線。
+      </p>
 
-      <!-- 分隔線 -->
-      <div class="divider"></div>
-
-      <!-- RAGFlow 配置區塊 -->
-      <div class="config-section">
-        <div class="section-header">
-          <h2 class="section-title">
-            <span class="section-icon">📚</span>
-            RAGFlow 配置
-          </h2>
-          <div class="section-actions">
-            <span class="section-badge">知識檢索服務</span>
-            <a href="http://localhost:81" target="_blank" class="manage-link">
-              <span class="link-icon">🔗</span>
-              管理介面
-            </a>
+      <!-- 自動偵測結果面板 -->
+      <transition name="slide">
+        <div v-if="detectResults.length > 0" class="detect-panel">
+          <div class="detect-header">
+            <h3>偵測結果</h3>
+            <button class="btn-close" @click="detectResults = []" title="關閉">✕</button>
           </div>
-        </div>
-
-        <!-- RAGFlow API URL -->
-        <div class="form-group">
-          <label class="form-label">
-            API URL
-            <span class="label-badge">可編輯</span>
-          </label>
-          <input
-            v-model="config.ragflow_api_url"
-            type="text"
-            class="form-input"
-            placeholder="http://localhost:9380/api/v1"
-            @input="hasChanges = true"
-          />
-          <p class="form-hint">
-            RAGFlow 服務的 API 端點（例如：http://localhost:9380/api/v1）
-          </p>
-        </div>
-
-        <!-- RAGFlow API Key -->
-        <div class="form-group">
-          <label class="form-label">
-            API Key
-            <span class="label-badge required">必填</span>
-          </label>
-          <div class="input-with-toggle">
-            <input
-              v-model="config.ragflow_key"
-              :type="showRagflowKey ? 'text' : 'password'"
-              class="form-input"
-              placeholder="ragflow-xxxxxxxxxxxxxxxx"
-              @input="hasChanges = true"
-            />
-            <button 
-              type="button" 
-              class="toggle-password-btn"
-              @click="showRagflowKey = !showRagflowKey"
-              :title="showRagflowKey ? '隱藏' : '顯示'"
+          <div class="detect-list">
+            <div
+              v-for="(result, idx) in detectResults"
+              :key="idx"
+              class="detect-item"
+              :class="{ available: result.available === true, unavailable: result.available === false, suggested: result.suggested }"
             >
-              <svg v-if="showRagflowKey" class="w-4 h-4" viewBox="0 0 20 20" fill="currentColor"><path d="M10 12a2 2 0 100-4 2 2 0 000 4z"/><path fill-rule="evenodd" d="M.458 10C1.732 5.943 5.522 3 10 3s8.268 2.943 9.542 7c-1.274 4.057-5.064 7-9.542 7S1.732 14.057.458 10zM14 10a4 4 0 11-8 0 4 4 0 018 0z" clip-rule="evenodd"/></svg>
-              <svg v-else class="w-4 h-4" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M3.707 2.293a1 1 0 00-1.414 1.414l14 14a1 1 0 001.414-1.414l-1.473-1.473A10.014 10.014 0 0019.542 10C18.268 5.943 14.478 3 10 3a9.958 9.958 0 00-4.512 1.074L3.707 2.293zm4.261 4.26l1.514 1.515a2.003 2.003 0 012.45 2.45l1.514 1.514a4 4 0 00-5.478-5.478z" clip-rule="evenodd"/><path d="M12.454 16.697L9.75 13.992a4 4 0 01-3.742-3.741L2.335 6.578A9.98 9.98 0 00.458 10c1.274 4.057 5.065 7 9.542 7 .847 0 1.669-.105 2.454-.303z"/></svg>
-            </button>
+              <div class="detect-row">
+                <span class="detect-dot" :class="result.available === true ? 'green' : result.available === false ? 'red' : 'gray'">●</span>
+                <span class="detect-name">{{ result.name }}</span>
+                <span class="detect-type-chip">{{ result.type }}</span>
+              </div>
+              <div class="detect-url">{{ result.url }}</div>
+              <div class="detect-info" v-if="result.info">{{ result.info }}</div>
+              <div class="detect-actions">
+                <button
+                  v-if="result.available !== false && !isUrlConfigured(result.url)"
+                  class="btn btn-sm btn-primary"
+                  @click="addFromDetect(result)"
+                >
+                  加入
+                </button>
+                <span v-else-if="isUrlConfigured(result.url)" class="detect-badge existing">已配置</span>
+                <span v-else class="detect-badge offline">不可用</span>
+              </div>
+            </div>
           </div>
-          <p class="form-hint">
-            從 RAGFlow Web UI (http://localhost:81) 設定頁 → API Token 獲取
-          </p>
         </div>
+      </transition>
+
+      <!-- 空狀態 -->
+      <div v-if="connections.length === 0 && detectResults.length === 0" class="empty-state">
+        <p class="empty-title">尚無連線配置</p>
+        <p class="empty-hint">點擊「自動偵測」探索可用服務，或點擊「新增連線」手動添加</p>
       </div>
 
-      <!-- 操作按鈕 -->
-      <div class="form-actions">
-        <button 
-          class="btn btn-test"
-          @click="testConnection"
-          :disabled="testing"
+      <!-- 連線卡片列表 -->
+      <div v-if="connections.length > 0" class="conn-list">
+        <div
+          v-for="conn in connections"
+          :key="conn.id"
+          class="conn-card"
+          :class="{ disabled: !conn.enabled }"
         >
-          <span v-if="testing" class="btn-spinner">⏳</span>
-          <span v-else class="btn-icon">🔍</span>
-          {{ testing ? '測試中...' : '測試連接' }}
-        </button>
-        <button 
-          class="btn btn-secondary"
-          @click="loadConfig"
-          :disabled="saving"
-        >
-          <span class="btn-icon">🔄</span>
-          重新載入
-        </button>
-        <button 
-          class="btn btn-primary"
-          @click="saveConfig"
-          :disabled="saving || !hasChanges"
-        >
-          <span v-if="saving" class="btn-spinner">⏳</span>
-          <span v-else class="btn-icon">💾</span>
-          {{ saving ? '儲存中...' : '儲存設定' }}
-        </button>
-      </div>
+          <div class="conn-top">
+            <div class="conn-identity">
+              <span class="conn-type-badge" :class="conn.type">{{ typeLetter(conn.type) }}</span>
+              <span class="conn-name">{{ conn.name }}</span>
+              <span class="conn-type-chip">{{ conn.type }}</span>
+            </div>
+            <div class="conn-badges">
+              <span class="conn-status-badge" :class="conn.enabled ? 'active' : 'inactive'">
+                {{ conn.enabled ? '● 已啟用' : '○ 已停用' }}
+              </span>
+              <span
+                v-if="conn._testStatus"
+                class="conn-test-status"
+                :class="conn._testStatus"
+              >
+                {{ conn._testStatus === 'ok' ? '正常' : conn._testStatus === 'testing' ? '測試中' : conn._testStatus === 'warning' ? '警告' : '異常' }}
+              </span>
+            </div>
+          </div>
 
-      <!-- 連接測試結果 -->
-      <div v-if="testResult" class="test-result-box">
-        <h4>連接測試結果</h4>
-        
-        <!-- Dify 測試結果 -->
-        <div class="service-test-result">
-          <div class="service-header">
-            <span class="service-icon">🤖</span>
-            <span class="service-name">Dify</span>
-            <span 
-              class="status-badge" 
-              :class="testResult.dify.status"
-            >
-              {{ testResult.dify.status === 'ok' ? '✅ 正常' : testResult.dify.status === 'warning' ? '⚠ 警告' : '❌ 錯誤' }}
-            </span>
+          <div class="conn-body">
+            <div class="conn-field">
+              <span class="conn-field-label">URL</span>
+              <span class="conn-field-value mono">{{ conn.url }}</span>
+            </div>
+            <div class="conn-field" v-if="needsApiKey(conn.type)">
+              <span class="conn-field-label">Key</span>
+              <span class="conn-field-value mono">{{ getDisplayKey(conn) || '(未設定)' }}</span>
+              <span v-if="!conn.remember_key" class="conn-field-tag warn">瀏覽器保存</span>
+            </div>
+            <div v-if="conn.note" class="conn-note">{{ conn.note }}</div>
+            <div v-if="conn._testMessage" class="conn-test-msg" :class="conn._testStatus">
+              {{ conn._testMessage }}
+            </div>
           </div>
-          <div class="service-details">
-            <p><strong>URL:</strong> {{ testResult.dify.url }}</p>
-            <p><strong>狀態:</strong> {{ testResult.dify.message }}</p>
-            <p><strong>API Key:</strong> {{ testResult.dify.api_key_configured ? '已配置' : '未配置' }}</p>
-          </div>
-        </div>
 
-        <!-- RAGFlow 測試結果 -->
-        <div class="service-test-result">
-          <div class="service-header">
-            <span class="service-icon">📚</span>
-            <span class="service-name">RAGFlow</span>
-            <span 
-              class="status-badge" 
-              :class="testResult.ragflow.status"
-            >
-              {{ testResult.ragflow.status === 'ok' ? '✅ 正常' : testResult.ragflow.status === 'warning' ? '⚠ 警告' : '❌ 錯誤' }}
-            </span>
-          </div>
-          <div class="service-details">
-            <p><strong>URL:</strong> {{ testResult.ragflow.url }}</p>
-            <p><strong>狀態:</strong> {{ testResult.ragflow.message }}</p>
-            <p><strong>API Key:</strong> {{ testResult.ragflow.api_key_configured ? '已配置' : '未配置' }}</p>
+          <div class="conn-actions">
+            <button
+              class="action-btn test"
+              @click="testSingleConnection(conn)"
+              :disabled="conn._testStatus === 'testing'"
+              title="測試連線"
+            ><svg viewBox="0 0 20 20" fill="currentColor" class="action-svg"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/></svg>測試</button>
+            <button class="action-btn edit" @click="openConnDialog(conn)" title="編輯"><svg viewBox="0 0 20 20" fill="currentColor" class="action-svg"><path d="M13.586 3.586a2 2 0 112.828 2.828l-.793.793-2.828-2.828.793-.793zM11.379 5.793L3 14.172V17h2.828l8.38-8.379-2.83-2.828z"/></svg>編輯</button>
+            <button class="action-btn delete" @click="deleteConnection(conn.id)" title="刪除"><svg viewBox="0 0 20 20" fill="currentColor" class="action-svg"><path fill-rule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm5-1a1 1 0 00-1 1v6a1 1 0 102 0V8a1 1 0 00-1-1z" clip-rule="evenodd"/></svg>刪除</button>
           </div>
         </div>
       </div>
 
-      <!-- 提示訊息 -->
+      <!-- 提示框 -->
       <div class="info-box">
-        <div class="info-icon">💡</div>
         <div class="info-content">
-          <h4>重要提示</h4>
+          <h4>使用提示</h4>
           <ul>
-            <li>所有配置將保存在 <code>C:/BruV_Data/config.json</code> 文件中</li>
-            <li>修改配置後將立即生效，無需重啟後端服務</li>
-            <li>配置優先級：config.json > 環境變數 > 默認值</li>
-            <li>請妥善保管 API Keys，不要分享給他人</li>
+            <li>配置保存在 <code>C:/BruV_Data/config.json</code>，修改立即生效</li>
+            <li>各類型第一個啟用的連線會自動同步為系統預設連線</li>
+            <li>選擇「不記住 Key」時，Key 僅保存在瀏覽器，不寫入伺服器磁碟</li>
+            <li>Docker 容器間建議使用 <code>ollama:11434</code> 或 <code>host.docker.internal:11434</code></li>
           </ul>
         </div>
       </div>
     </div>
 
-    <!-- ==================== 使用者管理區塊 ==================== -->
-    <div class="settings-card" style="margin-top: 24px;">
+    <!-- ==================== Tab: 使用者管理 ==================== -->
+    <div v-show="!loading && activeTab === 'users'" class="settings-card">
       <div class="config-section">
         <div class="section-header">
-          <h2 class="section-title">
-            <span class="section-icon">👥</span>
-            使用者管理
-          </h2>
+          <h2 class="section-title">使用者管理</h2>
           <button class="btn btn-primary" style="flex:0;white-space:nowrap;padding:10px 20px;" @click="openUserDialog()">
-            <span class="btn-icon">➕</span>
             新增使用者
           </button>
         </div>
-        <p style="color:#9ca3af;font-size:14px;margin-bottom:20px;">每位使用者可設定獨立的密碼與 Dify API Key，登入後自動使用其專屬 Key 對話。</p>
+        <p style="color:#9ca3af;font-size:14px;margin-bottom:20px;">
+          每位使用者可設定獨立的密碼與 Dify API Key，登入後自動使用其專屬 Key 對話。
+        </p>
 
-        <!-- 使用者列表 -->
         <div v-if="users.length === 0" style="text-align:center;padding:32px;color:#6b7280;">
           <p>尚無使用者，請點擊「新增使用者」</p>
         </div>
@@ -268,12 +182,8 @@
             </thead>
             <tbody>
               <tr v-for="u in users" :key="u.user">
-                <td>
-                  <span class="user-name">{{ u.user }}</span>
-                </td>
-                <td>
-                  <span class="role-badge" :class="u.role">{{ u.role }}</span>
-                </td>
+                <td><span class="user-name">{{ u.user }}</span></td>
+                <td><span class="role-badge" :class="u.role">{{ u.role }}</span></td>
                 <td>
                   <span v-if="u.has_dify_key" class="key-badge has-key">{{ u.dify_key_preview }}</span>
                   <span v-else class="key-badge no-key">未設定（用全域）</span>
@@ -281,8 +191,8 @@
                 <td style="color:#9ca3af;font-size:13px;">{{ formatDate(u.created_at) }}</td>
                 <td>
                   <div style="display:flex;gap:6px;">
-                    <button class="action-btn edit" @click="openUserDialog(u)" title="編輯">✏️</button>
-                    <button class="action-btn delete" @click="deleteUser(u.user)" :disabled="u.user === 'admin'" title="刪除">🗑️</button>
+                    <button class="action-btn edit" @click="openUserDialog(u)" title="編輯"><svg viewBox="0 0 20 20" fill="currentColor" class="action-svg"><path d="M13.586 3.586a2 2 0 112.828 2.828l-.793.793-2.828-2.828.793-.793zM11.379 5.793L3 14.172V17h2.828l8.38-8.379-2.83-2.828z"/></svg>編輯</button>
+                    <button class="action-btn delete" @click="deleteUser(u.user)" :disabled="u.user === 'admin'" title="刪除"><svg viewBox="0 0 20 20" fill="currentColor" class="action-svg"><path fill-rule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm5-1a1 1 0 00-1 1v6a1 1 0 102 0V8a1 1 0 00-1-1z" clip-rule="evenodd"/></svg>刪除</button>
                   </div>
                 </td>
               </tr>
@@ -292,12 +202,126 @@
       </div>
     </div>
 
-    <!-- ==================== 新增/編輯使用者 Dialog ==================== -->
+    <!-- ==================== 連線 Dialog ==================== -->
+    <transition name="modal">
+      <div v-if="connDialog.show" class="modal-overlay" @click.self="connDialog.show = false">
+        <div class="modal-card modal-wide" @click.stop>
+          <h3 class="modal-title">{{ connDialog.isEdit ? '編輯連線' : '新增連線' }}</h3>
+
+          <div class="form-group">
+            <label class="form-label">連線名稱</label>
+            <input v-model="connDialog.name" type="text" class="form-input" placeholder="例：Dify AI 服務" />
+          </div>
+
+          <div class="form-group">
+            <label class="form-label">服務類型</label>
+            <select v-model="connDialog.type" class="form-input" @change="onTypeChange">
+              <option value="dify">Dify — AI 對話</option>
+              <option value="ragflow">RAGFlow — 知識檢索</option>
+              <option value="ollama">Ollama — LLM 引擎</option>
+              <option value="openai">OpenAI — 遠端 LLM</option>
+              <option value="custom">自訂服務</option>
+            </select>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label">
+              URL
+              <span v-if="suggestedUrls.length" class="label-badge clickable" @click.stop="showUrlSuggestions = !showUrlSuggestions">
+                ▼ {{ suggestedUrls.length }} 個建議
+              </span>
+            </label>
+            <input
+              v-model="connDialog.url"
+              type="text"
+              class="form-input mono"
+              :placeholder="urlPlaceholder"
+              @focus.stop="showUrlSuggestions = true"
+            />
+            <!-- URL 建議下拉選單 -->
+            <transition name="dropdown">
+              <div v-if="showUrlSuggestions && suggestedUrls.length" class="url-suggestions" @click.stop>
+                <div
+                  v-for="s in suggestedUrls"
+                  :key="s.url"
+                  class="url-suggestion-item"
+                  @click="selectUrl(s)"
+                >
+                  <span class="suggestion-dot" :class="s.available === true ? 'green' : s.available === false ? 'red' : 'gray'">●</span>
+                  <div class="suggestion-info">
+                    <div class="suggestion-url">{{ s.url }}</div>
+                    <div class="suggestion-note">{{ s.note }}</div>
+                  </div>
+                </div>
+              </div>
+            </transition>
+            <p class="form-hint">{{ typeHint }}</p>
+          </div>
+
+          <div class="form-group" v-if="needsApiKey(connDialog.type)">
+            <label class="form-label">
+              API Key
+              <span class="label-badge">完整顯示</span>
+            </label>
+            <input
+              v-model="connDialog.api_key"
+              type="text"
+              class="form-input mono"
+              placeholder="完整輸入 API Key，不做遮罩"
+            />
+            <div class="remember-key-row">
+              <label class="checkbox-label">
+                <input type="checkbox" v-model="connDialog.remember_key" />
+                <span>記住此 Key</span>
+                <span class="remember-hint">
+                  {{ connDialog.remember_key ? '（儲存至伺服器 config.json）' : '（僅保存在瀏覽器，不寫入磁碟）' }}
+                </span>
+              </label>
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label">備註</label>
+            <textarea
+              v-model="connDialog.note"
+              class="form-input"
+              rows="2"
+              placeholder="選填：描述此連線的用途、版本等"
+            ></textarea>
+          </div>
+
+          <div class="form-group">
+            <label class="checkbox-label">
+              <input type="checkbox" v-model="connDialog.enabled" />
+              <span>啟用此連線</span>
+            </label>
+          </div>
+
+          <!-- Dialog 內測試結果 -->
+          <div v-if="connDialogTestResult" class="test-result-inline" :class="connDialogTestResult.status">
+            <span class="test-result-dot" :class="connDialogTestResult.status"></span>
+            {{ connDialogTestResult.message }}
+          </div>
+
+          <div class="form-actions" style="border-top:none;margin-top:20px;padding-top:0;">
+            <button class="btn btn-secondary" @click="connDialog.show = false">取消</button>
+            <button class="btn btn-test" @click="testDialogConnection" :disabled="connDialogTesting || !connDialog.url">
+              {{ connDialogTesting ? '測試中...' : '測試連線' }}
+            </button>
+            <button class="btn btn-primary" @click="saveConnection" :disabled="connSaving || !connDialog.name || !connDialog.url">
+              {{ connSaving ? '儲存中...' : '儲存' }}
+            </button>
+          </div>
+        </div>
+      </div>
+    </transition>
+
+    <!-- ==================== 使用者 Dialog ==================== -->
     <transition name="modal">
       <div v-if="userDialog.show" class="modal-overlay" @click.self="userDialog.show = false">
         <div class="modal-card">
           <h3 class="modal-title">{{ userDialog.isEdit ? '編輯使用者' : '新增使用者' }}</h3>
-          
+
           <div class="form-group">
             <label class="form-label">使用者名稱</label>
             <input
@@ -358,7 +382,7 @@
     <!-- Toast 通知 -->
     <transition name="toast">
       <div v-if="toast.show" class="toast" :class="toast.type">
-        <span class="toast-icon">{{ toast.type === 'success' ? '✅' : '❌' }}</span>
+        <span class="toast-dot" :class="toast.type"></span>
         <span class="toast-message">{{ toast.message }}</span>
       </div>
     </transition>
@@ -366,161 +390,330 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue';
+import { ref, computed, onMounted, reactive } from 'vue';
 import { apiGet, apiPost, authFetch } from '../services/apiClient';
 
-// 狀態管理
+// ==================== 共用狀態 ====================
 const loading = ref(true);
-const saving = ref(false);
-const testing = ref(false);
-const hasChanges = ref(false);
+const activeTab = ref('connections');
 
-// 顯示/隱藏密碼狀態
-const showDifyKey = ref(false);
-const showRagflowKey = ref(false);
-
-// 表單數據
-const config = ref({
-  dify_key: '',
-  ragflow_key: '',
-  dify_api_url: '',
-  ragflow_api_url: ''
-});
-
-// 測試結果
-const testResult = ref(null);
-
-// Toast 通知
-const toast = ref({
-  show: false,
-  type: 'success',
-  message: ''
-});
-
-// 顯示 Toast
+// Toast
+const toast = ref({ show: false, type: 'success', message: '' });
 const showToast = (type, message) => {
   toast.value = { show: true, type, message };
-  setTimeout(() => {
-    toast.value.show = false;
-  }, 5000);
+  setTimeout(() => { toast.value.show = false; }, 5000);
 };
 
-// 載入配置
-const loadConfig = async () => {
-  loading.value = true;
-  try {
-    const data = await apiGet('/api/system/config');
-    
-    if (data.success && data.config) {
-      config.value = {
-        dify_key: data.config.dify_key || '',
-        ragflow_key: data.config.ragflow_key || '',
-        dify_api_url: data.config.dify_api_url || '',
-        ragflow_api_url: data.config.ragflow_api_url || ''
-      };
-      console.log('配置載入成功');
-    }
-  } catch (error) {
-    console.error('載入配置失敗:', error);
-    showToast('error', `載入配置失敗: ${error.message}`);
-  } finally {
-    loading.value = false;
-  }
+// ==================== 連線管理 ====================
+const connections = ref([]);
+const detecting = ref(false);
+const detectResults = ref([]);
+const showUrlSuggestions = ref(false);
+
+// localStorage key prefix for non-remembered keys
+const LOCAL_KEY_PREFIX = 'bruv_conn_key_';
+
+const getLocalKey = (connId) => localStorage.getItem(LOCAL_KEY_PREFIX + connId) || '';
+const setLocalKey = (connId, key) => {
+  if (key) localStorage.setItem(LOCAL_KEY_PREFIX + connId, key);
+  else localStorage.removeItem(LOCAL_KEY_PREFIX + connId);
 };
 
-// 檢測是否為遮罩後的 API Key（包含連續 ***）
-const isMaskedKey = (key) => key && key.includes('***');
-
-// 儲存配置
-const saveConfig = async () => {
-  saving.value = true;
+// 載入連線
+const loadConnections = async () => {
   try {
-    const payload = {};
-    // 跳過遮罩 key（代表使用者未修改，不應回傳覆蓋真實金鑰）
-    if (config.value.dify_key && !isMaskedKey(config.value.dify_key)) payload.dify_key = config.value.dify_key;
-    if (config.value.ragflow_key && !isMaskedKey(config.value.ragflow_key)) payload.ragflow_key = config.value.ragflow_key;
-    if (config.value.dify_api_url) payload.dify_api_url = config.value.dify_api_url;
-    if (config.value.ragflow_api_url) payload.ragflow_api_url = config.value.ragflow_api_url;
-    
-    if (Object.keys(payload).length === 0) {
-      showToast('error', '請至少填寫一個設定項目');
-      saving.value = false;
-      return;
-    }
-    
-    const data = await apiPost('/api/system/config', payload);
-    
+    const data = await apiGet('/api/system/connections');
     if (data.success) {
-      showToast('success', '✅ 設定已保存到 config.json！修改將立即生效');
-      hasChanges.value = false;
-      await loadConfig();
-    } else {
-      throw new Error(data.message || '更新失敗');
+      connections.value = data.connections.map(c => {
+        // 對於不記住 Key 的連線，從 localStorage 讀取
+        if (!c.remember_key && !c.api_key) {
+          c.api_key = getLocalKey(c.id);
+        }
+        // 添加響應式測試狀態
+        c._testStatus = '';
+        c._testMessage = '';
+        return c;
+      });
     }
-  } catch (error) {
-    console.error('儲存配置失敗:', error);
-    showToast('error', `儲存失敗: ${error.message}`);
-  } finally {
-    saving.value = false;
+  } catch (e) {
+    console.error('載入連線失敗:', e);
+    showToast('error', `載入連線失敗: ${e.message}`);
   }
 };
 
-// 測試連接
-const testConnection = async () => {
-  testing.value = true;
-  testResult.value = null;
-  try {
-    const data = await apiPost('/api/system/test-connection', {});
-    testResult.value = data;
-    if (data.success) {
-      showToast('success', '✅ 所有服務連接正常！');
-    } else {
-      showToast('error', '⚠️ 部分服務連接失敗，請檢查測試結果');
-    }
-  } catch (error) {
-    console.error('測試連接失敗:', error);
-    showToast('error', `測試失敗: ${error.message}`);
-  } finally {
-    testing.value = false;
-  }
+// 類型字母徽章
+const typeLetter = (type) => {
+  const letters = { dify: 'D', ragflow: 'R', ollama: 'O', openai: 'A', custom: 'C' };
+  return letters[type] || '?';
 };
 
-// 組件掛載時載入配置
-onMounted(() => {
-  loadConfig();
-  loadUsers();
+// 是否需要 API Key
+const needsApiKey = (type) => !['ollama'].includes(type);
+
+// 取得顯示用的 Key
+const getDisplayKey = (conn) => {
+  if (conn.api_key) return conn.api_key;
+  if (!conn.remember_key) return getLocalKey(conn.id);
+  return '';
+};
+
+// URL 是否已配置
+const isUrlConfigured = (url) => connections.value.some(c => c.url === url);
+
+// ---- 連線 Dialog ----
+const connDialog = ref({
+  show: false, isEdit: false, editId: '',
+  name: '', type: 'dify', url: '', api_key: '',
+  note: '', remember_key: true, enabled: true,
 });
+const connSaving = ref(false);
+const connDialogTesting = ref(false);
+const connDialogTestResult = ref(null);
+
+const openConnDialog = (conn = null) => {
+  connDialogTestResult.value = null;
+  showUrlSuggestions.value = false;
+  if (conn) {
+    connDialog.value = {
+      show: true, isEdit: true, editId: conn.id,
+      name: conn.name, type: conn.type, url: conn.url,
+      api_key: getDisplayKey(conn),
+      note: conn.note || '', remember_key: conn.remember_key !== false,
+      enabled: conn.enabled !== false,
+    };
+  } else {
+    connDialog.value = {
+      show: true, isEdit: false, editId: '',
+      name: '', type: 'dify', url: '', api_key: '',
+      note: '', remember_key: true, enabled: true,
+    };
+  }
+};
+
+// 從偵測結果快速加入
+const addFromDetect = (result) => {
+  connDialog.value = {
+    show: true, isEdit: false, editId: '',
+    name: result.name, type: result.type, url: result.url,
+    api_key: result.existing_key || '',
+    note: result.note || '', remember_key: true, enabled: true,
+  };
+  connDialogTestResult.value = null;
+  showUrlSuggestions.value = false;
+};
+
+// 類型切換時更新 URL placeholder
+const onTypeChange = () => {
+  connDialogTestResult.value = null;
+};
+
+const urlPlaceholder = computed(() => {
+  const p = {
+    dify: 'http://localhost:82/v1',
+    ragflow: 'http://localhost:9380/api/v1',
+    ollama: 'http://localhost:11434',
+    openai: 'https://api.openai.com/v1',
+    custom: 'http://...',
+  };
+  return p[connDialog.value.type] || 'http://...';
+});
+
+const typeHint = computed(() => {
+  const h = {
+    dify: 'Dify API 端點，通常為 http://localhost:82/v1',
+    ragflow: 'RAGFlow API 端點，通常為 http://localhost:9380/api/v1',
+    ollama: 'Ollama 服務位址。Docker 容器可用 http://ollama:11434 或 http://host.docker.internal:11434',
+    openai: 'OpenAI 相容 API（如 https://api.openai.com/v1）',
+    custom: '自訂服務的完整 URL',
+  };
+  return h[connDialog.value.type] || '';
+});
+
+// URL 建議清單（依類型 + 偵測結果）
+const suggestedUrls = computed(() => {
+  const type = connDialog.value.type;
+  const defaults = {
+    dify: [
+      { url: 'http://localhost:82/v1', note: '本地 Dify (Port 82)', available: null },
+      { url: 'http://localhost:5001/v1', note: 'Dify 備用 (Port 5001)', available: null },
+    ],
+    ragflow: [
+      { url: 'http://localhost:9380/api/v1', note: '本地 RAGFlow (Port 9380)', available: null },
+      { url: 'http://localhost:81/api/v1', note: 'RAGFlow Nginx (Port 81)', available: null },
+    ],
+    ollama: [
+      { url: 'http://localhost:11434', note: '本地 Ollama', available: null },
+      { url: 'http://ollama:11434', note: 'Docker 容器 DNS', available: null },
+      { url: 'http://host.docker.internal:11434', note: 'Docker → 主機', available: null },
+    ],
+    openai: [
+      { url: 'https://api.openai.com/v1', note: 'OpenAI 官方', available: null },
+    ],
+    custom: [],
+  };
+
+  const suggestions = [...(defaults[type] || [])];
+
+  // 合併偵測結果
+  for (const r of detectResults.value) {
+    if (r.type === type) {
+      const existing = suggestions.find(s => s.url === r.url);
+      if (existing) {
+        existing.available = r.available;
+        existing.note = r.info || existing.note;
+      } else {
+        suggestions.push({ url: r.url, note: r.info || r.note, available: r.available });
+      }
+    }
+  }
+
+  return suggestions;
+});
+
+const selectUrl = (suggestion) => {
+  connDialog.value.url = suggestion.url;
+  showUrlSuggestions.value = false;
+};
+
+// 儲存連線
+const saveConnection = async () => {
+  connSaving.value = true;
+  try {
+    const payload = {
+      name: connDialog.value.name,
+      type: connDialog.value.type,
+      url: connDialog.value.url,
+      api_key: connDialog.value.api_key,
+      note: connDialog.value.note,
+      remember_key: connDialog.value.remember_key,
+      enabled: connDialog.value.enabled,
+    };
+
+    let data;
+    if (connDialog.value.isEdit) {
+      const resp = await authFetch(`/api/system/connections/${connDialog.value.editId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      data = await resp.json();
+      if (!resp.ok) throw new Error(data.detail || '更新失敗');
+    } else {
+      data = await apiPost('/api/system/connections', payload);
+    }
+
+    if (data.success) {
+      // 處理不記住 Key 的邏輯
+      const connId = data.connection?.id || connDialog.value.editId;
+      if (!connDialog.value.remember_key && connDialog.value.api_key) {
+        setLocalKey(connId, connDialog.value.api_key);
+      } else {
+        // 記住 Key 時清除 localStorage 的備份
+        localStorage.removeItem(LOCAL_KEY_PREFIX + connId);
+      }
+
+      showToast('success', data.message || '連線已儲存');
+      connDialog.value.show = false;
+      await loadConnections();
+    } else {
+      throw new Error(data.detail || data.message || '儲存失敗');
+    }
+  } catch (e) {
+    showToast('error', e.message);
+  } finally {
+    connSaving.value = false;
+  }
+};
+
+// 刪除連線
+const deleteConnection = async (connId) => {
+  if (!confirm('確定要刪除此連線？此操作無法復原。')) return;
+  try {
+    const resp = await authFetch(`/api/system/connections/${connId}`, { method: 'DELETE' });
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.detail || '刪除失敗');
+    localStorage.removeItem(LOCAL_KEY_PREFIX + connId);
+    showToast('success', '連線已刪除');
+    await loadConnections();
+  } catch (e) {
+    showToast('error', e.message);
+  }
+};
+
+// 測試單個連線
+const testSingleConnection = async (conn) => {
+  conn._testStatus = 'testing';
+  conn._testMessage = '測試中...';
+  try {
+    const apiKey = getDisplayKey(conn);
+    const data = await apiPost('/api/system/test-connection-inline', {
+      type: conn.type, url: conn.url, api_key: apiKey,
+    });
+    if (data.success) {
+      conn._testStatus = data.result.status;
+      conn._testMessage = data.result.message;
+    }
+  } catch (e) {
+    conn._testStatus = 'error';
+    conn._testMessage = `測試失敗: ${e.message}`;
+  }
+};
+
+// Dialog 內測試
+const testDialogConnection = async () => {
+  connDialogTesting.value = true;
+  connDialogTestResult.value = null;
+  try {
+    const data = await apiPost('/api/system/test-connection-inline', {
+      type: connDialog.value.type,
+      url: connDialog.value.url,
+      api_key: connDialog.value.api_key,
+    });
+    if (data.success) {
+      connDialogTestResult.value = data.result;
+    }
+  } catch (e) {
+    connDialogTestResult.value = { status: 'error', message: `測試失敗: ${e.message}` };
+  } finally {
+    connDialogTesting.value = false;
+  }
+};
+
+// 自動偵測
+const detectServices = async () => {
+  detecting.value = true;
+  detectResults.value = [];
+  try {
+    const data = await apiPost('/api/system/detect-services', {});
+    if (data.success) {
+      detectResults.value = data.services;
+      showToast('success', `偵測完成，發現 ${data.services.filter(s => s.available).length} 個可用服務`);
+    }
+  } catch (e) {
+    showToast('error', `偵測失敗: ${e.message}`);
+  } finally {
+    detecting.value = false;
+  }
+};
 
 // ==================== 使用者管理 ====================
 const users = ref([]);
 const userSaving = ref(false);
 const userDialog = ref({
-  show: false,
-  isEdit: false,
-  username: '',
-  password: '',
-  role: 'user',
-  dify_api_key: ''
+  show: false, isEdit: false,
+  username: '', password: '', role: 'user', dify_api_key: '',
 });
 
 const openUserDialog = (user = null) => {
   if (user) {
     userDialog.value = {
-      show: true,
-      isEdit: true,
-      username: user.user,
-      password: '',
-      role: user.role,
-      dify_api_key: ''
+      show: true, isEdit: true,
+      username: user.user, password: '', role: user.role, dify_api_key: '',
     };
   } else {
     userDialog.value = {
-      show: true,
-      isEdit: false,
-      username: '',
-      password: '',
-      role: 'user',
-      dify_api_key: ''
+      show: true, isEdit: false,
+      username: '', password: '', role: 'user', dify_api_key: '',
     };
   }
 };
@@ -528,9 +721,7 @@ const openUserDialog = (user = null) => {
 const loadUsers = async () => {
   try {
     const data = await apiGet('/api/auth/users');
-    if (data.success) {
-      users.value = data.users;
-    }
+    if (data.success) users.value = data.users;
   } catch (e) {
     console.error('載入使用者失敗:', e);
   }
@@ -547,11 +738,11 @@ const saveUser = async () => {
       const resp = await authFetch(`/api/auth/users/${encodeURIComponent(userDialog.value.username)}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
+        body: JSON.stringify(payload),
       });
       const data = await resp.json();
       if (!resp.ok) throw new Error(data.detail || '更新失敗');
-      showToast('success', `✅ 使用者 '${userDialog.value.username}' 已更新`);
+      showToast('success', `使用者 '${userDialog.value.username}' 已更新`);
     } else {
       if (!userDialog.value.username || !userDialog.value.password) {
         showToast('error', '使用者名稱與密碼不可為空');
@@ -562,10 +753,10 @@ const saveUser = async () => {
         username: userDialog.value.username,
         password: userDialog.value.password,
         role: userDialog.value.role,
-        dify_api_key: userDialog.value.dify_api_key
+        dify_api_key: userDialog.value.dify_api_key,
       });
       if (!data.success) throw new Error(data.detail || '建立失敗');
-      showToast('success', `✅ 使用者 '${userDialog.value.username}' 已建立`);
+      showToast('success', `使用者 '${userDialog.value.username}' 已建立`);
     }
     userDialog.value.show = false;
     await loadUsers();
@@ -582,7 +773,7 @@ const deleteUser = async (username) => {
     const resp = await authFetch(`/api/auth/users/${encodeURIComponent(username)}`, { method: 'DELETE' });
     const data = await resp.json();
     if (!resp.ok) throw new Error(data.detail || '刪除失敗');
-    showToast('success', `✅ 使用者 '${username}' 已刪除`);
+    showToast('success', `使用者 '${username}' 已刪除`);
     await loadUsers();
   } catch (e) {
     showToast('error', e.message);
@@ -593,11 +784,18 @@ const formatDate = (dateStr) => {
   if (!dateStr || dateStr === '-') return '-';
   return new Date(dateStr).toLocaleDateString('zh-TW');
 };
+
+// ==================== 初始化 ====================
+onMounted(async () => {
+  loading.value = true;
+  await Promise.all([loadConnections(), loadUsers()]);
+  loading.value = false;
+});
 </script>
 
 <style scoped>
 .settings-container {
-  max-width: 800px;
+  max-width: 860px;
   margin: 0 auto;
   padding: 32px 24px;
   height: 100vh;
@@ -606,693 +804,409 @@ const formatDate = (dateStr) => {
   background: var(--bg-main);
 }
 
-/* 自訂滾動條樣式 */
-.settings-container::-webkit-scrollbar {
-  width: 6px;
-}
-
-.settings-container::-webkit-scrollbar-track {
-  background: transparent;
-}
-
-.settings-container::-webkit-scrollbar-thumb {
-  background: rgba(148, 163, 184, 0.15);
-  border-radius: 3px;
-}
-
-.settings-container::-webkit-scrollbar-thumb:hover {
-  background: rgba(148, 163, 184, 0.25);
-}
+.settings-container::-webkit-scrollbar { width: 6px; }
+.settings-container::-webkit-scrollbar-track { background: transparent; }
+.settings-container::-webkit-scrollbar-thumb { background: rgba(148,163,184,0.15); border-radius: 3px; }
+.settings-container::-webkit-scrollbar-thumb:hover { background: rgba(148,163,184,0.25); }
 
 /* 頁面標題 */
-.page-header {
-  margin-bottom: 32px;
-}
-
+.page-header { margin-bottom: 24px; }
 .page-title {
-  font-size: 28px;
-  font-weight: 700;
+  font-size: 24px; font-weight: 700;
   color: var(--text-primary);
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  margin-bottom: 8px;
+  margin: 0 0 6px 0;
 }
+.page-subtitle { font-size: 14px; color: #6b7280; margin: 0; }
 
-.title-icon {
-  font-size: 36px;
+/* 分頁標籤 */
+.tab-bar {
+  display: flex; gap: 4px; margin-bottom: 24px;
+  background: var(--bg-card); border-radius: 12px; padding: 4px;
+  border: 1px solid var(--border-primary);
 }
-
-.page-subtitle {
-  font-size: 16px;
-  color: #6b7280;
-  margin: 0;
+.tab-btn {
+  flex: 1; padding: 10px 16px; border: none; border-radius: 8px;
+  background: transparent; color: var(--text-secondary);
+  font-size: 14px; font-weight: 600; cursor: pointer; transition: all 0.2s;
+  display: flex; align-items: center; justify-content: center; gap: 8px;
+}
+.tab-btn:hover { background: rgba(148,163,184,0.06); color: var(--text-primary); }
+.tab-btn.active {
+  background: var(--primary-blue); color: #fff;
+  box-shadow: 0 2px 8px rgba(59,130,246,0.3);
 }
 
 /* 載入狀態 */
 .loading-state {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  padding: 60px 20px;
-  color: #9ca3af;
+  display: flex; flex-direction: column; align-items: center;
+  justify-content: center; padding: 60px 20px; color: #9ca3af;
 }
-
 .spinner {
-  width: 48px;
-  height: 48px;
-  border: 4px solid rgba(59, 130, 246, 0.2);
-  border-top-color: #3b82f6;
-  border-radius: 50%;
-  animation: spin 1s linear infinite;
-  margin-bottom: 16px;
+  width: 48px; height: 48px;
+  border: 4px solid rgba(59,130,246,0.2); border-top-color: #3b82f6;
+  border-radius: 50%; animation: spin 1s linear infinite; margin-bottom: 16px;
 }
+@keyframes spin { to { transform: rotate(360deg); } }
 
-@keyframes spin {
-  to { transform: rotate(360deg); }
-}
-
-/* 設定卡片 (企業級毛玻璃) */
+/* 設定卡片 */
 .settings-card {
   background: var(--bg-card);
   backdrop-filter: blur(24px) saturate(1.2);
-  -webkit-backdrop-filter: blur(24px) saturate(1.2);
   border: 1px solid var(--border-primary);
-  border-radius: 18px;
-  padding: 32px;
+  border-radius: 18px; padding: 32px;
   box-shadow: var(--shadow-glass);
-}
-
-/* 配置區塊 */
-.config-section {
-  margin-bottom: 32px;
-}
-
-.section-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
   margin-bottom: 24px;
 }
 
+/* 區塊 */
+.config-section { margin-bottom: 32px; }
+.section-header {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: 16px; flex-wrap: wrap; gap: 12px;
+}
 .section-title {
-  font-size: 20px;
-  font-weight: 600;
-  color: var(--text-primary);
-  display: flex;
-  align-items: center;
-  gap: 12px;
+  font-size: 18px; font-weight: 600; color: var(--text-primary);
   margin: 0;
 }
+.section-actions { display: flex; gap: 10px; flex-wrap: wrap; }
+.section-desc { color: #9ca3af; font-size: 14px; margin-bottom: 20px; line-height: 1.6; }
 
-.section-icon {
-  font-size: 24px;
+/* ==================== 偵測面板 ==================== */
+.detect-panel {
+  background: rgba(59,130,246,0.04); border: 1px solid rgba(59,130,246,0.12);
+  border-radius: 14px; padding: 20px; margin-bottom: 24px;
+}
+.detect-header {
+  display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;
+}
+.detect-header h3 { margin: 0; font-size: 16px; color: #60a5fa; font-weight: 600; }
+.btn-close {
+  background: transparent; border: 1px solid rgba(148,163,184,0.15);
+  border-radius: 6px; width: 28px; height: 28px; cursor: pointer;
+  color: var(--text-secondary); font-size: 14px; display: flex;
+  align-items: center; justify-content: center; transition: all 0.2s;
+}
+.btn-close:hover { background: rgba(239,68,68,0.1); color: #f87171; border-color: rgba(239,68,68,0.2); }
+.detect-list { display: flex; flex-direction: column; gap: 10px; }
+.detect-item {
+  background: rgba(11,18,34,0.4); border: 1px solid var(--border-primary);
+  border-radius: 10px; padding: 14px 16px;
+  display: grid; grid-template-columns: 1fr auto; gap: 6px; align-items: center;
+}
+.detect-item.available { border-color: rgba(34,197,94,0.2); }
+.detect-item.unavailable { opacity: 0.5; }
+.detect-item.suggested { border-style: dashed; }
+.detect-row { display: flex; align-items: center; gap: 10px; grid-column: 1; }
+.detect-dot { font-size: 10px; }
+.detect-dot.green { color: #22c55e; }
+.detect-dot.red { color: #ef4444; }
+.detect-dot.gray { color: #6b7280; }
+.detect-name { font-weight: 600; color: var(--text-primary); font-size: 14px; }
+.detect-type-chip {
+  font-size: 11px; padding: 2px 8px; border-radius: 6px;
+  background: rgba(148,163,184,0.08); color: var(--text-tertiary);
+  text-transform: uppercase; font-weight: 600;
+}
+.detect-url { font-family: 'Monaco','Courier New',monospace; font-size: 13px; color: #9ca3af; grid-column: 1; }
+.detect-info { font-size: 13px; color: #6b7280; grid-column: 1; }
+.detect-actions { grid-column: 2; grid-row: 1 / span 3; display: flex; align-items: center; }
+.detect-badge {
+  font-size: 12px; padding: 4px 10px; border-radius: 6px; font-weight: 500;
+}
+.detect-badge.existing { background: rgba(59,130,246,0.08); color: var(--accent-blue); }
+.detect-badge.offline { background: rgba(148,163,184,0.06); color: #6b7280; }
+
+/* ==================== 連線卡片 ==================== */
+.conn-list { display: flex; flex-direction: column; gap: 14px; margin-bottom: 24px; }
+.conn-card {
+  background: rgba(11,18,34,0.4); border: 1px solid var(--border-primary);
+  border-radius: 14px; padding: 20px; transition: all 0.2s;
+}
+.conn-card:hover { border-color: rgba(148,163,184,0.25); }
+.conn-card.disabled { opacity: 0.5; }
+.conn-top {
+  display: flex; justify-content: space-between; align-items: center;
+  margin-bottom: 14px; flex-wrap: wrap; gap: 8px;
+}
+.conn-identity { display: flex; align-items: center; gap: 10px; }
+.conn-type-badge {
+  width: 32px; height: 32px;
+  display: flex; align-items: center; justify-content: center;
+  border-radius: 8px; font-size: 14px; font-weight: 700;
+  color: #fff; flex-shrink: 0; letter-spacing: 0;
+}
+.conn-type-badge.dify { background: #6366f1; }
+.conn-type-badge.ragflow { background: #0ea5e9; }
+.conn-type-badge.ollama { background: #8b5cf6; }
+.conn-type-badge.openai { background: #10b981; }
+.conn-type-badge.custom { background: #64748b; }
+.conn-name { font-size: 15px; font-weight: 600; color: var(--text-primary); }
+.conn-type-chip {
+  font-size: 11px; padding: 2px 8px; border-radius: 6px;
+  background: rgba(148,163,184,0.08); color: var(--text-tertiary);
+  text-transform: uppercase; font-weight: 600; letter-spacing: 0.04em;
+}
+.conn-badges { display: flex; gap: 8px; align-items: center; }
+.conn-status-badge {
+  font-size: 12px; padding: 4px 10px; border-radius: 8px; font-weight: 500;
+}
+.conn-status-badge.active { background: rgba(34,197,94,0.08); color: #4ade80; border: 1px solid rgba(34,197,94,0.15); }
+.conn-status-badge.inactive { background: rgba(148,163,184,0.06); color: #6b7280; border: 1px solid rgba(148,163,184,0.1); }
+.conn-test-status {
+  font-size: 12px; padding: 4px 10px; border-radius: 8px; font-weight: 500;
+}
+.conn-test-status.ok { background: rgba(34,197,94,0.08); color: #22c55e; }
+.conn-test-status.warning { background: rgba(234,179,8,0.08); color: #eab308; }
+.conn-test-status.error { background: rgba(239,68,68,0.08); color: #ef4444; }
+.conn-test-status.testing { background: rgba(59,130,246,0.08); color: #60a5fa; }
+.conn-body { margin-bottom: 14px; }
+.conn-field {
+  display: flex; align-items: center; gap: 10px; margin-bottom: 6px; flex-wrap: wrap;
+}
+.conn-field-label {
+  font-size: 12px; font-weight: 600; color: var(--text-tertiary);
+  min-width: 32px; text-transform: uppercase; letter-spacing: 0.05em;
+}
+.conn-field-value {
+  font-size: 14px; color: #d1d5db; word-break: break-all;
+}
+.conn-field-tag {
+  font-size: 11px; padding: 2px 7px; border-radius: 4px;
+}
+.conn-field-tag.warn { background: rgba(234,179,8,0.08); color: #eab308; }
+.conn-note {
+  margin-top: 8px; font-size: 13px; color: #9ca3af; line-height: 1.5;
+}
+.conn-test-msg {
+  margin-top: 8px; font-size: 13px; padding: 8px 12px; border-radius: 8px;
+}
+.conn-test-msg.ok { background: rgba(34,197,94,0.05); color: #4ade80; }
+.conn-test-msg.warning { background: rgba(234,179,8,0.05); color: #eab308; }
+.conn-test-msg.error { background: rgba(239,68,68,0.05); color: #f87171; }
+.conn-test-msg.testing { background: rgba(59,130,246,0.05); color: #60a5fa; }
+.conn-actions {
+  display: flex; gap: 8px; justify-content: flex-end;
+  border-top: 1px solid var(--border-subtle); padding-top: 14px;
 }
 
-.section-badge {
-  background: rgba(59, 130, 246, 0.12);
-  color: var(--accent-blue);
-  padding: 5px 12px;
-  border-radius: 8px;
-  font-size: 12px;
-  font-weight: 500;
-  border: 1px solid rgba(59, 130, 246, 0.15);
+/* 空狀態 */
+.empty-state {
+  text-align: center; padding: 48px 20px; color: #6b7280;
 }
+.empty-title { font-size: 15px; font-weight: 600; color: var(--text-secondary); margin-bottom: 8px; }
+.empty-hint { font-size: 13px; color: #9ca3af; margin-top: 0; }
 
-.section-actions {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-
-.manage-link {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 7px 14px;
-  background: transparent;
-  border: 1px solid rgba(148, 163, 184, 0.15);
-  border-radius: 8px;
-  color: var(--text-secondary);
-  text-decoration: none;
-  font-size: 13px;
-  font-weight: 500;
-  transition: all 0.2s;
-}
-
-.manage-link:hover {
-  background: rgba(148, 163, 184, 0.06);
-  border-color: rgba(148, 163, 184, 0.25);
-  color: var(--text-primary);
-}
-
-.link-icon {
-  font-size: 16px;
-}
-
-/* 分隔線 */
-.divider {
-  height: 1px;
-  background: var(--border-primary);
-  border: none;
-  margin: 32px 0;
-}
-
-/* 表單組 */
-.form-group {
-  margin-bottom: 24px;
-}
-
+/* ==================== 表單元素 ==================== */
+.form-group { margin-bottom: 20px; }
 .form-label {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 14px;
-  font-weight: 500;
-  color: #e5e7eb;
-  margin-bottom: 8px;
+  display: flex; align-items: center; gap: 8px;
+  font-size: 14px; font-weight: 500; color: #e5e7eb; margin-bottom: 8px;
 }
-
 .label-badge {
-  background: rgba(148, 163, 184, 0.08);
-  color: var(--text-tertiary);
-  padding: 2px 8px;
-  border-radius: 4px;
-  font-size: 11px;
-  font-weight: 500;
+  background: rgba(148,163,184,0.08); color: var(--text-tertiary);
+  padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 500;
 }
-
-.label-badge.required {
-  background: rgba(239, 68, 68, 0.1);
-  color: #f87171;
-}
-
-/* 輸入框 */
+.label-badge.required { background: rgba(239,68,68,0.1); color: #f87171; }
+.label-badge.clickable { cursor: pointer; transition: all 0.2s; }
+.label-badge.clickable:hover { background: rgba(59,130,246,0.12); color: var(--accent-blue); }
 .form-input {
-  width: 100%;
-  padding: 12px 14px;
-  background: var(--bg-input);
-  border: 1px solid var(--border-primary);
-  border-radius: 10px;
-  color: var(--text-primary);
-  font-size: 14px;
-  font-family: 'Inter', 'Monaco', 'Courier New', monospace;
+  width: 100%; padding: 12px 14px;
+  background: var(--bg-input); border: 1px solid var(--border-primary);
+  border-radius: 10px; color: var(--text-primary); font-size: 14px;
   transition: all 0.2s;
 }
-
 .form-input:focus {
-  outline: none;
-  border-color: var(--primary-blue);
-  background: rgba(13, 21, 38, 0.9);
-  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+  outline: none; border-color: var(--primary-blue);
+  background: rgba(13,21,38,0.9); box-shadow: 0 0 0 3px rgba(59,130,246,0.1);
 }
-
-.form-input.readonly {
-  cursor: not-allowed;
-  opacity: 0.7;
-}
-
-.form-input::placeholder {
-  color: #6b7280;
-}
-
-/* 帶切換按鈕的輸入框 */
-.input-with-toggle {
-  position: relative;
-  display: flex;
-  align-items: center;
-}
-
-.input-with-toggle .form-input {
-  padding-right: 50px;
-  flex: 1;
-}
-
-.toggle-password-btn {
-  position: absolute;
-  right: 8px;
-  width: 34px;
-  height: 34px;
-  background: rgba(148, 163, 184, 0.06);
-  border: 1px solid var(--border-primary);
-  border-radius: 7px;
-  cursor: pointer;
-  font-size: 18px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  transition: all 0.2s;
-  color: var(--text-secondary);
-}
-
-.toggle-password-btn:hover {
-  background: rgba(148, 163, 184, 0.12);
-  border-color: rgba(148, 163, 184, 0.2);
-  color: var(--text-primary);
-}
-
-.toggle-password-btn:active {
-  transform: scale(0.95);
-}
-
-/* 表單提示 */
-.form-hint {
-  margin-top: 8px;
-  font-size: 13px;
-  color: #9ca3af;
-}
-
+.form-input::placeholder { color: #6b7280; }
+select.form-input { cursor: pointer; }
+textarea.form-input { resize: vertical; min-height: 60px; font-family: inherit; }
+.mono { font-family: 'Monaco','Courier New',monospace; }
+.form-hint { margin-top: 8px; font-size: 13px; color: #9ca3af; }
 .form-hint code {
-  background: rgba(148, 163, 184, 0.08);
-  padding: 2px 6px;
-  border-radius: 4px;
-  font-family: 'Monaco', 'Courier New', monospace;
-  color: var(--accent-blue);
+  background: rgba(148,163,184,0.08); padding: 2px 6px; border-radius: 4px;
+  font-family: 'Monaco','Courier New',monospace; color: var(--accent-blue);
 }
 
-/* 操作按鈕 */
-.form-actions {
-  display: flex;
-  gap: 12px;
-  margin-top: 32px;
-  padding-top: 24px;
-  border-top: 1px solid var(--border-primary);
+/* Remember Key */
+.remember-key-row { margin-top: 10px; }
+.checkbox-label {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 14px; color: #d1d5db; cursor: pointer;
 }
-
-.btn {
-  flex: 1;
-  padding: 12px 20px;
-  border: none;
-  border-radius: 10px;
-  font-size: 14px;
-  font-weight: 600;
-  cursor: pointer;
-  transition: all 0.2s;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
+.checkbox-label input[type="checkbox"] {
+  width: 18px; height: 18px; accent-color: var(--primary-blue); cursor: pointer;
 }
+.remember-hint { font-size: 12px; color: #9ca3af; }
 
-.btn:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
+/* URL 建議下拉 */
+.url-suggestions {
+  position: relative; margin-top: 6px;
+  background: var(--bg-surface); border: 1px solid var(--border-primary);
+  border-radius: 10px; overflow: hidden; z-index: 50;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.3);
 }
-
-.btn-primary {
-  background: var(--primary-blue);
-  color: #ffffff;
-  border: 1px solid rgba(59, 130, 246, 0.5);
-  box-shadow: 0 2px 8px rgba(59, 130, 246, 0.25);
-}
-
-.btn-primary:hover:not(:disabled) {
-  background: #2563eb;
-  box-shadow: 0 4px 16px rgba(59, 130, 246, 0.35);
-}
-
-.btn-secondary {
-  background: transparent;
-  color: var(--text-secondary);
-  border: 1px solid var(--border-primary);
-}
-
-.btn-secondary:hover:not(:disabled) {
-  background: rgba(148, 163, 184, 0.06);
-  border-color: rgba(148, 163, 184, 0.2);
-  color: var(--text-primary);
-}
-
-.btn-test {
-  background: var(--success-green);
-  color: white;
-  border: 1px solid rgba(34, 197, 94, 0.5);
-  box-shadow: 0 2px 8px rgba(34, 197, 94, 0.25);
-}
-
-.btn-test:hover:not(:disabled) {
-  background: #16a34a;
-  box-shadow: 0 4px 16px rgba(34, 197, 94, 0.35);
-}
-
-.btn-icon, .btn-spinner {
-  font-size: 18px;
-}
-
-/* 測試結果框 */
-.test-result-box {
-  background: rgba(17, 26, 46, 0.5);
-  border: 1px solid var(--border-primary);
-  border-radius: 14px;
-  padding: 24px;
-  margin-top: 24px;
-}
-
-.test-result-box h4 {
-  margin: 0 0 16px 0;
-  font-size: 15px;
-  font-weight: 600;
-  color: var(--accent-blue);
-}
-
-.service-test-result {
-  background: rgba(11, 18, 34, 0.5);
-  border: 1px solid var(--border-primary);
-  border-radius: 10px;
-  padding: 16px;
-  margin-bottom: 12px;
-}
-
-.service-test-result:last-child {
-  margin-bottom: 0;
-}
-
-.service-header {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  margin-bottom: 12px;
-  padding-bottom: 12px;
+.url-suggestion-item {
+  display: flex; align-items: center; gap: 12px;
+  padding: 10px 14px; cursor: pointer; transition: background 0.15s;
   border-bottom: 1px solid var(--border-subtle);
 }
+.url-suggestion-item:last-child { border-bottom: none; }
+.url-suggestion-item:hover { background: rgba(59,130,246,0.06); }
+.suggestion-dot { font-size: 10px; flex-shrink: 0; }
+.suggestion-dot.green { color: #22c55e; }
+.suggestion-dot.red { color: #ef4444; }
+.suggestion-dot.gray { color: #6b7280; }
+.suggestion-info { flex: 1; min-width: 0; }
+.suggestion-url { font-size: 13px; color: var(--text-primary); font-family: 'Monaco','Courier New',monospace; }
+.suggestion-note { font-size: 12px; color: #9ca3af; margin-top: 2px; }
 
-.service-icon {
-  font-size: 20px;
+/* Dialog 測試結果 */
+.test-result-inline {
+  padding: 12px 16px; border-radius: 10px; font-size: 14px;
+  margin-bottom: 8px; display: flex; align-items: center; gap: 10px;
 }
-
-.service-name {
-  font-weight: 600;
-  color: #e5e7eb;
-  flex: 1;
+.test-result-inline.ok { background: rgba(34,197,94,0.06); color: #4ade80; border: 1px solid rgba(34,197,94,0.15); }
+.test-result-inline.warning { background: rgba(234,179,8,0.06); color: #eab308; border: 1px solid rgba(234,179,8,0.15); }
+.test-result-inline.error { background: rgba(239,68,68,0.06); color: #f87171; border: 1px solid rgba(239,68,68,0.15); }
+.test-result-dot {
+  width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0;
 }
+.test-result-dot.ok { background: #22c55e; }
+.test-result-dot.warning { background: #eab308; }
+.test-result-dot.error { background: #ef4444; }
 
-.status-badge {
-  padding: 4px 12px;
-  border-radius: 12px;
-  font-size: 12px;
-  font-weight: 500;
+/* ==================== 按鈕 ==================== */
+.form-actions {
+  display: flex; gap: 12px; margin-top: 32px;
+  padding-top: 24px; border-top: 1px solid var(--border-primary);
 }
-
-.status-badge.ok {
-  background: rgba(34, 197, 94, 0.1);
-  color: #22c55e;
-  border: 1px solid rgba(34, 197, 94, 0.2);
+.btn {
+  flex: 1; padding: 10px 18px; border: none; border-radius: 10px;
+  font-size: 14px; font-weight: 600; cursor: pointer; transition: all 0.2s;
+  display: flex; align-items: center; justify-content: center; gap: 6px;
 }
-
-.status-badge.warning {
-  background: rgba(234, 179, 8, 0.1);
-  color: #eab308;
-  border: 1px solid rgba(234, 179, 8, 0.2);
+.btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.btn-primary {
+  background: rgba(59,130,246,0.15); color: #93b4f5;
+  border: 1px solid rgba(59,130,246,0.25);
 }
-
-.status-badge.error {
-  background: rgba(239, 68, 68, 0.1);
-  color: #ef4444;
-  border: 1px solid rgba(239, 68, 68, 0.2);
+.btn-primary:hover:not(:disabled) { background: rgba(59,130,246,0.25); color: #b0cbf9; }
+.btn-secondary {
+  background: transparent; color: var(--text-secondary);
+  border: 1px solid var(--border-primary);
 }
-
-.service-details {
-  font-size: 14px;
-  color: #9ca3af;
-  line-height: 1.8;
+.btn-secondary:hover:not(:disabled) { background: rgba(148,163,184,0.06); border-color: rgba(148,163,184,0.2); color: var(--text-primary); }
+.btn-test {
+  background: rgba(34,197,94,0.12); color: #6dd4a0;
+  border: 1px solid rgba(34,197,94,0.22);
 }
+.btn-test:hover:not(:disabled) { background: rgba(34,197,94,0.22); color: #86e4b8; }
+.btn-sm { flex: 0; padding: 6px 14px; font-size: 13px; }
 
-.service-details p {
-  margin: 4px 0;
+/* Action SVG icons */
+.action-svg { width: 16px; height: 16px; }
+
+/* 操作按鈕 (卡片內) */
+.action-btn {
+  height: 32px; padding: 0 12px;
+  display: flex; align-items: center; justify-content: center; gap: 5px;
+  border: 1px solid var(--border-primary); border-radius: 6px;
+  background: transparent; cursor: pointer;
+  font-size: 12px; font-weight: 500; color: var(--text-secondary);
+  transition: all 0.2s; white-space: nowrap;
 }
+.action-btn:hover { background: rgba(148,163,184,0.06); border-color: rgba(148,163,184,0.2); color: var(--text-primary); }
+.action-btn.delete:hover { background: rgba(239,68,68,0.08); border-color: rgba(239,68,68,0.2); color: #f87171; }
+.action-btn.test:hover { background: rgba(34,197,94,0.08); border-color: rgba(34,197,94,0.2); color: #4ade80; }
+.action-btn:disabled { opacity: 0.3; cursor: not-allowed; }
 
-.service-details strong {
-  color: #d1d5db;
-  margin-right: 8px;
-}
-
-.btn-icon, .btn-spinner {
-  font-size: 18px;
-}
-
-/* 提示訊息框 */
+/* ==================== 提示框 ==================== */
 .info-box {
-  display: flex;
-  gap: 16px;
-  background: rgba(59, 130, 246, 0.05);
-  border: 1px solid rgba(59, 130, 246, 0.1);
-  border-radius: 14px;
-  padding: 20px;
-  margin-top: 24px;
+  display: flex; gap: 16px;
+  background: rgba(59,130,246,0.05); border: 1px solid rgba(59,130,246,0.1);
+  border-radius: 14px; padding: 20px;
+  border-left: 3px solid rgba(59,130,246,0.4);
 }
+.info-content h4 { margin: 0 0 12px 0; font-size: 15px; font-weight: 600; color: #60a5fa; }
+.info-content ul { margin: 0; padding-left: 20px; color: #9ca3af; font-size: 14px; line-height: 1.8; }
 
-.info-icon {
-  font-size: 24px;
-  flex-shrink: 0;
-}
-
-.info-content h4 {
-  margin: 0 0 12px 0;
-  font-size: 16px;
-  font-weight: 600;
-  color: #60a5fa;
-}
-
-.info-content ul {
-  margin: 0;
-  padding-left: 20px;
-  color: #9ca3af;
-  font-size: 14px;
-  line-height: 1.8;
-}
-
-.info-content code {
-  background: rgba(148, 163, 184, 0.08);
-  padding: 2px 6px;
-  border-radius: 4px;
-  font-family: 'Monaco', 'Courier New', monospace;
-  color: var(--accent-blue);
-}
-
-/* Toast 通知 */
-.toast {
-  position: fixed;
-  bottom: 32px;
-  right: 32px;
-  background: rgba(11, 18, 34, 0.95);
-  backdrop-filter: blur(20px);
-  -webkit-backdrop-filter: blur(20px);
-  border-radius: 12px;
-  padding: 14px 20px;
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  box-shadow: var(--shadow-lg);
-  border: 1px solid var(--border-primary);
-  z-index: 1000;
-  max-width: 400px;
-}
-
-.toast.success {
-  border-left: 3px solid var(--success-green);
-}
-
-.toast.error {
-  border-left: 3px solid var(--danger-red);
-}
-
-.toast-icon {
-  font-size: 24px;
-  flex-shrink: 0;
-}
-
-.toast-message {
-  color: #e5e7eb;
-  font-size: 14px;
-  line-height: 1.5;
-}
-
-/* Toast 動畫 */
-.toast-enter-active, .toast-leave-active {
-  transition: all 0.3s cubic-bezier(0.68, -0.55, 0.265, 1.55);
-}
-
-.toast-enter-from {
-  transform: translateX(400px);
-  opacity: 0;
-}
-
-.toast-leave-to {
-  transform: translateY(100px);
-  opacity: 0;
-}
-
-/* ==================== 使用者管理樣式 ==================== */
-.user-table-container {
-  overflow-x: auto;
-  border-radius: 10px;
-  border: 1px solid var(--border-primary);
-}
-
-.user-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 13px;
-}
-
+/* ==================== 使用者表格 ==================== */
+.user-table-container { overflow-x: auto; border-radius: 10px; border: 1px solid var(--border-primary); }
+.user-table { width: 100%; border-collapse: collapse; font-size: 13px; }
 .user-table th {
-  background: rgba(148, 163, 184, 0.04);
-  padding: 12px 16px;
-  text-align: left;
-  color: var(--text-tertiary);
-  font-weight: 600;
-  font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
+  background: rgba(148,163,184,0.04); padding: 12px 16px; text-align: left;
+  color: var(--text-tertiary); font-weight: 600; font-size: 11px;
+  text-transform: uppercase; letter-spacing: 0.06em;
   border-bottom: 1px solid var(--border-primary);
 }
+.user-table td { padding: 14px 16px; border-bottom: 1px solid var(--border-subtle); color: var(--text-primary); }
+.user-table tr:last-child td { border-bottom: none; }
+.user-table tr:hover td { background: rgba(148,163,184,0.03); }
+.user-name { font-weight: 600; color: white; }
+.role-badge { display: inline-block; padding: 3px 10px; border-radius: 8px; font-size: 12px; font-weight: 600; }
+.role-badge.admin { background: rgba(239,68,68,0.08); color: #f87171; border: 1px solid rgba(239,68,68,0.15); }
+.role-badge.user { background: rgba(59,130,246,0.08); color: var(--accent-blue); border: 1px solid rgba(59,130,246,0.15); }
+.key-badge { font-size: 12px; padding: 3px 8px; border-radius: 6px; font-family: 'Monaco','Courier New',monospace; }
+.key-badge.has-key { background: rgba(34,197,94,0.08); color: #4ade80; border: 1px solid rgba(34,197,94,0.15); }
+.key-badge.no-key { background: rgba(148,163,184,0.06); color: var(--text-tertiary); }
 
-.user-table td {
-  padding: 14px 16px;
-  border-bottom: 1px solid var(--border-subtle);
-  color: var(--text-primary);
-}
-
-.user-table tr:last-child td {
-  border-bottom: none;
-}
-
-.user-table tr:hover td {
-  background: rgba(148, 163, 184, 0.03);
-}
-
-.user-name {
-  font-weight: 600;
-  color: white;
-}
-
-.role-badge {
-  display: inline-block;
-  padding: 3px 10px;
-  border-radius: 8px;
-  font-size: 12px;
-  font-weight: 600;
-}
-.role-badge.admin {
-  background: rgba(239, 68, 68, 0.08);
-  color: #f87171;
-  border: 1px solid rgba(239, 68, 68, 0.15);
-}
-.role-badge.user {
-  background: rgba(59, 130, 246, 0.08);
-  color: var(--accent-blue);
-  border: 1px solid rgba(59, 130, 246, 0.15);
-}
-
-.key-badge {
-  font-size: 12px;
-  padding: 3px 8px;
-  border-radius: 6px;
-  font-family: 'Monaco', 'Courier New', monospace;
-}
-.key-badge.has-key {
-  background: rgba(34, 197, 94, 0.08);
-  color: #4ade80;
-  border: 1px solid rgba(34, 197, 94, 0.15);
-}
-.key-badge.no-key {
-  background: rgba(148, 163, 184, 0.06);
-  color: var(--text-tertiary);
-}
-
-.action-btn {
-  width: 32px;
-  height: 32px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border: 1px solid var(--border-primary);
-  border-radius: 7px;
-  background: transparent;
-  cursor: pointer;
-  font-size: 14px;
-  transition: all 0.2s;
-}
-.action-btn:hover {
-  background: rgba(148, 163, 184, 0.06);
-  border-color: rgba(148, 163, 184, 0.2);
-}
-.action-btn.delete:hover {
-  background: rgba(239, 68, 68, 0.08);
-  border-color: rgba(239, 68, 68, 0.2);
-}
-.action-btn:disabled {
-  opacity: 0.3;
-  cursor: not-allowed;
-  transform: none;
-}
-
-/* Modal */
+/* ==================== Modal ==================== */
 .modal-overlay {
-  position: fixed;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.5);
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 999;
+  position: fixed; inset: 0;
+  background: rgba(0,0,0,0.5); backdrop-filter: blur(8px);
+  display: flex; align-items: center; justify-content: center; z-index: 999;
 }
-
 .modal-card {
-  background: var(--bg-surface);
-  border: 1px solid var(--border-primary);
-  border-radius: 18px;
-  padding: 32px;
-  width: 480px;
-  max-width: 90vw;
-  box-shadow: 0 25px 60px rgba(0, 0, 0, 0.5);
+  background: var(--bg-surface); border: 1px solid var(--border-primary);
+  border-radius: 18px; padding: 32px; width: 480px; max-width: 90vw;
+  box-shadow: 0 25px 60px rgba(0,0,0,0.5); max-height: 90vh; overflow-y: auto;
 }
+.modal-card.modal-wide { width: 560px; }
+.modal-title { font-size: 18px; font-weight: 700; color: var(--text-primary); margin: 0 0 24px; }
+.modal-card::-webkit-scrollbar { width: 4px; }
+.modal-card::-webkit-scrollbar-thumb { background: rgba(148,163,184,0.2); border-radius: 2px; }
 
-.modal-title {
-  font-size: 18px;
-  font-weight: 700;
-  color: var(--text-primary);
-  margin: 0 0 24px;
+/* ==================== Toast ==================== */
+.toast {
+  position: fixed; bottom: 32px; right: 32px;
+  background: rgba(11,18,34,0.95); backdrop-filter: blur(20px);
+  border-radius: 12px; padding: 14px 20px;
+  display: flex; align-items: center; gap: 12px;
+  box-shadow: var(--shadow-lg); border: 1px solid var(--border-primary);
+  z-index: 1000; max-width: 400px;
 }
+.toast.success { border-left: 3px solid var(--success-green); }
+.toast.error { border-left: 3px solid var(--danger-red); }
+.toast-dot {
+  width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0;
+}
+.toast-dot.success { background: var(--success-green); }
+.toast-dot.error { background: var(--danger-red); }
+.toast-message { color: #e5e7eb; font-size: 14px; line-height: 1.5; }
 
-.modal-enter-active, .modal-leave-active {
-  transition: all 0.25s ease;
-}
-.modal-enter-from, .modal-leave-to {
-  opacity: 0;
-  transform: scale(0.95);
-}
+/* ==================== 動畫 ==================== */
+.modal-enter-active, .modal-leave-active { transition: all 0.25s ease; }
+.modal-enter-from, .modal-leave-to { opacity: 0; transform: scale(0.95); }
+.toast-enter-active, .toast-leave-active { transition: all 0.3s cubic-bezier(0.68,-0.55,0.265,1.55); }
+.toast-enter-from { transform: translateX(400px); opacity: 0; }
+.toast-leave-to { transform: translateY(100px); opacity: 0; }
+.slide-enter-active, .slide-leave-active { transition: all 0.3s ease; }
+.slide-enter-from, .slide-leave-to { opacity: 0; max-height: 0; padding: 0 20px; margin-bottom: 0; }
+.dropdown-enter-active, .dropdown-leave-active { transition: all 0.2s ease; }
+.dropdown-enter-from, .dropdown-leave-to { opacity: 0; transform: translateY(-8px); }
 
-/* 響應式設計 */
+/* ==================== 響應式 ==================== */
 @media (max-width: 768px) {
-  .settings-container {
-    padding: 24px 16px;
-  }
-
-  .settings-card {
-    padding: 24px;
-  }
-
-  .page-title {
-    font-size: 28px;
-  }
-
-  .section-title {
-    font-size: 20px;
-  }
-
-  .form-actions {
-    flex-direction: column;
-  }
-
-  .toast {
-    bottom: 16px;
-    right: 16px;
-    left: 16px;
-    max-width: none;
-  }
+  .settings-container { padding: 24px 16px; }
+  .settings-card { padding: 24px; }
+  .page-title { font-size: 24px; }
+  .section-header { flex-direction: column; align-items: flex-start; }
+  .section-actions { width: 100%; }
+  .form-actions { flex-direction: column; }
+  .conn-top { flex-direction: column; align-items: flex-start; }
+  .toast { bottom: 16px; right: 16px; left: 16px; max-width: none; }
+  .tab-bar { flex-direction: column; }
 }
 </style>

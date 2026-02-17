@@ -112,7 +112,8 @@ _COLUMN_ALIASES = {
     'type': {'類型', 'type', '分類', 'category', '類別', 'class', '種類'},
     'description': {'描述', 'description', '內容', 'content', '說明', '摘要',
                      'summary', '備註', 'note', 'notes', 'abstract'},
-    'keywords': {'關鍵詞', 'keywords', 'tags', '標籤', '關鍵字', '標記'},
+    'keywords': {'關鍵詞', 'keywords', '關鍵字'},
+    'tags': {'標籤', 'tags', '標記', 'tag', '分類標籤'},
 }
 
 
@@ -157,6 +158,7 @@ def _try_extract_from_columns(df: pd.DataFrame) -> List[Optional[Dict]]:
             'description': '',
             'type': '未分類',
             'keywords': [],
+            'tags': [],
             'suggested_links': [],
         }
 
@@ -175,6 +177,13 @@ def _try_extract_from_columns(df: pd.DataFrame) -> List[Optional[Dict]]:
             if pd.notna(kw) and str(kw).strip():
                 node['keywords'] = [
                     k.strip() for k in _re.split(r'[,;，；、\s]+', str(kw).strip()) if k.strip()
+                ][:5]
+
+        if 'tags' in field_map:
+            tg = row.get(field_map['tags'], '')
+            if pd.notna(tg) and str(tg).strip():
+                node['tags'] = [
+                    t.strip() for t in _re.split(r'[,;，；、\s]+', str(tg).strip()) if t.strip()
                 ][:5]
 
         results.append(node)
@@ -216,10 +225,13 @@ NODE_SCHEMA = """{
   "description": "100-200字描述，含背景、核心內容、應用場景",
   "type": "技術架構|API介面|數據流程|安全規範|業務流程|最佳實踐|問題排查|配置文檔|自訂(2-4字)",
   "keywords": ["關鍵詞1", "關鍵詞2", "關鍵詞3"],
+  "tags": ["分類標籤1", "分類標籤2", "分類標籤3"],
   "suggested_links": [
     {"target_index": 0, "relation": "dependency|causality|sequence|composition|complement|contrast", "reason": "連線原因(30字內)"}
   ]
-}"""
+}
+
+tags 規則：3-5 個分類標籤，用於快速篩選與歸類。標籤應簡短(2-6字)、具體、可複用，例如「後端」「安全性」「資料庫」「API」「DevOps」。"""
 
 
 def build_batch_prompt(
@@ -265,8 +277,11 @@ NODE_SCHEMA_FAST = """{
   "label": "3-8字標題",
   "description": "30-80字摘要",
   "type": "分類(2-4字)",
-  "keywords": ["關鍵詞1", "關鍵詞2"]
-}"""
+  "keywords": ["關鍵詞1", "關鍵詞2"],
+  "tags": ["分類標籤1", "分類標籤2"]
+}
+
+tags: 2-3 個簡短分類標籤(2-6字)，用於篩選歸類。"""
 
 
 def build_batch_prompt_fast(rows: List[str]) -> str:
@@ -358,6 +373,19 @@ def _validate_node(data: Dict[str, Any]) -> Dict[str, Any]:
     
     # keywords
     data.setdefault('keywords', [])
+    
+    # tags — 分類標籤
+    if 'tag' in data and 'tags' not in data:
+        data['tags'] = data.pop('tag')
+    if '標籤' in data and 'tags' not in data:
+        data['tags'] = data.pop('標籤')
+    data.setdefault('tags', [])
+    # 確保 tags 是字串列表
+    if isinstance(data['tags'], str):
+        data['tags'] = [t.strip() for t in data['tags'].replace('，', ',').split(',') if t.strip()]
+    if not isinstance(data['tags'], list):
+        data['tags'] = []
+    data['tags'] = [str(t).strip() for t in data['tags'] if t and str(t).strip()][:5]
     
     return data
 
@@ -785,6 +813,7 @@ async def _run_import(
                 "group": 1,
                 "size": 20,
                 "keywords": llm.get("keywords", []),
+                "tags": llm.get("tags", []),
                 "suggested_links": llm.get("suggested_links", []),
                 "raw_data": {
                     k: (None if pd.isna(v) else v)
@@ -836,6 +865,7 @@ async def _run_import(
                     props = {
                         "description": node.get("description", ""),
                         "keywords": json.dumps(node.get("keywords", []), ensure_ascii=False),
+                        "tags": json.dumps(node.get("tags", []), ensure_ascii=False),
                         "raw_data": json.dumps(node.get("raw_data", {}), ensure_ascii=False, default=str),
                         "source": "excel_import",
                         "import_task_id": task_id,

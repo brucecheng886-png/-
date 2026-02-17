@@ -5,7 +5,9 @@
 import json
 import threading
 import logging
+import uuid
 from pathlib import Path
+from datetime import datetime, timezone
 from functools import lru_cache
 from pydantic_settings import BaseSettings
 from pydantic import Field
@@ -166,4 +168,88 @@ def get_current_api_keys() -> Dict[str, str]:
         'DIFY_API_URL': file_config.get('dify_api_url') or settings.DIFY_API_URL,
         'RAGFLOW_API_URL': file_config.get('ragflow_api_url') or settings.RAGFLOW_API_URL,
     }
+
+
+# ==================== 連線管理 ====================
+
+def generate_connection_id() -> str:
+    """產生唯一的連線 ID"""
+    return f"conn_{uuid.uuid4().hex[:12]}"
+
+
+def load_connections() -> list:
+    """
+    載入連線配置。
+    首次使用時自動從舊格式 (flat keys) 遷移為 connections 陣列。
+    """
+    config = load_config_from_file()
+    connections = config.get('connections')
+
+    if connections is not None:
+        return connections
+
+    # 首次遷移：從舊的 flat keys 轉成 connections 陣列
+    connections = []
+    now = datetime.now(timezone.utc).isoformat()
+
+    if config.get('dify_api_url') or config.get('dify_api_key'):
+        connections.append({
+            'id': generate_connection_id(),
+            'name': 'Dify AI 服務',
+            'type': 'dify',
+            'url': config.get('dify_api_url', 'http://localhost:82/v1'),
+            'api_key': config.get('dify_api_key', ''),
+            'note': '從舊配置自動遷移',
+            'remember_key': True,
+            'enabled': True,
+            'created_at': now,
+            'updated_at': now,
+        })
+
+    if config.get('ragflow_api_url') or config.get('ragflow_api_key'):
+        connections.append({
+            'id': generate_connection_id(),
+            'name': 'RAGFlow 知識檢索',
+            'type': 'ragflow',
+            'url': config.get('ragflow_api_url', 'http://localhost:9380/api/v1'),
+            'api_key': config.get('ragflow_api_key', ''),
+            'note': '從舊配置自動遷移',
+            'remember_key': True,
+            'enabled': True,
+            'created_at': now,
+            'updated_at': now,
+        })
+
+    # 自動保存遷移結果
+    if connections:
+        save_connections(connections)
+        logger.info(f"已從舊配置遷移 {len(connections)} 個連線")
+
+    return connections
+
+
+def save_connections(connections: list) -> bool:
+    """
+    儲存連線配置到 config.json。
+    同時同步舊格式 flat keys 以維持向後相容性。
+    """
+    updates: Dict[str, Any] = {'connections': connections}
+
+    # 同步舊格式 flat keys（取各類型第一個啟用的連線）
+    for ctype, url_field, key_field in [
+        ('dify', 'dify_api_url', 'dify_api_key'),
+        ('ragflow', 'ragflow_api_url', 'ragflow_api_key'),
+    ]:
+        active = next(
+            (c for c in connections if c.get('type') == ctype and c.get('enabled')),
+            None
+        )
+        if active:
+            updates[url_field] = active.get('url', '')
+            if active.get('remember_key', True):
+                updates[key_field] = active.get('api_key', '')
+            else:
+                updates[key_field] = ''
+
+    return save_config_to_file(updates)
 

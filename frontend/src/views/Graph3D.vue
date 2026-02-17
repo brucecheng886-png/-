@@ -43,6 +43,8 @@ const autoRotate = ref(false);
 const selectedNode = ref(null);
 const highlightedNodeId = ref(null); // 當前高亮的節點 ID
 let breathingInterval = null; // 呼吸燈動畫定時器
+const hoveredLink = ref(null);       // 當前 hover 的連線
+const selectedLinkData = ref(null);  // 當前選中的連線
 
 // 防抖更新鎖
 const isUpdating = ref(false);
@@ -78,7 +80,10 @@ const _getMaterial = (color, emissiveIntensity, opacity) => {
     // 混合顏色 + emissiveIntensity 模擬發光效果
     const baseColor = new THREE.Color(color);
     const emissive = new THREE.Color(color).multiplyScalar(emissiveIntensity);
-    baseColor.add(emissive).clampScalar(0, 1);
+    baseColor.add(emissive);
+    baseColor.r = Math.min(1, Math.max(0, baseColor.r));
+    baseColor.g = Math.min(1, Math.max(0, baseColor.g));
+    baseColor.b = Math.min(1, Math.max(0, baseColor.b));
     _materialPool.set(key, new THREE.MeshBasicMaterial({
       color: baseColor,
       transparent: true,
@@ -144,6 +149,7 @@ const updateGraphData = debounce(() => {
     // ⚡ 資料變更時重建效能快取（含 linkCount 索引）
     _rebuildLinkCountIndex(linksClone);
     _rebuildMaxLinksCache();
+    _rebuildParallelLinkCache(linksClone);
     
     graphInstance.d3ReheatSimulation();
   } finally {
@@ -188,7 +194,8 @@ watch(
       if (!target) continue;
       
       if (target.name !== storeNode.name || target.description !== storeNode.description ||
-          target.color !== storeNode.color || target.type !== storeNode.type) {
+          target.color !== storeNode.color || target.type !== storeNode.type ||
+          JSON.stringify(target.tags || []) !== JSON.stringify(storeNode.tags || [])) {
         hasChanges = true;
       }
       
@@ -200,6 +207,7 @@ watch(
       target.color = storeNode.color;
       target.size = storeNode.size;
       target.type = storeNode.type;
+      target.tags = storeNode.tags;
     }
     
     if (hasChanges) {
@@ -375,6 +383,63 @@ const _rebuildMaxLinksCache = () => {
   }
 };
 
+// ===== 平行連線曲率快取（避免同一對節點之間的連線重疊）=====
+let _parallelLinkCache = new Map();
+
+const _rebuildParallelLinkCache = (linksArr) => {
+  _parallelLinkCache = new Map();
+  linksArr.forEach(link => {
+    const src = typeof link.source === 'object' ? link.source.id : link.source;
+    const tgt = typeof link.target === 'object' ? link.target.id : link.target;
+    const key = src < tgt ? `${src}__${tgt}` : `${tgt}__${src}`;
+    if (!_parallelLinkCache.has(key)) _parallelLinkCache.set(key, []);
+    _parallelLinkCache.get(key).push(link);
+  });
+  // 為平行連線分配不同曲率，避免重疊
+  _parallelLinkCache.forEach(links => {
+    if (links.length <= 1) {
+      links[0].__curvature = 0;
+      links[0].__curveRotation = 0;
+      return;
+    }
+    links.forEach((link, idx) => {
+      link.__curvature = 0.2 + (idx * 0.12);
+      link.__curveRotation = (idx * Math.PI * 2) / links.length;
+    });
+  });
+};
+
+// ===== 連線點擊事件 =====
+const handleLinkClick = (link) => {
+  if (!link) return;
+  
+  const src = typeof link.source === 'object' ? link.source : { id: link.source };
+  const tgt = typeof link.target === 'object' ? link.target : { id: link.target };
+  const srcName = src.name || src.id;
+  const tgtName = tgt.name || tgt.id;
+  
+  selectedLinkData.value = link;
+  console.log('🔗 [3D] 選中連線:', { from: srcName, to: tgtName, type: link.type, label: link.label });
+  
+  const label = link.label || link.relationship || '';
+  const typeTag = link.type === 'ai-link' ? '🤖 AI 關聯' : '🔗 連線';
+  const confidence = link.confidence ? ` | 信心: ${(link.confidence * 100).toFixed(0)}%` : '';
+  
+  ElMessage({
+    message: `${typeTag}: ${srcName} → ${tgtName}${label ? ' | ' + label : ''}${confidence}`,
+    type: link.type === 'ai-link' ? 'warning' : 'info',
+    duration: 3000,
+  });
+};
+
+// ===== 連線 Hover 事件 =====
+const handleLinkHover = (link) => {
+  hoveredLink.value = link;
+  if (graphContainer.value) {
+    graphContainer.value.style.cursor = link ? 'pointer' : 'default';
+  }
+};
+
 // 初始化 3D 圖表
 const initGraph = async () => {
   if (!graphContainer.value) return;
@@ -383,6 +448,9 @@ const initGraph = async () => {
   if (graphStore.nodes.length === 0) {
     await graphStore.fetchGraphData(graphStore.currentGraphId);
   }
+  
+  // await 後組件可能已卸載，需重新檢查
+  if (!graphContainer.value) return;
   
   // 使用 structuredClone 斷開 Vue Proxy（比 JSON.parse+stringify 快 2-5x）
   const nodesClone = structuredClone(JSON.parse(JSON.stringify(graphStore.nodes)));
@@ -402,6 +470,7 @@ const initGraph = async () => {
   _rebuildLinkCountIndex(linksClone);
   _rebuildNeighborCache();
   _rebuildMaxLinksCache();
+  _rebuildParallelLinkCache(linksClone);
   
   graphInstance = ForceGraph3D()(graphContainer.value)
     .graphData(graphData.value)
@@ -476,6 +545,43 @@ const initGraph = async () => {
       }
       return linkColor.value;
     })
+    // 🏷️ 連線標籤（hover 時顯示 tooltip）
+    .linkLabel(link => {
+      const label = link.label || link.relationship || '';
+      if (link.type === 'ai-link') {
+        const conf = link.confidence ? ` (${(link.confidence * 100).toFixed(0)}%)` : '';
+        const reason = link.reason ? `<br/><small>${link.reason}</small>` : '';
+        return `<div style="background:rgba(0,0,0,0.85);color:#fbbf24;padding:6px 10px;border-radius:6px;font-size:13px;border:1px solid #fbbf24;max-width:280px">
+          🤖 ${label || 'AI 關聯'}${conf}${reason}
+        </div>`;
+      }
+      if (!label) return '';
+      return `<div style="background:rgba(0,0,0,0.8);color:#e2e8f0;padding:4px 8px;border-radius:4px;font-size:12px">
+        ${label}
+      </div>`;
+    })
+    // ➡️ 方向箭頭（所有連線皆顯示方向）
+    .linkDirectionalArrowLength(link => {
+      if (link.type === 'ai-link') return 6;
+      return 3.5;
+    })
+    .linkDirectionalArrowRelPos(1)
+    .linkDirectionalArrowColor(link => {
+      if (link.type === 'ai-link') return link.style?.color || '#fbbf24';
+      const selectedId = graphStore.selectedNode?.id;
+      if (props.focusFade && selectedId) {
+        const src = typeof link.source === 'object' ? link.source.id : link.source;
+        const tgt = typeof link.target === 'object' ? link.target.id : link.target;
+        if (src !== selectedId && tgt !== selectedId) return 'rgba(255, 255, 255, 0.06)';
+      }
+      return linkColor.value;
+    })
+    // 🔀 平行連線曲率（避免同對節點間的連線重疊）
+    .linkCurvature(link => link.__curvature || 0)
+    .linkCurveRotation(link => link.__curveRotation || 0)
+    // 🖱️ 連線互動事件
+    .onLinkClick(handleLinkClick)
+    .onLinkHover(handleLinkHover)
     .backgroundColor(backgroundColor.value)
     .showNavInfo(false)
     .onNodeClick(handleNodeClick)
@@ -530,6 +636,26 @@ const initGraph = async () => {
         sprite.scale.set(nodeSize * 1.5, nodeSize * 1.5, 1);
         sprite.position.y = 0;
         mesh.add(sprite);
+      }
+      
+      // 🏷️ Tag 色環指示器（節點底部顯示小色點）
+      if (node.tags && node.tags.length > 0) {
+        const tagColors = [0x3b82f6, 0x8b5cf6, 0x22c55e, 0xf59e0b, 0xec4899, 0x06b6d4];
+        const dotCount = Math.min(node.tags.length, 4);
+        const dotGeo = new THREE.SphereGeometry(0.3, 8, 8);
+        const spacing = 1.2;
+        const startX = -(dotCount - 1) * spacing / 2;
+        
+        for (let i = 0; i < dotCount; i++) {
+          const dotMat = new THREE.MeshBasicMaterial({
+            color: tagColors[i % tagColors.length],
+            transparent: true,
+            opacity: 0.9 * fadeAlpha
+          });
+          const dot = new THREE.Mesh(dotGeo, dotMat);
+          dot.position.set(startX + i * spacing, -1.3, 0);
+          mesh.add(dot);
+        }
       }
       
       return mesh;
@@ -924,6 +1050,7 @@ onUnmounted(() => {
   _materialPool.forEach(m => m.dispose());
   _materialPool.clear();
   _linkCountIndex.clear();
+  _parallelLinkCache.clear();
 });
 </script>
 

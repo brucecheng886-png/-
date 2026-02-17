@@ -31,8 +31,10 @@ const localNodeData = ref({
   name: '',
   link: '',
   description: '',
-  image: null
+  image: null,
+  tags: []
 });
+const tagInput = ref('');
 
 // AI 建議連線狀態
 const suggestedLinks = ref([]);
@@ -492,7 +494,8 @@ const saveChanges = async () => {
     name: localNodeData.value.name,
     link: localNodeData.value.link,
     description: localNodeData.value.description,
-    image: localNodeData.value.image
+    image: localNodeData.value.image,
+    tags: localNodeData.value.tags || []
   };
   
   console.log('💾 [GraphPage] 保存節點變更:', nodeId, updates);
@@ -602,6 +605,38 @@ const closeInspector = () => {
   suggestedLinks.value = [];
   selectedSuggestedLinks.value = new Set();
   hoveredLinkTarget.value = null;
+  tagInput.value = '';
+};
+
+// ===== Tag 本地編輯方法 =====
+
+/** 新增 Tag（本地 localNodeData，儲存時才同步） */
+const addLocalTag = () => {
+  const trimmed = tagInput.value.trim();
+  if (!trimmed) return;
+  if (!localNodeData.value.tags) localNodeData.value.tags = [];
+  if (localNodeData.value.tags.includes(trimmed)) {
+    tagInput.value = '';
+    return;
+  }
+  localNodeData.value.tags = [...localNodeData.value.tags, trimmed];
+  tagInput.value = '';
+};
+
+/** 移除 Tag（本地 localNodeData） */
+const removeLocalTag = (index) => {
+  localNodeData.value.tags = localNodeData.value.tags.filter((_, i) => i !== index);
+};
+
+/** 切換 Tag（快速選擇用） */
+const toggleLocalTag = (tagName) => {
+  if (!localNodeData.value.tags) localNodeData.value.tags = [];
+  const idx = localNodeData.value.tags.indexOf(tagName);
+  if (idx >= 0) {
+    localNodeData.value.tags = localNodeData.value.tags.filter((_, i) => i !== idx);
+  } else {
+    localNodeData.value.tags = [...localNodeData.value.tags, tagName];
+  }
 };
 
 // 切换建議連線的選擇狀態
@@ -1021,8 +1056,10 @@ watch(
         name: newNode.name || '',
         link: newNode.link || '',
         description: newNode.description || '',
-        image: newNode.image || null
+        image: newNode.image || null,
+        tags: Array.isArray(newNode.tags) ? [...newNode.tags] : []
       };
+      tagInput.value = '';
       console.log('🔄 [GraphPage] 選中節點已同步到編輯面板:', newNode.name);
     }
   },
@@ -1382,6 +1419,61 @@ onUnmounted(() => {
                   placeholder="https://..."
                 />
                 <button class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-semibold transition-all" @click="openLink">Go</button>
+              </div>
+            </div>
+
+            <!-- TAGS -->
+            <div class="flex flex-col gap-1.5">
+              <label class="text-xs font-bold text-gray-400 uppercase tracking-wider flex items-center gap-1.5">
+                <span>🏷️</span>
+                <span>TAGS</span>
+                <span class="text-xs font-normal text-gray-500">(Enter 新增)</span>
+              </label>
+              <!-- 已有 Tags 顯示 -->
+              <div class="flex flex-wrap gap-1.5 min-h-[28px]">
+                <span 
+                  v-for="(tag, idx) in localNodeData.tags" 
+                  :key="idx"
+                  class="inline-flex items-center gap-1 px-2.5 py-1 bg-blue-500/15 border border-blue-500/30 text-blue-300 text-xs font-medium rounded-full transition-all hover:bg-blue-500/25 group"
+                >
+                  {{ tag }}
+                  <button 
+                    class="w-3.5 h-3.5 flex items-center justify-center rounded-full hover:bg-red-500/40 hover:text-red-300 text-blue-400 opacity-0 group-hover:opacity-100 transition-all cursor-pointer"
+                    @click="removeLocalTag(idx)"
+                    title="移除"
+                  >×</button>
+                </span>
+                <!-- 空狀態提示 -->
+                <span v-if="!localNodeData.tags || localNodeData.tags.length === 0" class="text-xs text-gray-500 italic py-1">尚無標籤</span>
+              </div>
+              <!-- Tag 輸入框 -->
+              <div class="flex gap-2">
+                <input
+                  v-model="tagInput"
+                  type="text"
+                  class="flex-1 px-3 py-1.5 bg-white/5 border border-white/10 rounded-lg text-sm text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all"
+                  placeholder="輸入標籤..."
+                  @keydown.enter.prevent="addLocalTag"
+                />
+                <button 
+                  class="px-3 py-1.5 bg-blue-600/80 hover:bg-blue-600 text-white rounded-lg text-xs font-semibold transition-all disabled:opacity-30 disabled:cursor-not-allowed"
+                  :disabled="!tagInput.trim()"
+                  @click="addLocalTag"
+                >+ 新增</button>
+              </div>
+              <!-- 常用 Tag 快速選擇 -->
+              <div v-if="graphStore.allTags.length > 0" class="flex flex-wrap gap-1 mt-0.5">
+                <button
+                  v-for="t in graphStore.allTags.slice(0, 8)"
+                  :key="t.name"
+                  class="px-2 py-0.5 text-[11px] rounded-full transition-all cursor-pointer"
+                  :class="localNodeData.tags?.includes(t.name) 
+                    ? 'bg-blue-500/20 text-blue-300 border border-blue-500/30' 
+                    : 'bg-white/5 text-gray-500 hover:bg-white/10 hover:text-gray-300 border border-transparent'"
+                  @click="toggleLocalTag(t.name)"
+                >
+                  {{ t.name }} <span class="text-gray-600">({{ t.count }})</span>
+                </button>
               </div>
             </div>
 

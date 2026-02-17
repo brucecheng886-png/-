@@ -225,6 +225,8 @@ services:
     restart: unless-stopped
 
   # ==================== Ollama 本地 LLM 引擎 ====================
+  # 注意: 使用 latest 時需定期 docker compose pull ollama 更新
+  # 舊版 bge-m3 可能產生 NaN embedding 導致 RAGFlow 解析失敗
   ollama:
     image: ollama/ollama:latest
     container_name: bruv_ollama
