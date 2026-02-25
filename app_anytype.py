@@ -13,6 +13,7 @@ from typing import Optional, Dict, Any, List
 import logging
 import shutil
 import os
+import sys
 from datetime import datetime
 
 import httpx
@@ -306,10 +307,15 @@ async def health_check(request: Request):
 # 根路由
 @app.get("/")
 async def root():
-    """返回前端首頁"""
-    frontend_path = Path(__file__).parent / "frontend" / "index.html"
-    if frontend_path.exists():
-        return FileResponse(frontend_path)
+    """返回前端首頁 — 優先從 frontend/dist 提供 SPA"""
+    # 動態計算路徑，確保 frozen / dev 模式都能正確找到 index.html
+    if getattr(sys, 'frozen', False):
+        base = Path(sys._MEIPASS)
+    else:
+        base = Path(__file__).parent
+    index = base / "frontend" / "dist" / "index.html"
+    if index.exists():
+        return FileResponse(str(index))
     return {"message": "BruV_Project API is running", "docs": "/docs"}
 
 
@@ -619,8 +625,15 @@ app.include_router(media_library_router, prefix="/api/media", tags=["Media Libra
 
 
 # ==================== 靜態文件服務 (frontend/dist) ====================
-_DIST_DIR = Path(__file__).parent / "frontend" / "dist"
+# Frozen 模式: _MEIPASS 指向 _internal，非 frozen: __file__.parent
+if getattr(sys, 'frozen', False):
+    _BASE = Path(sys._MEIPASS)
+else:
+    _BASE = Path(__file__).parent
+_DIST_DIR = _BASE / "frontend" / "dist"
 _INDEX_HTML = _DIST_DIR / "index.html"
+
+logger.info(f"Frontend dist lookup: base={_BASE}, dist_dir={_DIST_DIR}, exists={_DIST_DIR.exists()}")
 
 if _DIST_DIR.exists():
     # assets (JS/CSS/圖片) 透過 /assets 路徑掛載

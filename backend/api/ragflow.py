@@ -218,25 +218,25 @@ async def get_document_status(dataset_id: str, document_id: str, raw_request: Re
         )
         response.raise_for_status()
         data = response.json()
-            
-            docs = data.get("data", {}).get("docs", [])
-            if not docs:
-                raise HTTPException(status_code=404, detail="文檔不存在")
-            
-            doc = docs[0]
-            return {
-                "code": 0,
-                "data": {
-                    "id": doc.get("id"),
-                    "name": doc.get("name"),
-                    "run": doc.get("run", "UNSTART"),
-                    "progress": doc.get("progress", 0.0),
-                    "progress_msg": doc.get("progress_msg", ""),
-                    "chunk_count": doc.get("chunk_count", 0),
-                    "token_count": doc.get("token_count", 0),
-                    "process_duration": doc.get("process_duration", 0),
-                }
+        
+        docs = data.get("data", {}).get("docs", [])
+        if not docs:
+            raise HTTPException(status_code=404, detail="文檔不存在")
+        
+        doc = docs[0]
+        return {
+            "code": 0,
+            "data": {
+                "id": doc.get("id"),
+                "name": doc.get("name"),
+                "run": doc.get("run", "UNSTART"),
+                "progress": doc.get("progress", 0.0),
+                "progress_msg": doc.get("progress_msg", ""),
+                "chunk_count": doc.get("chunk_count", 0),
+                "token_count": doc.get("token_count", 0),
+                "process_duration": doc.get("process_duration", 0),
             }
+        }
     except HTTPException:
         raise
     except httpx.HTTPError as e:
