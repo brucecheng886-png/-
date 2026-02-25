@@ -1033,3 +1033,5 @@ export const useGraphStore = defineStore('graph', () => {
     ...importFeatures,
     ...crossGraphFeatures,
     ...ragflowFeatures,
+  };
+});
