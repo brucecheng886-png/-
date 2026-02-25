@@ -62,3 +62,11 @@ frontend/dist/
 
 # Node
 node_modules/
+
+# PyInstaller build artifacts
+build3/
+dist3/
+*.spec
+
+# Config with secrets (use config.json.example as template)
+config.json
