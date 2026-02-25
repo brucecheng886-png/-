@@ -21,8 +21,8 @@ services:
     image: langgenius/dify-web:0.6.16
     container_name: bruv_dify_web
     environment:
-      - CONSOLE_API_URL=http://localhost:82/console/api
-      - APP_API_URL=http://localhost:82/api
+      - CONSOLE_API_URL=http://localhost:82
+      - APP_API_URL=http://localhost:82
     depends_on:
       - dify-api
     networks:
@@ -38,8 +38,8 @@ services:
       - LOG_LEVEL=INFO
       - SECRET_KEY=${DIFY_SECRET_KEY:?DIFY_SECRET_KEY must be set in .env}
       - CONSOLE_WEB_URL=http://localhost:82
-      - CONSOLE_API_URL=http://localhost:82/console/api
-      - SERVICE_API_URL=http://localhost:82/api
+      - CONSOLE_API_URL=http://localhost:82
+      - SERVICE_API_URL=http://localhost:82
       - APP_WEB_URL=http://localhost:82
       - DB_USERNAME=postgres
       - DB_PASSWORD=${DIFY_DB_PASSWORD:?DIFY_DB_PASSWORD must be set in .env}
@@ -109,6 +109,8 @@ services:
       - POSTGRES_PASSWORD=${DIFY_DB_PASSWORD:?DIFY_DB_PASSWORD must be set in .env}
       - POSTGRES_DB=dify
       - PGDATA=/var/lib/postgresql/data/pgdata
+      - POSTGRES_HOST_AUTH_METHOD=scram-sha-256
+      - POSTGRES_INITDB_ARGS=--auth-host=scram-sha-256
     volumes:
       - dify_db_data:/var/lib/postgresql/data
     networks:
@@ -162,10 +164,14 @@ services:
       - ./nginx/ssl:/etc/nginx/ssl:ro
       - ./nginx/sites-enabled:/etc/nginx/sites-enabled:ro
     depends_on:
-      - ragflow-mysql
-      - ragflow-minio
-      - ragflow-redis
-      - es01
+      ragflow-mysql:
+        condition: service_healthy
+      ragflow-minio:
+        condition: service_started
+      ragflow-redis:
+        condition: service_healthy
+      es01:
+        condition: service_healthy
     networks:
       - bruv_network
     restart: unless-stopped
@@ -182,6 +188,12 @@ services:
       - "127.0.0.1:9200:9200"
     volumes:
       - es01_data:/usr/share/elasticsearch/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:9200/_cluster/health || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
     networks:
       - bruv_network
     restart: unless-stopped
@@ -194,6 +206,12 @@ services:
       - MYSQL_DATABASE=rag_flow
     volumes:
       - ragflow_mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${RAGFLOW_MYSQL_PASSWORD}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
     networks:
       - bruv_network
     restart: unless-stopped
@@ -220,6 +238,12 @@ services:
     command: redis-server --requirepass ${RAGFLOW_REDIS_PASSWORD:-changeme}
     volumes:
       - ragflow_redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${RAGFLOW_REDIS_PASSWORD:-changeme}", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
     networks:
       - bruv_network
     restart: unless-stopped
@@ -252,7 +276,7 @@ services:
 
   # Loki — 輕量級日誌聚合 (替代 ELK Stack)
   loki:
-    image: grafana/loki:2.9.0
+    image: grafana/loki:3.3.0
     container_name: bruv_loki
     ports:
       - "127.0.0.1:3100:3100"
@@ -271,7 +295,7 @@ services:
 
   # Promtail — 自動採集所有容器日誌並推送到 Loki
   promtail:
-    image: grafana/promtail:2.9.0
+    image: grafana/promtail:3.3.0
     container_name: bruv_promtail
     volumes:
       - //var/run/docker.sock:/var/run/docker.sock:ro
@@ -290,7 +314,7 @@ services:
 
   # Grafana — 統一儀表板 (日誌查詢 + 未來 Metrics 圖表)
   grafana:
-    image: grafana/grafana:10.2.0
+    image: grafana/grafana:11.4.0
     container_name: bruv_grafana
     ports:
       - "127.0.0.1:3000:3000"
